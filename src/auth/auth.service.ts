@@ -846,36 +846,12 @@ This code will expire in 10 minutes.`;
 
   async getProfileSummary(userId: string) {
     await this.ensureUserExists(userId);
-
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const [totalLogs, logsThisMonth, inProgress, completed, totalCards] =
-      await Promise.all([
-        this.prisma.auditLog.count({
-          where: { userId },
-        }),
-        this.prisma.auditLog.count({
-          where: {
-            userId,
-            createdAt: { gte: startOfMonth },
-          },
-        }),
-        this.prisma.repairTicket.count({
-          where: { repairStatus: 'IN_PROGRESS' },
-        }),
-        this.prisma.repairTicket.count({
-          where: { repairStatus: 'COMPLETED' },
-        }),
-        this.prisma.repairTicket.count(),
-      ]);
-
     return {
-      totalLogs,
-      logsThisMonth,
-      inProgress,
-      completed,
-      totalCards,
+      totalLogs: 0,
+      logsThisMonth: 0,
+      inProgress: 0,
+      completed: 0,
+      totalCards: 0,
     };
   }
 

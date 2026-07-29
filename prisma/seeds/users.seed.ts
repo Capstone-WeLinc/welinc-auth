@@ -193,16 +193,7 @@ export async function seedUsers(prisma: PrismaClient) {
       });
     }
 
-    const mech = await prisma.mechanic.upsert({
-      where: { userId: user.id },
-      update: {},
-      create: {
-        userId: user.id,
-        name: user.name,
-        isOutsourced: false,
-      },
-    });
-    mechanicsList.push(mech);
+    mechanicsList.push({ id: user.id, name: user.name });
   }
 
   // 6. Bulk seeding for pagination (60 users)
@@ -256,15 +247,7 @@ export async function seedUsers(prisma: PrismaClient) {
       });
     }
 
-    await prisma.mechanic.upsert({
-      where: { userId: user.id },
-      update: {},
-      create: {
-        userId: user.id,
-        name: user.name,
-        isOutsourced: i % 5 === 0,
-      },
-    });
+    // Mechanic record created in VRMS service
   }
 
   console.log('  All seed users and mechanics successfully processed.\n');
