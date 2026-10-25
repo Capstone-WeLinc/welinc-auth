@@ -6,11 +6,7 @@ import SharedModule from './shared/shared.module';
 import AuthModule from './auth/auth.module';
 
 @Module({
-  imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
-    SharedModule,
-    AuthModule,
-  ],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), SharedModule, AuthModule],
   controllers: [AppController],
   providers: [AppService],
 })
