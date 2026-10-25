@@ -2,12 +2,13 @@ import {
   ForbiddenException,
   Injectable,
   UnauthorizedException,
-} from "@nestjs/common";
-import { PassportStrategy } from "@nestjs/passport";
-import { ExtractJwt, Strategy } from "passport-jwt";
-import { ConfigService } from "@nestjs/config";
-import { SystemType } from "@prisma/client";
-import { PrismaService } from "../../shared/prisma.service";
+} from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+import type { Request } from 'express';
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { ConfigService } from '@nestjs/config';
+import { SystemType } from '@prisma/client';
+import { PrismaService } from '../../shared/prisma.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -18,13 +19,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.getOrThrow<string>("JWT_SECRET"),
+      secretOrKey: config.getOrThrow<string>('JWT_SECRET'),
       passReqToCallback: true,
     });
   }
 
   async validate(
-    request: any,
+    request: Request,
     payload: {
       sub: string;
       email: string;
@@ -34,10 +35,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   ) {
     let requestedSystem = (payload.system || '') as SystemType;
 
-    if (!requestedSystem || !Object.values(SystemType).includes(requestedSystem)) {
+    if (
+      !requestedSystem ||
+      !Object.values(SystemType).includes(requestedSystem)
+    ) {
       // 1. Check referer/origin headers
       const referer = request.headers.referer || '';
-      const origin = (request.headers.origin as string) || '';
+      const origin = request.headers.origin || '';
       const source = (referer + '|' + origin).toLowerCase();
 
       if (source.includes(':8001') || source.includes('vrms')) {
@@ -75,13 +79,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
 
       // 3. Fallback to query parameter system
-      if (!requestedSystem && request.query?.system) {
-        requestedSystem = String(request.query.system).toUpperCase() as SystemType;
+      const querySystem: unknown = Array.isArray(request.query?.system)
+        ? request.query.system[0]
+        : request.query?.system;
+      if (!requestedSystem && typeof querySystem === 'string' && querySystem) {
+        requestedSystem = querySystem.toUpperCase() as SystemType;
       }
 
       // 4. Fallback to body roleAssignments system
-      if (!requestedSystem && (request.body as any)?.roleAssignments?.[0]?.system) {
-        requestedSystem = String((request.body as any).roleAssignments[0].system).toUpperCase() as SystemType;
+      const body = request.body as
+        | { roleAssignments?: { system?: unknown }[] }
+        | undefined;
+      const bodySystem = body?.roleAssignments?.[0]?.system;
+      if (!requestedSystem && typeof bodySystem === 'string' && bodySystem) {
+        requestedSystem = bodySystem.toUpperCase() as SystemType;
       }
     }
 
@@ -102,17 +113,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!user || !user.isActive) {
-      throw new UnauthorizedException("Invalid session");
+      throw new UnauthorizedException('Invalid session');
     }
 
     if (user.lockedAt !== null) {
       throw new ForbiddenException(
-        "Account is locked. Contact your Admin to unlock.",
+        'Account is locked. Contact your Admin to unlock.',
       );
     }
 
     // Resolve system from user's roles if still empty
-    if (!requestedSystem || !Object.values(SystemType).includes(requestedSystem)) {
+    if (
+      !requestedSystem ||
+      !Object.values(SystemType).includes(requestedSystem)
+    ) {
       if (user.roles.length > 0) {
         requestedSystem = user.roles[0].system;
       } else {
@@ -126,7 +140,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (rolesForSystem.length === 0) {
       throw new UnauthorizedException(
-        "User does not have access to this system",
+        'User does not have access to this system',
       );
     }
 
