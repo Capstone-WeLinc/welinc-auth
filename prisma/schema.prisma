@@ -12,6 +12,7 @@ datasource db {
 enum UserRole {
   ADMIN
   MECHANIC
+  CHIEF_MECHANIC
   CUSTOMER_SUPPORT
   OPERATIONS
 }
