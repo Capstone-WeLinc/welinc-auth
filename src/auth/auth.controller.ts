@@ -17,7 +17,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
-import { AuthService } from './auth.service';
+import { AuthService, type OptionalCaller } from './auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
 import { LoginDto } from './dto/login.dto';
@@ -29,9 +29,18 @@ import { OtpResetPasswordDto } from './dto/otp-reset-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ListChangesQueryDto } from './dto/list-changes.query.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
+
+/** The signed in admin, as the change record names them (spec 0009, AC-19, AC-20). */
+type AdminRequest = { user: { sub: string; email: string } };
+const actorOf = (req: AdminRequest) => ({
+  id: req.user.sub,
+  email: req.user.email,
+});
 
 @Controller('auth')
 export class AuthController {
@@ -43,10 +52,15 @@ export class AuthController {
     return this.authService.login(dto);
   }
 
+  // Public; an admin's token, when sent, records the reset as theirs (spec 0009, AC-20)
+  @UseGuards(OptionalJwtAuthGuard)
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
-  async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(dto.email);
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Req() req: { user?: OptionalCaller },
+  ) {
+    return this.authService.forgotPassword(dto.email, req.user ?? null);
   }
 
   @Post('verify-otp')
@@ -81,8 +95,8 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @Post('users')
-  createUser(@Body() dto: CreateUserDto) {
-    return this.authService.createUser(dto);
+  createUser(@Body() dto: CreateUserDto, @Req() req: AdminRequest) {
+    return this.authService.createUser(dto, actorOf(req));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -91,9 +105,9 @@ export class AuthController {
   updateUser(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateUserDto,
+    @Req() req: AdminRequest,
   ) {
-    console.log('updateUser called with DTO:', dto);
-    return this.authService.updateUser(id, dto);
+    return this.authService.updateUser(id, dto, actorOf(req));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -102,15 +116,26 @@ export class AuthController {
   updateUserStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: SetUserStatusDto,
+    @Req() req: AdminRequest,
   ) {
-    return this.authService.updateUserStatus(id, dto);
+    return this.authService.updateUserStatus(id, dto, actorOf(req));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @Delete('users/:id')
-  deleteUser(@Param('id', ParseUUIDPipe) id: string) {
-    return this.authService.deleteUser(id);
+  deleteUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
+    return this.authService.deleteUser(id, actorOf(req));
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('users/:id/changes')
+  listUserChanges(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: ListChangesQueryDto,
+  ) {
+    return this.authService.getUserChanges(id, query);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -126,8 +151,8 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @Patch('users/:id/unlock')
-  unlockUser(@Param('id', ParseUUIDPipe) id: string) {
-    return this.authService.unlockUser(id);
+  unlockUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
+    return this.authService.unlockUser(id, actorOf(req));
   }
 
   @UseGuards(JwtAuthGuard)

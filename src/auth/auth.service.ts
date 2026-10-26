@@ -3,16 +3,18 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as dns from 'dns';
-import { SystemType, UserRole } from '@prisma/client';
+import { Prisma, SystemType, UserChangeAction, UserRole } from '@prisma/client';
 import { PrismaService } from '../shared/prisma.service';
 import { MailService } from '../shared/mail.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -24,6 +26,19 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { RoleAssignmentDto } from './dto/role-assignment.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ListChangesQueryDto } from './dto/list-changes.query.dto';
+import {
+  Actor,
+  SELF_DEACTIVATE,
+  SELF_DELETE,
+  SELF_ROLE,
+  adminSystems,
+  assertAnotherAdmin,
+  change,
+  decodeChangeCursor,
+  encodeChangeCursor,
+  rolesKey,
+} from './user-changes';
 
 export async function validateEmailDomain(email: string): Promise<void> {
   const domain = email.split('@')[1];
@@ -63,6 +78,31 @@ type RoleAssignment = {
 };
 
 const MAX_FAILED_ATTEMPTS = 5;
+const CHANGES_PAGE_SIZE = 50;
+const FORGOT_PASSWORD_MESSAGE =
+  'If that email is registered, an OTP has been sent.';
+
+/** The fields every admin answer returns, mapped by mapManagedUser. */
+const MANAGED_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  emailVerified: true,
+  contact: true,
+  profilePicture: true,
+  isActive: true,
+  lockedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  roles: { select: { role: true, system: true } },
+} satisfies Prisma.UserSelect;
+
+/** The signed in caller of a public route, when they sent a valid token (OptionalJwtAuthGuard). */
+export type OptionalCaller = {
+  sub: string;
+  email: string;
+  roles: RoleAssignment[];
+} | null;
 
 type ManagedUserRecord = {
   id: string;
@@ -104,11 +144,22 @@ export type ManagedUserResponse = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  /** Where setup and reset emails send people (spec 0009, AC-16). */
+  private readonly passwordLink: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
-  ) {}
+    config: ConfigService,
+  ) {
+    const portalUrl = config.get<string>('PORTAL_URL');
+    if (!portalUrl && config.get<string>('NODE_ENV') === 'production') {
+      throw new Error('PORTAL_URL is required in production');
+    }
+    this.passwordLink = `${(portalUrl || 'http://localhost:8000').replace(/\/+$/, '')}/forgot-password`;
+  }
 
   async login(
     dto: LoginDto,
@@ -214,33 +265,29 @@ export class AuthService {
     };
   }
 
-  async unlockUser(userId: string): Promise<ManagedUserResponse> {
-    await this.ensureUserExists(userId);
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        lockedAt: null,
-        failedLoginAttempts: 0,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
-        },
-      },
+  async unlockUser(userId: string, actor: Actor): Promise<ManagedUserResponse> {
+    const user = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findFirst({
+        where: { id: userId, deletedAt: null },
+        select: { lockedAt: true },
+      });
+      if (!existing) throw new NotFoundException('User not found');
+      // Not locked: nothing changes, so no change row
+      if (existing.lockedAt === null) {
+        return tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: MANAGED_USER_SELECT,
+        });
+      }
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { lockedAt: null, failedLoginAttempts: 0 },
+        select: MANAGED_USER_SELECT,
+      });
+      await tx.userChange.create({
+        data: change(userId, actor, UserChangeAction.UNLOCKED),
+      });
+      return updated;
     });
 
     return this.mapManagedUser(user);
@@ -286,64 +333,65 @@ export class AuthService {
     return users.map((user) => this.mapManagedUser(user));
   }
 
-  async createUser(dto: CreateUserDto): Promise<ManagedUserResponse> {
+  async createUser(
+    dto: CreateUserDto,
+    actor: Actor,
+  ): Promise<ManagedUserResponse & { setupEmailSent: boolean }> {
     const roleAssignments = this.normalizeRoleAssignments(dto.roleAssignments);
     await validateEmailDomain(dto.email);
 
+    let passwordHash: string;
+    let setupOtp: string | null = null;
+
+    if (dto.password) {
+      passwordHash = await argon2.hash(dto.password);
+    } else {
+      const tempPassword = crypto.randomBytes(32).toString('hex');
+      passwordHash = await argon2.hash(tempPassword);
+      setupOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    }
+
+    let user: Prisma.UserGetPayload<{ select: typeof MANAGED_USER_SELECT }>;
     try {
-      let passwordHash: string;
-      let setupOtp: string | null = null;
-
-      if (dto.password) {
-        passwordHash = await argon2.hash(dto.password);
-      } else {
-        const tempPassword = crypto.randomBytes(32).toString('hex');
-        passwordHash = await argon2.hash(tempPassword);
-        setupOtp = Math.floor(100000 + Math.random() * 900000).toString();
-      }
-
-      const user = await this.prisma.user.create({
-        data: {
-          name: dto.name.trim(),
-          email: dto.email.trim().toLowerCase(),
-          passwordHash,
-          isActive: dto.isActive ?? true,
-          roles: {
-            create: roleAssignments,
-          },
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          emailVerified: true,
-          contact: true,
-          profilePicture: true,
-          isActive: true,
-          lockedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          roles: {
-            select: {
-              role: true,
-              system: true,
+      user = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            name: dto.name.trim(),
+            email: dto.email.trim().toLowerCase(),
+            passwordHash,
+            isActive: dto.isActive ?? true,
+            roles: {
+              create: roleAssignments,
             },
           },
-        },
-      });
-
-      if (setupOtp) {
-        const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 hour
-        await this.prisma.passwordResetToken.create({
-          data: {
-            userId: user.id,
-            otp: setupOtp,
-            expiresAt,
-          },
+          select: MANAGED_USER_SELECT,
         });
 
-        const setupLink = 'http://localhost:8000/forgot-password';
-        const mailContent = `Welcome to WeLinc Logistics, ${user.name}!
+        if (setupOtp) {
+          await tx.passwordResetToken.create({
+            data: {
+              userId: created.id,
+              otp: setupOtp,
+              expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000), // 1 hour
+            },
+          });
+        }
+
+        await tx.userChange.create({
+          data: change(created.id, actor, UserChangeAction.CREATED),
+        });
+        return created;
+      });
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+
+    // The user is saved: a mail failure only sets setupEmailSent to false (AC-18)
+    const setupEmailSent = setupOtp
+      ? await this.trySendMail('setup', {
+          to: user.email,
+          subject: 'WeLinc Logistics - Account Setup',
+          text: `Welcome to WeLinc Logistics, ${user.name}!
 
 Your account has been created by the administrator.
 To set up your password, please use the following one-time code:
@@ -351,39 +399,34 @@ To set up your password, please use the following one-time code:
 Setup Code: ${setupOtp}
 
 Please visit the link below to set up your password:
-${setupLink}
+${this.passwordLink}
 
-This code will expire in 1 hour.`;
-
-        await this.mailService.sendMail({
-          to: user.email,
-          subject: 'WeLinc Logistics - Account Setup',
-          text: mailContent,
+This code will expire in 1 hour.`,
           html: `<p>Welcome to WeLinc Logistics, <strong>${user.name}</strong>!</p>
 <p>Your account has been created by the administrator.</p>
 <p>To set up your password, please use the following one-time code:</p>
 <h2 style="font-size: 24px; font-weight: bold; color: #1a1f6e; letter-spacing: 2px;">${setupOtp}</h2>
 <p>Please visit the link below to set up your password:</p>
-<p><a href="${setupLink}" style="color: #1a1f6e; font-weight: bold; text-decoration: underline;">Set up your password</a></p>
+<p><a href="${this.passwordLink}" style="color: #1a1f6e; font-weight: bold; text-decoration: underline;">Set up your password</a></p>
 <p>This code will expire in 1 hour.</p>`,
-        });
-      }
+        })
+      : false;
 
-      return this.mapManagedUser(user);
-    } catch (error) {
-      this.handlePrismaError(error);
-    }
+    return { ...this.mapManagedUser(user), setupEmailSent };
   }
 
   async updateUser(
     userId: string,
     dto: UpdateUserDto,
+    actor: Actor,
   ): Promise<ManagedUserResponse> {
     const existingUser = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
+        name: true,
         email: true,
+        isActive: true,
         deletedAt: true,
         roles: {
           select: {
@@ -398,62 +441,117 @@ This code will expire in 1 hour.`;
       throw new NotFoundException('User not found');
     }
 
+    const newEmail = dto.email?.trim().toLowerCase();
     const isEmailChanging = !!(
-      dto.email &&
-      dto.email.trim().toLowerCase() !== existingUser.email.toLowerCase()
+      newEmail && newEmail !== existingUser.email.toLowerCase()
     );
     if (isEmailChanging && dto.email) {
       await validateEmailDomain(dto.email);
     }
 
+    const newName = dto.name?.trim();
+    const isNameChanging = !!newName && newName !== existingUser.name;
     const roleAssignments = dto.roleAssignments
       ? this.mergeRoleAssignments(
           existingUser.roles,
           this.normalizeRoleAssignments(dto.roleAssignments),
         )
       : undefined;
+    const areRolesChanging =
+      !!roleAssignments &&
+      rolesKey(roleAssignments) !== rolesKey(existingUser.roles);
+    const isActiveChanging =
+      typeof dto.isActive === 'boolean' &&
+      dto.isActive !== existingUser.isActive;
+
+    if (actor.id === userId) {
+      if (areRolesChanging) throw new ConflictException(SELF_ROLE);
+      if (isActiveChanging && !dto.isActive) {
+        throw new ConflictException(SELF_DEACTIVATE);
+      }
+    }
+
+    const passwordHash = dto.password
+      ? await argon2.hash(dto.password)
+      : undefined;
 
     try {
-      const user = await this.prisma.user.update({
-        where: { id: userId },
-        data: {
-          ...(dto.name ? { name: dto.name.trim() } : {}),
-          ...(isEmailChanging && dto.email
-            ? { email: dto.email.trim().toLowerCase() }
-            : {}),
-          ...(dto.password
-            ? { passwordHash: await argon2.hash(dto.password) }
-            : {}),
-          ...(typeof dto.isActive === 'boolean'
-            ? { isActive: dto.isActive }
-            : {}),
-          ...(roleAssignments
-            ? {
-                roles: {
-                  deleteMany: {},
-                  create: roleAssignments,
-                },
-              }
-            : {}),
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          emailVerified: true,
-          contact: true,
-          profilePicture: true,
-          isActive: true,
-          lockedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          roles: {
-            select: {
-              role: true,
-              system: true,
-            },
+      const user = await this.prisma.$transaction(async (tx) => {
+        // An active admin who stops being one, by role or deactivation, must not be the last
+        if (existingUser.isActive) {
+          for (const system of adminSystems(existingUser.roles)) {
+            const losesAdmin =
+              (isActiveChanging && dto.isActive === false) ||
+              (areRolesChanging &&
+                !roleAssignments.some(
+                  (r) => r.role === UserRole.ADMIN && r.system === system,
+                ));
+            if (losesAdmin) await assertAnotherAdmin(tx, userId, system);
+          }
+        }
+
+        const updated = await tx.user.update({
+          where: { id: userId },
+          data: {
+            ...(isNameChanging ? { name: newName } : {}),
+            ...(isEmailChanging ? { email: newEmail } : {}),
+            ...(passwordHash ? { passwordHash } : {}),
+            ...(isActiveChanging ? { isActive: dto.isActive } : {}),
+            ...(areRolesChanging
+              ? {
+                  roles: {
+                    deleteMany: {},
+                    create: roleAssignments,
+                  },
+                }
+              : {}),
           },
-        },
+          select: MANAGED_USER_SELECT,
+        });
+
+        const changes: Prisma.UserChangeCreateManyInput[] = [];
+        if (isNameChanging) {
+          changes.push(
+            change(userId, actor, UserChangeAction.UPDATED, {
+              field: 'name',
+              oldValue: existingUser.name,
+              newValue: newName,
+            }),
+          );
+        }
+        if (isEmailChanging) {
+          changes.push(
+            change(userId, actor, UserChangeAction.UPDATED, {
+              field: 'email',
+              oldValue: existingUser.email,
+              newValue: newEmail,
+            }),
+          );
+        }
+        if (areRolesChanging) {
+          changes.push(
+            change(userId, actor, UserChangeAction.ROLE_CHANGED, {
+              field: 'roles',
+              oldValue: rolesKey(existingUser.roles),
+              newValue: rolesKey(roleAssignments),
+            }),
+          );
+        }
+        if (isActiveChanging) {
+          changes.push(
+            change(
+              userId,
+              actor,
+              dto.isActive
+                ? UserChangeAction.ACTIVATED
+                : UserChangeAction.DEACTIVATED,
+            ),
+          );
+        }
+        if (changes.length > 0) {
+          await tx.userChange.createMany({ data: changes });
+        }
+        return updated;
       });
 
       return this.mapManagedUser(user);
@@ -465,47 +563,81 @@ This code will expire in 1 hour.`;
   async updateUserStatus(
     userId: string,
     dto: SetUserStatusDto,
+    actor: Actor,
   ): Promise<ManagedUserResponse> {
-    await this.ensureUserExists(userId);
+    if (!dto.isActive && actor.id === userId) {
+      throw new ConflictException(SELF_DEACTIVATE);
+    }
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        isActive: dto.isActive,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
+    const user = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findFirst({
+        where: { id: userId, deletedAt: null },
+        select: {
+          isActive: true,
+          roles: { select: { role: true, system: true } },
         },
-      },
+      });
+      if (!existing) throw new NotFoundException('User not found');
+      // No change: no write and no change row
+      if (existing.isActive === dto.isActive) {
+        return tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: MANAGED_USER_SELECT,
+        });
+      }
+      if (!dto.isActive) {
+        for (const system of adminSystems(existing.roles)) {
+          await assertAnotherAdmin(tx, userId, system);
+        }
+      }
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { isActive: dto.isActive },
+        select: MANAGED_USER_SELECT,
+      });
+      await tx.userChange.create({
+        data: change(
+          userId,
+          actor,
+          dto.isActive
+            ? UserChangeAction.ACTIVATED
+            : UserChangeAction.DEACTIVATED,
+        ),
+      });
+      return updated;
     });
 
     return this.mapManagedUser(user);
   }
 
-  async deleteUser(userId: string): Promise<{ id: string }> {
-    await this.ensureUserExists(userId);
+  async deleteUser(userId: string, actor: Actor): Promise<{ id: string }> {
+    if (actor.id === userId) throw new ConflictException(SELF_DELETE);
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        deletedAt: new Date(),
-        isActive: false,
-        lockedAt: null,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findFirst({
+        where: { id: userId, deletedAt: null },
+        select: {
+          isActive: true,
+          roles: { select: { role: true, system: true } },
+        },
+      });
+      if (!existing) throw new NotFoundException('User not found');
+      if (existing.isActive) {
+        for (const system of adminSystems(existing.roles)) {
+          await assertAnotherAdmin(tx, userId, system);
+        }
+      }
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          deletedAt: new Date(),
+          isActive: false,
+          lockedAt: null,
+        },
+      });
+      await tx.userChange.create({
+        data: change(userId, actor, UserChangeAction.DELETED),
+      });
     });
 
     return { id: userId };
@@ -550,30 +682,67 @@ This code will expire in 1 hour.`;
     return this.mapManagedUser(user);
   }
 
-  async forgotPassword(email: string): Promise<{ message: string }> {
+  /**
+   * Public. Sends nothing to an unknown, inactive or deleted user, with the same answer either way.
+   * A new code retires the user's older unused ones. Sent by an admin of one of the user's systems,
+   * it is recorded as RESET_SENT (spec 0009, AC-17, AC-20).
+   */
+  async forgotPassword(
+    email: string,
+    caller: OptionalCaller = null,
+  ): Promise<{ message: string }> {
     const user = await this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, name: true, email: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isActive: true,
+        deletedAt: true,
+        roles: { select: { system: true } },
+      },
     });
 
-    // Always return success to prevent user enumeration
-    if (!user) {
-      return { message: 'If that email is registered, an OTP has been sent.' };
+    // Always the same answer, to prevent user enumeration
+    if (!user || !user.isActive || user.deletedAt) {
+      return { message: FORGOT_PASSWORD_MESSAGE };
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const admin =
+      caller &&
+      caller.roles.some(
+        (r) =>
+          r.role === UserRole.ADMIN &&
+          user.roles.some((target) => target.system === r.system),
+      )
+        ? { id: caller.sub, email: caller.email }
+        : null;
 
-    await this.prisma.passwordResetToken.create({
-      data: {
-        userId: user.id,
-        otp,
-        expiresAt,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await tx.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          otp,
+          expiresAt,
+        },
+      });
+      if (admin) {
+        await tx.userChange.create({
+          data: change(user.id, admin, UserChangeAction.RESET_SENT),
+        });
+      }
     });
 
-    const setupLink = 'http://localhost:8000/forgot-password';
-    const mailContent = `Hello, ${user.name || 'User'}!
+    await this.trySendMail('reset', {
+      to: user.email,
+      subject: 'WeLinc Logistics - Password Reset Request',
+      text: `Hello, ${user.name || 'User'}!
 
 You have requested to reset your password.
 Please use the following one-time code to complete the process:
@@ -581,26 +750,19 @@ Please use the following one-time code to complete the process:
 Reset Code: ${otp}
 
 Please visit the link below to verify and reset your password:
-${setupLink}
+${this.passwordLink}
 
-This code will expire in 10 minutes.`;
-
-    await this.mailService.sendMail({
-      to: user.email,
-      subject: 'WeLinc Logistics - Password Reset Request',
-      text: mailContent,
+This code will expire in 10 minutes.`,
       html: `<p>Hello, <strong>${user.name || 'User'}</strong>!</p>
 <p>You have requested to reset your password.</p>
 <p>Please use the following one-time code to complete the process:</p>
 <h2 style="font-size: 24px; font-weight: bold; color: #1a1f6e; letter-spacing: 2px;">${otp}</h2>
 <p>Please visit the link below to verify and reset your password:</p>
-<p><a href="${setupLink}" style="color: #1a1f6e; font-weight: bold; text-decoration: underline;">Reset your password</a></p>
+<p><a href="${this.passwordLink}" style="color: #1a1f6e; font-weight: bold; text-decoration: underline;">Reset your password</a></p>
 <p>This code will expire in 10 minutes.</p>`,
     });
 
-    console.log(`[ForgotPassword] OTP for ${email}: ${otp}`);
-
-    return { message: 'If that email is registered, an OTP has been sent.' };
+    return { message: FORGOT_PASSWORD_MESSAGE };
   }
 
   async verifyOtp(email: string, otp: string): Promise<{ message: string }> {
@@ -670,6 +832,9 @@ This code will expire in 10 minutes.`;
         data: {
           passwordHash: await argon2.hash(newPassword),
           emailVerified: true,
+          // Completing a code also ends a lockout (AC-17)
+          lockedAt: null,
+          failedLoginAttempts: 0,
         },
       }),
     ]);
@@ -870,6 +1035,69 @@ This code will expire in 10 minutes.`;
       completed: 0,
       totalCards: 0,
     };
+  }
+
+  /** Spec 0009, AC-21: a user's change record, newest first, keyset paged on (createdAt, id). */
+  async getUserChanges(userId: string, query: ListChangesQueryDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const limit = query.limit ?? CHANGES_PAGE_SIZE;
+    const cursor = query.cursor ? decodeChangeCursor(query.cursor) : null;
+    const rows = await this.prisma.userChange.findMany({
+      where: {
+        userId,
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: cursor.createdAt } },
+                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        action: true,
+        field: true,
+        oldValue: true,
+        newValue: true,
+        actorId: true,
+        actorEmail: true,
+        createdAt: true,
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+    });
+
+    const page = rows.slice(0, limit);
+    return {
+      data: page.map((row) => ({
+        ...row,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      nextCursor:
+        rows.length > limit ? encodeChangeCursor(page[page.length - 1]) : null,
+    };
+  }
+
+  /** True when sent. A failure is logged without the email's content, so no code reaches the logs. */
+  private async trySendMail(
+    kind: 'setup' | 'reset',
+    options: { to: string; subject: string; text: string; html: string },
+  ): Promise<boolean> {
+    try {
+      await this.mailService.sendMail(options);
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Could not send the ${kind} email to ${options.to}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+      return false;
+    }
   }
 
   private normalizeRoleAssignments(

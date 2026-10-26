@@ -33,7 +33,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       system?: string;
     },
   ) {
-    let requestedSystem = (payload.system || '') as SystemType;
+    const querySystem: unknown = Array.isArray(request.query?.system)
+      ? request.query.system[0]
+      : request.query?.system;
+    const explicitSystem =
+      typeof querySystem === 'string' ? querySystem.toUpperCase() : '';
+
+    // A valid ?system= wins over the token claim, Origin, Referer and the path,
+    // so a backend asking on its user's behalf gets an answer for its own system
+    let requestedSystem = (
+      Object.values(SystemType).includes(explicitSystem as SystemType)
+        ? explicitSystem
+        : payload.system || ''
+    ) as SystemType;
 
     if (
       !requestedSystem ||
@@ -79,9 +91,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
 
       // 3. Fallback to query parameter system
-      const querySystem: unknown = Array.isArray(request.query?.system)
-        ? request.query.system[0]
-        : request.query?.system;
       if (!requestedSystem && typeof querySystem === 'string' && querySystem) {
         requestedSystem = querySystem.toUpperCase() as SystemType;
       }

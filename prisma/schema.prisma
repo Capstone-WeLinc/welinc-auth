@@ -23,6 +23,17 @@ enum SystemType {
   BMS
 }
 
+enum UserChangeAction {
+  CREATED
+  UPDATED
+  ROLE_CHANGED
+  ACTIVATED
+  DEACTIVATED
+  UNLOCKED
+  RESET_SENT
+  DELETED
+}
+
 model User {
   id                  String               @id @default(uuid()) @db.Uuid
   name                String               @db.VarChar(100)
@@ -40,6 +51,8 @@ model User {
   roles               UserRoleAssignment[]
   passwordResetTokens PasswordResetToken[]
   refreshTokens       RefreshToken[]
+  changes             UserChange[]         @relation("UserChanges")
+  changesMade         UserChange[]         @relation("UserChangesMade")
 
   @@index([deletedAt])
   @@map("users")
@@ -80,4 +93,24 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("refresh_tokens")
+}
+
+// Every admin write to a user, written in the same transaction as the change (spec 0009, AC-20).
+// Never holds a password, hash or code. Kept forever; users are soft deleted only.
+model UserChange {
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @map("user_id") @db.Uuid
+  actorId    String           @map("actor_id") @db.Uuid
+  actorEmail String           @map("actor_email") @db.VarChar(255)
+  action     UserChangeAction
+  field      String?          @db.VarChar(50)
+  oldValue   String?          @map("old_value") @db.Text
+  newValue   String?          @map("new_value") @db.Text
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user  User @relation("UserChanges", fields: [userId], references: [id])
+  actor User @relation("UserChangesMade", fields: [actorId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("user_changes")
 }

@@ -32,6 +32,10 @@ export class MailService {
     }
   }
 
+  /**
+   * Sends the email, or throws when it can't be sent. Without SMTP it logs the email instead, in
+   * development only: in production that would put codes in the logs (spec 0009, AC-16).
+   */
   async sendMail(options: {
     to: string;
     subject: string;
@@ -41,23 +45,22 @@ export class MailService {
     const from =
       process.env.SMTP_FROM || 'WeLinc Logistics <no-reply@welinc.com>';
 
-    if (this.transporter) {
-      try {
-        await this.transporter.sendMail({
-          from,
-          to: options.to,
-          subject: options.subject,
-          text: options.text,
-          html: options.html,
-        });
-        this.logger.log(`Email successfully sent to ${options.to}`);
-      } catch (error) {
-        this.logger.error(`Failed to send email to ${options.to}`, error);
-        this.logFallback(options);
+    if (!this.transporter) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('SMTP is not configured');
       }
-    } else {
       this.logFallback(options);
+      return;
     }
+
+    await this.transporter.sendMail({
+      from,
+      to: options.to,
+      subject: options.subject,
+      text: options.text,
+      html: options.html,
+    });
+    this.logger.log(`Email successfully sent to ${options.to}`);
   }
 
   private logFallback(options: { to: string; subject: string; text: string }) {
