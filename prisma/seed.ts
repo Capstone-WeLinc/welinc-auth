@@ -13,6 +13,7 @@ const prisma = new PrismaClient({ adapter });
 
 async function cleanDatabase(prisma: PrismaClient) {
   console.log('Cleaning auth database...');
+  await prisma.userChange.deleteMany({});
   await prisma.passwordResetToken.deleteMany({});
   await prisma.refreshToken.deleteMany({});
   await prisma.userRoleAssignment.deleteMany({});

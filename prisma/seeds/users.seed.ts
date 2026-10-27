@@ -1,5 +1,43 @@
 import { PrismaClient, UserRole, SystemType } from '@prisma/client';
 import * as argon2 from 'argon2';
+import {
+  BULK_MECHANICS,
+  CHIEF,
+  NAMED_MECHANICS,
+  SEED_IDS,
+  SeedPerson,
+  VRMS_ADMIN,
+} from './shared-ids';
+
+// Every seeded user gets a fixed id from shared-ids.ts, so the VRMS seed can link its
+// Mechanic rows to the same ids (spec 0009, AC-22).
+async function seedUser(
+  prisma: PrismaClient,
+  person: SeedPerson,
+  passwordHash: string,
+  roles: { role: UserRole; system: SystemType }[],
+) {
+  const user = await prisma.user.upsert({
+    where: { email: person.email },
+    update: { emailVerified: true },
+    create: {
+      id: person.id,
+      name: person.name,
+      email: person.email,
+      emailVerified: true,
+      passwordHash,
+    },
+  });
+
+  for (const { role, system } of roles) {
+    await prisma.userRoleAssignment.upsert({
+      where: { userId_role_system: { userId: user.id, role, system } },
+      update: {},
+      create: { userId: user.id, role, system },
+    });
+  }
+  return user;
+}
 
 export async function seedUsers(prisma: PrismaClient) {
   console.log('Creating partitioned admin users...');
@@ -7,88 +45,25 @@ export async function seedUsers(prisma: PrismaClient) {
   const adminPasswordHash = await argon2.hash('admin1234');
 
   // 1. BMS Admin
-  const bmsAdminUser = await prisma.user.upsert({
-    where: { email: 'bms.admin@welinc.com' },
-    update: { emailVerified: true },
-    create: {
-      name: 'Bernardo Mendoza',
-      email: 'bms.admin@welinc.com',
-      emailVerified: true,
-      passwordHash: adminPasswordHash,
-    },
-  });
-
-  await prisma.userRoleAssignment.upsert({
-    where: {
-      userId_role_system: {
-        userId: bmsAdminUser.id,
-        role: UserRole.ADMIN,
-        system: SystemType.BMS,
-      },
-    },
-    update: {},
-    create: {
-      userId: bmsAdminUser.id,
-      role: UserRole.ADMIN,
-      system: SystemType.BMS,
-    },
-  });
+  await seedUser(
+    prisma,
+    { id: SEED_IDS.bmsAdmin, email: 'bms.admin@welinc.com', name: 'Bernardo Mendoza' },
+    adminPasswordHash,
+    [{ role: UserRole.ADMIN, system: SystemType.BMS }],
+  );
 
   // 2. VRMS Admin
-  const vrmsAdminUser = await prisma.user.upsert({
-    where: { email: 'vrms.admin@welinc.com' },
-    update: { emailVerified: true },
-    create: {
-      name: 'Victor Ramos',
-      email: 'vrms.admin@welinc.com',
-      emailVerified: true,
-      passwordHash: adminPasswordHash,
-    },
-  });
-
-  await prisma.userRoleAssignment.upsert({
-    where: {
-      userId_role_system: {
-        userId: vrmsAdminUser.id,
-        role: UserRole.ADMIN,
-        system: SystemType.VRMS,
-      },
-    },
-    update: {},
-    create: {
-      userId: vrmsAdminUser.id,
-      role: UserRole.ADMIN,
-      system: SystemType.VRMS,
-    },
-  });
+  await seedUser(prisma, VRMS_ADMIN, adminPasswordHash, [
+    { role: UserRole.ADMIN, system: SystemType.VRMS },
+  ]);
 
   // 3. VMMS Admin
-  const vmmsAdminUser = await prisma.user.upsert({
-    where: { email: 'vmms.admin@welinc.com' },
-    update: { emailVerified: true },
-    create: {
-      name: 'Valerio Mercado',
-      email: 'vmms.admin@welinc.com',
-      emailVerified: true,
-      passwordHash: adminPasswordHash,
-    },
-  });
-
-  await prisma.userRoleAssignment.upsert({
-    where: {
-      userId_role_system: {
-        userId: vmmsAdminUser.id,
-        role: UserRole.ADMIN,
-        system: SystemType.VMMS,
-      },
-    },
-    update: {},
-    create: {
-      userId: vmmsAdminUser.id,
-      role: UserRole.ADMIN,
-      system: SystemType.VMMS,
-    },
-  });
+  await seedUser(
+    prisma,
+    { id: SEED_IDS.vmmsAdmin, email: 'vmms.admin@welinc.com', name: 'Valerio Mercado' },
+    adminPasswordHash,
+    [{ role: UserRole.ADMIN, system: SystemType.VMMS }],
+  );
 
   console.log('  Partitioned admin users created (BMS, VRMS, VMMS)');
 
@@ -97,186 +72,42 @@ export async function seedUsers(prisma: PrismaClient) {
   const csPasswordHash = await argon2.hash('cs1234');
   const opsPasswordHash = await argon2.hash('ops1234');
 
-  const csUser = await prisma.user.upsert({
-    where: { email: 'cs.user@welinc.com' },
-    update: { emailVerified: true },
-    create: {
-      name: 'Clara Reyes',
-      email: 'cs.user@welinc.com',
-      emailVerified: true,
-      passwordHash: csPasswordHash,
-    },
-  });
+  await seedUser(
+    prisma,
+    { id: SEED_IDS.csUser, email: 'cs.user@welinc.com', name: 'Clara Reyes' },
+    csPasswordHash,
+    [{ role: UserRole.CUSTOMER_SUPPORT, system: SystemType.BMS }],
+  );
 
-  await prisma.userRoleAssignment.upsert({
-    where: {
-      userId_role_system: {
-        userId: csUser.id,
-        role: UserRole.CUSTOMER_SUPPORT,
-        system: SystemType.BMS,
-      },
-    },
-    update: {},
-    create: {
-      userId: csUser.id,
-      role: UserRole.CUSTOMER_SUPPORT,
-      system: SystemType.BMS,
-    },
-  });
+  await seedUser(
+    prisma,
+    { id: SEED_IDS.opsUser, email: 'ops.user@welinc.com', name: 'Oscar Santos' },
+    opsPasswordHash,
+    [{ role: UserRole.OPERATIONS, system: SystemType.BMS }],
+  );
 
-  const opsUser = await prisma.user.upsert({
-    where: { email: 'ops.user@welinc.com' },
-    update: { emailVerified: true },
-    create: {
-      name: 'Oscar Santos',
-      email: 'ops.user@welinc.com',
-      emailVerified: true,
-      passwordHash: opsPasswordHash,
-    },
-  });
-
-  await prisma.userRoleAssignment.upsert({
-    where: {
-      userId_role_system: {
-        userId: opsUser.id,
-        role: UserRole.OPERATIONS,
-        system: SystemType.BMS,
-      },
-    },
-    update: {},
-    create: {
-      userId: opsUser.id,
-      role: UserRole.OPERATIONS,
-      system: SystemType.BMS,
-    },
-  });
-
-  // 5. Mechanics
+  // 5. Mechanics (VRMS and VMMS)
   console.log('Creating sample mechanics...');
   const mechanicPassword = await argon2.hash('mechanic1234');
-  const mechEmails = [
-    { email: 'mech.juan@welinc.com', name: 'Juan dela Cruz' },
-    { email: 'mech.pedro@welinc.com', name: 'Pedro Santos' },
-    { email: 'mech.rommel@welinc.com', name: 'Rommel Cruz' },
-    { email: 'mech.isabel@welinc.com', name: 'Isabel Reyes' },
-    { email: 'mech.carl@welinc.com', name: 'Carl Santos' },
-  ];
+  const mechanicRoles = [SystemType.VRMS, SystemType.VMMS].map((system) => ({
+    role: UserRole.MECHANIC,
+    system,
+  }));
 
-  const mechanicsList: any[] = [];
-  for (const m of mechEmails) {
-    const user = await prisma.user.upsert({
-      where: { email: m.email },
-      update: { emailVerified: true },
-      create: {
-        name: m.name,
-        email: m.email,
-        emailVerified: true,
-        passwordHash: mechanicPassword,
-      },
-    });
-
-    for (const sys of [SystemType.VRMS, SystemType.VMMS]) {
-      await prisma.userRoleAssignment.upsert({
-        where: {
-          userId_role_system: {
-            userId: user.id,
-            role: UserRole.MECHANIC,
-            system: sys,
-          },
-        },
-        update: {},
-        create: {
-          userId: user.id,
-          role: UserRole.MECHANIC,
-          system: sys,
-        },
-      });
-    }
-
-    mechanicsList.push({ id: user.id, name: user.name });
+  for (const m of NAMED_MECHANICS) {
+    await seedUser(prisma, m, mechanicPassword, mechanicRoles);
   }
 
   // 5b. Chief mechanic (VRMS only)
   console.log('Creating chief mechanic...');
-  const chiefUser = await prisma.user.upsert({
-    where: { email: 'vrms.chief@welinc.com' },
-    update: { emailVerified: true },
-    create: {
-      name: 'Ramon Villanueva',
-      email: 'vrms.chief@welinc.com',
-      emailVerified: true,
-      passwordHash: mechanicPassword,
-    },
-  });
+  await seedUser(prisma, CHIEF, mechanicPassword, [
+    { role: UserRole.CHIEF_MECHANIC, system: SystemType.VRMS },
+  ]);
 
-  await prisma.userRoleAssignment.upsert({
-    where: {
-      userId_role_system: {
-        userId: chiefUser.id,
-        role: UserRole.CHIEF_MECHANIC,
-        system: SystemType.VRMS,
-      },
-    },
-    update: {},
-    create: {
-      userId: chiefUser.id,
-      role: UserRole.CHIEF_MECHANIC,
-      system: SystemType.VRMS,
-    },
-  });
-
-  // 6. Bulk seeding for pagination (60 users)
+  // 6. Bulk seeding for pagination (60 users); their Mechanic rows are made by the VRMS seed
   console.log('Generating 60 additional mechanics/users with realistic names...');
-  const firstNames = [
-    'Danilo', 'Edgardo', 'Ramon', 'Arnel', 'Bernardo', 'Catalino', 'Dionisio', 'Juan', 'Pedro',
-    'Rommel', 'Roberto', 'Generoso', 'Jaime', 'Manuel', 'Restituto', 'Reynaldo', 'Salvador',
-    'Vicente', 'Wilfredo', 'Renato', 'Gregorio', 'Leopoldo', 'Rolando', 'Armando', 'Francisco',
-    'Ernesto', 'Fernando', 'Mario', 'Antonio', 'Joseph', 'Alberto', 'Ricardo', 'Ferdinand',
-    'Eduardo', 'Roger', 'Enrique', 'Luis', 'Carlos', 'Oscar', 'Winston', 'Benjamin'
-  ];
-  const lastNames = [
-    'Santos', 'Ramos', 'Cruz', 'Gonzales', 'Reyes', 'Castro', 'Bulaon', 'Mendoza', 'Pascual',
-    'Perez', 'Mercado', 'Dizon', 'Aquino', 'Bautista', 'Garcia', 'Torres', 'Tolentino',
-    'Villanueva', 'dela Cruz', 'Ocampo', 'Espiritu', 'Panganiban', 'Soriano', 'Gomez', 'Lopez',
-    'Castillo', 'Santiago', 'Sebastian', 'del Rosario', 'Valdez', 'Guzman', 'Corpuz'
-  ];
-
-  for (let i = 1; i <= 60; i++) {
-    const firstName = firstNames[i % firstNames.length];
-    const lastName = lastNames[(i * 3) % lastNames.length];
-    const name = `${firstName} ${lastName}`;
-    const email = `${firstName.toLowerCase()}.${lastName.toLowerCase().replace(/\s+/g, '')}${i}@welinc.com`;
-
-    const user = await prisma.user.upsert({
-      where: { email },
-      update: { emailVerified: true },
-      create: {
-        name,
-        email,
-        emailVerified: true,
-        passwordHash: mechanicPassword,
-      },
-    });
-
-    for (const sys of [SystemType.VRMS, SystemType.VMMS]) {
-      await prisma.userRoleAssignment.upsert({
-        where: {
-          userId_role_system: {
-            userId: user.id,
-            role: UserRole.MECHANIC,
-            system: sys,
-          },
-        },
-        update: {},
-        create: {
-          userId: user.id,
-          role: UserRole.MECHANIC,
-          system: sys,
-        },
-      });
-    }
-
-    // Mechanic record created in VRMS service
+  for (const m of BULK_MECHANICS) {
+    await seedUser(prisma, m, mechanicPassword, mechanicRoles);
   }
 
   console.log('  All seed users and mechanics successfully processed.\n');

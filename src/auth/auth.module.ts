@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import SharedModule from '../shared/shared.module';
 
 @Module({
@@ -28,7 +29,13 @@ import SharedModule from '../shared/shared.module';
     }),
     SharedModule,
   ],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, RolesGuard],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    OptionalJwtAuthGuard,
+    RolesGuard,
+  ],
   controllers: [AuthController],
 })
 export default class AuthModule {}
