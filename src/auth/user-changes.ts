@@ -19,9 +19,16 @@ export function rolesKey(roles: RoleAssignment[]): string {
     .join(',');
 }
 
-/** The systems this user is an ADMIN of. */
+/**
+ * The systems this user is an ADMIN of, sorted. Callers lock each system's admin rows in this
+ * order, so two writes that touch the same systems always lock them the same way and can't
+ * deadlock.
+ */
 export function adminSystems(roles: RoleAssignment[]): SystemType[] {
-  return roles.filter((r) => r.role === UserRole.ADMIN).map((r) => r.system);
+  return roles
+    .filter((r) => r.role === UserRole.ADMIN)
+    .map((r) => r.system)
+    .sort();
 }
 
 /** One UserChange row for `userId`, made by `actor`. */
