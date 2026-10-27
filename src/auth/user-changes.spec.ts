@@ -49,7 +49,34 @@ describe('adminSystems', () => {
       { role: UserRole.ADMIN, system: SystemType.BMS },
     ]);
 
-    expect(systems).toEqual([SystemType.VRMS, SystemType.BMS]);
+    expect(systems).toEqual([SystemType.BMS, SystemType.VRMS]);
+  });
+
+  it('sorts the systems whatever order the roles come in, so locks are always taken in one order', () => {
+    const vrmsFirst = adminSystems([
+      { role: UserRole.ADMIN, system: SystemType.VRMS },
+      { role: UserRole.ADMIN, system: SystemType.BMS },
+    ]);
+    const bmsFirst = adminSystems([
+      { role: UserRole.ADMIN, system: SystemType.BMS },
+      { role: UserRole.ADMIN, system: SystemType.VRMS },
+    ]);
+
+    expect(vrmsFirst).toEqual(bmsFirst);
+  });
+
+  it('does not reorder the roles it was given', () => {
+    const roles = [
+      { role: UserRole.ADMIN, system: SystemType.VRMS },
+      { role: UserRole.ADMIN, system: SystemType.BMS },
+    ];
+
+    adminSystems(roles);
+
+    expect(roles.map((r) => r.system)).toEqual([
+      SystemType.VRMS,
+      SystemType.BMS,
+    ]);
   });
 
   it('returns an empty list for a user with no admin role', () => {

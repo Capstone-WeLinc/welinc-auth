@@ -430,6 +430,79 @@ describe('AuthService admin writes', () => {
       expect(db.$queryRaw).not.toHaveBeenCalled();
     });
 
+    // Follow up from the review: decisions come from a read inside the transaction
+    it('decides from the read inside the transaction, not the one before it', async () => {
+      const { service, db } = arrange(
+        existing({
+          roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+        }),
+      );
+      // Between the two reads, another admin made this user the last VRMS admin
+      db.user.findUnique
+        .mockResolvedValueOnce(
+          existing({
+            roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+          }),
+        )
+        .mockResolvedValueOnce(
+          existing({
+            roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+          }),
+        );
+      db.user.count.mockResolvedValue(0);
+
+      await expect(
+        service.updateUser(USER_ID, { isActive: false }, actor),
+      ).rejects.toThrow('This is the last VRMS admin.');
+      expect(db.user.update).not.toHaveBeenCalled();
+    });
+
+    it('writes the old value from the read inside the transaction', async () => {
+      const { service, db } = arrange();
+      db.user.findUnique
+        .mockResolvedValueOnce(existing({ name: 'Pedro' }))
+        .mockResolvedValueOnce(existing({ name: 'Pedro Santos' }));
+
+      await service.updateUser(USER_ID, { name: 'Pedro Cruz' }, actor);
+
+      expect(changesWritten(db)).toEqual([
+        expect.objectContaining({
+          field: 'name',
+          oldValue: 'Pedro Santos',
+          newValue: 'Pedro Cruz',
+        }),
+      ]);
+    });
+
+    it('answers 404 when the user is deleted between the two reads', async () => {
+      const { service, db } = arrange();
+      db.user.findUnique
+        .mockResolvedValueOnce(existing())
+        .mockResolvedValueOnce(existing({ deletedAt: NOW }));
+
+      await expect(
+        service.updateUser(USER_ID, { name: 'X' }, actor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(db.user.update).not.toHaveBeenCalled();
+    });
+
+    // Follow up from the review: one lock order, so two multi system admins can't deadlock
+    it("locks a multi system admin's systems in sorted order", async () => {
+      const { service, db } = arrange(
+        existing({
+          roles: [
+            { role: UserRole.ADMIN, system: SystemType.VRMS },
+            { role: UserRole.ADMIN, system: SystemType.BMS },
+          ],
+        }),
+      );
+
+      await service.updateUser(USER_ID, { isActive: false }, actor);
+
+      const locked = db.$queryRaw.mock.calls.map((call) => call[1]);
+      expect(locked).toEqual([SystemType.BMS, SystemType.VRMS]);
+    });
+
     // covers: AC-20
     it('writes one UPDATED row per changed field with old and new values', async () => {
       const { service, db } = arrange();

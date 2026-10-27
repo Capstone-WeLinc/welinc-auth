@@ -420,63 +420,74 @@ This code will expire in 1 hour.`,
     dto: UpdateUserDto,
     actor: Actor,
   ): Promise<ManagedUserResponse> {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        isActive: true,
-        deletedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
+    const userSelect = {
+      id: true,
+      name: true,
+      email: true,
+      isActive: true,
+      deletedAt: true,
+      roles: {
+        select: {
+          role: true,
+          system: true,
         },
       },
-    });
+    } satisfies Prisma.UserSelect;
 
-    if (!existingUser || existingUser.deletedAt) {
+    // Outside the transaction: only the early 404 and the slow work (DNS and the password hash).
+    // Every decision about what changes is made from a fresh read inside the transaction below.
+    const current = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: userSelect,
+    });
+    if (!current || current.deletedAt) {
       throw new NotFoundException('User not found');
     }
 
     const newEmail = dto.email?.trim().toLowerCase();
-    const isEmailChanging = !!(
-      newEmail && newEmail !== existingUser.email.toLowerCase()
-    );
-    if (isEmailChanging && dto.email) {
+    if (dto.email && newEmail && newEmail !== current.email.toLowerCase()) {
       await validateEmailDomain(dto.email);
     }
 
     const newName = dto.name?.trim();
-    const isNameChanging = !!newName && newName !== existingUser.name;
-    const roleAssignments = dto.roleAssignments
-      ? this.mergeRoleAssignments(
-          existingUser.roles,
-          this.normalizeRoleAssignments(dto.roleAssignments),
-        )
+    const requestedRoles = dto.roleAssignments
+      ? this.normalizeRoleAssignments(dto.roleAssignments)
       : undefined;
-    const areRolesChanging =
-      !!roleAssignments &&
-      rolesKey(roleAssignments) !== rolesKey(existingUser.roles);
-    const isActiveChanging =
-      typeof dto.isActive === 'boolean' &&
-      dto.isActive !== existingUser.isActive;
-
-    if (actor.id === userId) {
-      if (areRolesChanging) throw new ConflictException(SELF_ROLE);
-      if (isActiveChanging && !dto.isActive) {
-        throw new ConflictException(SELF_DEACTIVATE);
-      }
-    }
-
     const passwordHash = dto.password
       ? await argon2.hash(dto.password)
       : undefined;
 
     try {
       const user = await this.prisma.$transaction(async (tx) => {
+        const existingUser = await tx.user.findUnique({
+          where: { id: userId },
+          select: userSelect,
+        });
+        if (!existingUser || existingUser.deletedAt) {
+          throw new NotFoundException('User not found');
+        }
+
+        const isEmailChanging = !!(
+          newEmail && newEmail !== existingUser.email.toLowerCase()
+        );
+        const isNameChanging = !!newName && newName !== existingUser.name;
+        const roleAssignments = requestedRoles
+          ? this.mergeRoleAssignments(existingUser.roles, requestedRoles)
+          : undefined;
+        const areRolesChanging =
+          !!roleAssignments &&
+          rolesKey(roleAssignments) !== rolesKey(existingUser.roles);
+        const isActiveChanging =
+          typeof dto.isActive === 'boolean' &&
+          dto.isActive !== existingUser.isActive;
+
+        if (actor.id === userId) {
+          if (areRolesChanging) throw new ConflictException(SELF_ROLE);
+          if (isActiveChanging && !dto.isActive) {
+            throw new ConflictException(SELF_DEACTIVATE);
+          }
+        }
+
         // An active admin who stops being one, by role or deactivation, must not be the last
         if (existingUser.isActive) {
           for (const system of adminSystems(existingUser.roles)) {
