@@ -11,11 +11,12 @@ The shared auth service for the WeLinc suite: NestJS 11 with Prisma 7 on Postgre
 | `src/main.ts` | Bootstrap, security headers, strict global `ValidationPipe`, CORS, static `/uploads/` |
 | `src/auth/auth.controller.ts` | All `/auth/*` routes: login, forgot password, verify OTP, reset password, `me`, user admin, profile |
 | `src/auth/auth.service.ts` | Login, lockout (5 failed attempts), OTP and reset flows, user and profile logic |
-| `src/auth/guards/`, `decorators/roles.decorator.ts` | `JwtAuthGuard`, `RolesGuard`, `@Roles()` |
-| `src/auth/strategies/jwt.strategy.ts` | JWT validation, works out the requested system from the token, `Origin` or `Referer` |
+| `src/auth/guards/`, `decorators/roles.decorator.ts` | `JwtAuthGuard`, `OptionalJwtAuthGuard` (never rejects, for public routes that act differently for a signed in admin), `RolesGuard`, `@Roles()` |
+| `src/auth/strategies/jwt.strategy.ts` | JWT validation, works out the requested system: a valid `?system=` query first, then the token, `Origin`, `Referer` and the path. `GET /auth/me?system=VRMS` is how backend-vrms checks each caller |
+| `src/auth/user-changes.ts` | Admin change record helpers (`UserChange` rows), the last admin guard and the changes cursor |
 | `src/auth/dto/` | Request DTOs validated with `class-validator` |
-| `src/shared/` | `PrismaService`, `MailService` (logs instead of sending when SMTP is blank), `SharedModule` |
-| `prisma/schema.prisma`, `prisma/migrations/` | `User`, `UserRoleAssignment` (role plus system), `PasswordResetToken`, `RefreshToken` |
+| `src/shared/` | `PrismaService`, `MailService` (logs instead of sending when SMTP is blank, in development only; in production it throws), `SharedModule` |
+| `prisma/schema.prisma`, `prisma/migrations/` | `User`, `UserRoleAssignment` (role plus system), `PasswordResetToken`, `RefreshToken`, `UserChange` |
 | `prisma/seed.ts`, `prisma/seeds/` | Seed users |
 | `nginx.conf` | The gateway on port 3000, routing `/auth`, `/vrms`, `/repairs`, `/ai`, `/analytics` |
 
@@ -40,7 +41,8 @@ npx prisma migrate dev   # asks first, see root rules
 - The global `ValidationPipe` uses `whitelist` and `forbidNonWhitelisted`, so every body needs a DTO and unknown fields are rejected.
 - CORS allows localhost always, plus the origins in `CORS_ORIGINS` (comma separated, `*` allows all).
 - Every schema change needs a timestamped migration folder under `prisma/migrations/`.
-- New variables go in `.env.example` only (today: `PORT`, `NODE_ENV`, `DATABASE_URL`, `JWT_SECRET`, `JWT_ACCESS_EXPIRY`, `JWT_REFRESH_EXPIRY`, `SEMAPHORE_*`, `SMTP_*`, `CORS_ORIGINS`).
+- New variables go in `.env.example` only (today: `PORT`, `NODE_ENV`, `DATABASE_URL`, `JWT_SECRET`, `JWT_ACCESS_EXPIRY`, `JWT_REFRESH_EXPIRY`, `SEMAPHORE_*`, `SMTP_*`, `CORS_ORIGINS`, `PORTAL_URL`; the last is required when `NODE_ENV=production`).
+- Every admin write to a user writes `UserChange` rows in the same transaction. No admin can deactivate, delete or demote themselves or the last active admin of a system (409); keep both rules on any new user write path.
 
 ## Gotchas
 
@@ -49,7 +51,7 @@ npx prisma migrate dev   # asks first, see root rules
 - `src/common/*` and the folders under `src/shared/` (garages, mechanics, notifications, vehicles) are empty placeholders.
 - `npm run lint` fixes files in place, so check `git diff` afterwards.
 - Nginx here is the workspace gateway for every service, so a route change for VRMS or AI is edited in this repo. That crosses repos and needs a spec first.
-- Spec 0007's follow up: adding a mechanic here creates no VRMS `Mechanic` row. See the auth boundary feature in `docs/scope/foundations.md`.
+- This is the only owner of accounts, passwords, codes and roles for VRMS (spec 0009). backend-vrms copies mechanics into its own `Mechanic` rows through its sync, so a mechanic added here shows in the VRMS picker after the Users page runs it.
 
 ## Agent skills
 
