@@ -41,7 +41,7 @@ npx prisma migrate dev   # asks first, see root rules
 - The global `ValidationPipe` uses `whitelist` and `forbidNonWhitelisted`, so every body needs a DTO and unknown fields are rejected.
 - CORS allows localhost always, plus the origins in `CORS_ORIGINS` (comma separated, `*` allows all).
 - Every schema change needs a timestamped migration folder under `prisma/migrations/`.
-- New variables go in `.env.example` only (today: `PORT`, `NODE_ENV`, `DATABASE_URL`, `JWT_SECRET`, `JWT_ACCESS_EXPIRY`, `JWT_REFRESH_EXPIRY`, `SEMAPHORE_*`, `SMTP_*`, `CORS_ORIGINS`, `PORTAL_URL`; the last is required when `NODE_ENV=production`).
+- New variables go in `.env.example` only (today: `PORT`, `NODE_ENV`, `DATABASE_URL`, `JWT_SECRET`, `JWT_ACCESS_EXPIRY`, `JWT_REFRESH_EXPIRY`, `SMTP_*`, `CORS_ORIGINS`, `PORTAL_URL`; the last is required when `NODE_ENV=production`).
 - Every admin write to a user writes `UserChange` rows in the same transaction. No admin can deactivate, delete or demote themselves or the last active admin of a system (409); keep both rules on any new user write path.
 
 ## Gotchas
