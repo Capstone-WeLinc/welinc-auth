@@ -16,10 +16,11 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { UserRole } from '@prisma/client';
+import { SystemType, UserRole } from '@prisma/client';
 import { AuthService, type OptionalCaller } from './auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
+import { LookupUsersQueryDto } from './dto/lookup-users.query.dto';
 import { LoginDto } from './dto/login.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SetUserStatusDto } from './dto/set-user-status.dto';
@@ -35,11 +36,17 @@ import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
 
-/** The signed in admin, as the change record names them (spec 0009, AC-19, AC-20). */
-type AdminRequest = { user: { sub: string; email: string } };
+/**
+ * The signed in admin, as the change record names them (spec 0009, AC-19, AC-20), plus the
+ * system their request resolved to, which scopes every admin user endpoint (spec 0011, AC-26).
+ */
+type AdminRequest = {
+  user: { sub: string; email: string; system: SystemType };
+};
 const actorOf = (req: AdminRequest) => ({
   id: req.user.sub,
   email: req.user.email,
+  system: req.user.system,
 });
 
 @Controller('auth')
@@ -88,8 +95,15 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @Get('users')
-  listUsers(@Query() query: ListUsersQueryDto) {
-    return this.authService.listUsers(query);
+  listUsers(@Query() query: ListUsersQueryDto, @Req() req: AdminRequest) {
+    return this.authService.listUsers(query, actorOf(req));
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('users/lookup')
+  lookupUsers(@Query() query: LookupUsersQueryDto, @Req() req: AdminRequest) {
+    return this.authService.lookupUsers(query.q, actorOf(req));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -134,8 +148,9 @@ export class AuthController {
   listUserChanges(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: ListChangesQueryDto,
+    @Req() req: AdminRequest,
   ) {
-    return this.authService.getUserChanges(id, query);
+    return this.authService.getUserChanges(id, query, actorOf(req));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -144,8 +159,9 @@ export class AuthController {
   resetPassword(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ResetPasswordDto,
+    @Req() req: AdminRequest,
   ) {
-    return this.authService.resetPassword(id, dto);
+    return this.authService.resetPassword(id, dto, actorOf(req));
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

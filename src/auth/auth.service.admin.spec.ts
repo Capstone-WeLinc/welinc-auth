@@ -27,12 +27,17 @@ import { encodeChangeCursor } from './user-changes';
 
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
-const actor = { id: ADMIN_ID, email: 'admin@welinc.com' };
+const actor = {
+  id: ADMIN_ID,
+  email: 'admin@welinc.com',
+  system: SystemType.VRMS,
+};
 
 type Fn = jest.Mock<(...args: any[]) => any>;
 const fn = (): Fn => jest.fn<(...args: any[]) => any>();
 
 const NOW = new Date('2026-10-27T08:00:00.000Z');
+const VRMS_MECHANIC = [{ role: UserRole.MECHANIC, system: SystemType.VRMS }];
 
 function managedRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -198,7 +203,10 @@ describe('AuthService admin writes', () => {
     // covers: AC-20 (a save that changes nothing writes no row)
     it('writes no row and no update when the status is already what was asked', async () => {
       const { service, db } = build();
-      db.user.findFirst.mockResolvedValue({ isActive: true, roles: [] });
+      db.user.findFirst.mockResolvedValue({
+        isActive: true,
+        roles: VRMS_MECHANIC,
+      });
       db.user.findUniqueOrThrow.mockResolvedValue(managedRow());
 
       await service.updateUserStatus(USER_ID, { isActive: true }, actor);
@@ -233,12 +241,12 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: true,
-        roles: [{ role: UserRole.ADMIN, system: SystemType.BMS }],
+        roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
       });
       db.user.count.mockResolvedValue(0);
 
       await expect(service.deleteUser(USER_ID, actor)).rejects.toThrow(
-        'This is the last BMS admin.',
+        'This is the last VRMS admin.',
       );
       expect(db.user.update).not.toHaveBeenCalled();
     });
@@ -287,7 +295,10 @@ describe('AuthService admin writes', () => {
     // covers: AC-20
     it('clears the lock and records UNLOCKED', async () => {
       const { service, db } = build();
-      db.user.findFirst.mockResolvedValue({ lockedAt: NOW });
+      db.user.findFirst.mockResolvedValue({
+        lockedAt: NOW,
+        roles: VRMS_MECHANIC,
+      });
       db.user.update.mockResolvedValue(managedRow());
 
       await service.unlockUser(USER_ID, actor);
@@ -304,7 +315,10 @@ describe('AuthService admin writes', () => {
 
     it('writes no row when the user was not locked', async () => {
       const { service, db } = build();
-      db.user.findFirst.mockResolvedValue({ lockedAt: null });
+      db.user.findFirst.mockResolvedValue({
+        lockedAt: null,
+        roles: VRMS_MECHANIC,
+      });
       db.user.findUniqueOrThrow.mockResolvedValue(managedRow());
 
       await service.unlockUser(USER_ID, actor);
@@ -1012,7 +1026,10 @@ describe('AuthService.getUserChanges', () => {
 
   function arrange(rows: ReturnType<typeof row>[] = []) {
     const ctx = build();
-    ctx.db.user.findUnique.mockResolvedValue({ id: USER_ID });
+    ctx.db.user.findUnique.mockResolvedValue({
+      id: USER_ID,
+      roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+    });
     ctx.db.userChange.findMany.mockResolvedValue(rows);
     return ctx;
   }
@@ -1022,15 +1039,15 @@ describe('AuthService.getUserChanges', () => {
     const { service, db } = arrange();
     db.user.findUnique.mockResolvedValue(null);
 
-    await expect(service.getUserChanges(USER_ID, {})).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      service.getUserChanges(USER_ID, {}, actor),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('returns rows with an ISO createdAt and no cursor when everything fits', async () => {
     const { service } = arrange([row(1), row(2)]);
 
-    const result = await service.getUserChanges(USER_ID, {});
+    const result = await service.getUserChanges(USER_ID, {}, actor);
 
     expect(result.nextCursor).toBeNull();
     expect(result.data).toHaveLength(2);
@@ -1043,7 +1060,7 @@ describe('AuthService.getUserChanges', () => {
   it('asks for newest first, one extra row, and a default page of 50', async () => {
     const { service, db } = arrange();
 
-    await service.getUserChanges(USER_ID, {});
+    await service.getUserChanges(USER_ID, {}, actor);
 
     expect(db.userChange.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1057,7 +1074,7 @@ describe('AuthService.getUserChanges', () => {
   it('honours the limit and returns a cursor pointing at the last row on the page', async () => {
     const { service } = arrange([row(1), row(2), row(3)]);
 
-    const result = await service.getUserChanges(USER_ID, { limit: 2 });
+    const result = await service.getUserChanges(USER_ID, { limit: 2 }, actor);
 
     expect(result.data.map((r) => r.id)).toEqual([row(1).id, row(2).id]);
     expect(result.nextCursor).toBe(
@@ -1073,7 +1090,7 @@ describe('AuthService.getUserChanges', () => {
       id: last.id,
     });
 
-    await service.getUserChanges(USER_ID, { cursor, limit: 2 });
+    await service.getUserChanges(USER_ID, { cursor, limit: 2 }, actor);
 
     expect(db.userChange.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1092,7 +1109,7 @@ describe('AuthService.getUserChanges', () => {
     const { service, db } = arrange();
 
     await expect(
-      service.getUserChanges(USER_ID, { cursor: 'garbage' }),
+      service.getUserChanges(USER_ID, { cursor: 'garbage' }, actor),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(db.userChange.findMany).not.toHaveBeenCalled();
   });
@@ -1100,7 +1117,7 @@ describe('AuthService.getUserChanges', () => {
   it('never selects anything beyond the documented fields', async () => {
     const { service, db } = arrange();
 
-    await service.getUserChanges(USER_ID, {});
+    await service.getUserChanges(USER_ID, {}, actor);
 
     const { select } = db.userChange.findMany.mock.calls[0][0];
     expect(Object.keys(select).sort()).toEqual(
