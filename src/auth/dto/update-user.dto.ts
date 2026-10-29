@@ -1,6 +1,5 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -35,9 +34,9 @@ export class UpdateUserDto {
   @IsBoolean()
   isActive?: boolean;
 
+  // Replaces the caller's system roles; an empty list removes the account from it (spec 0011, AC-28)
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => RoleAssignmentDto)
   roleAssignments?: RoleAssignmentDto[];

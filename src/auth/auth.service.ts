@@ -28,7 +28,6 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ListChangesQueryDto } from './dto/list-changes.query.dto';
 import {
-  Actor,
   SELF_DEACTIVATE,
   SELF_DELETE,
   SELF_ROLE,
@@ -39,6 +38,17 @@ import {
   encodeChangeCursor,
   rolesKey,
 } from './user-changes';
+import {
+  AdminCaller,
+  LOOKUP_LIMIT,
+  LookupLimiter,
+  assertInSystem,
+  assertNotAdminElsewhere,
+  assertNotShared,
+  assertOwnSystemRoles,
+  otherSystems,
+  replaceSystemRoles,
+} from './user-scope';
 
 export async function validateEmailDomain(email: string): Promise<void> {
   const domain = email.split('@')[1];
@@ -142,9 +152,22 @@ export type ManagedUserResponse = {
   roles: RoleAssignment[];
 };
 
+/** An admin answer: only the caller's system roles, plus the other systems by name (spec 0011, AC-26). */
+export type ScopedUserResponse = ManagedUserResponse & {
+  otherSystems: SystemType[];
+};
+
+export type LookupUserResponse = {
+  id: string;
+  name: string;
+  email: string;
+  systems: SystemType[];
+};
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly lookupLimiter = new LookupLimiter();
   /** Where setup and reset emails send people (spec 0009, AC-16). */
   private readonly passwordLink: string;
 
@@ -265,13 +288,19 @@ export class AuthService {
     };
   }
 
-  async unlockUser(userId: string, actor: Actor): Promise<ManagedUserResponse> {
+  async unlockUser(
+    userId: string,
+    actor: AdminCaller,
+  ): Promise<ScopedUserResponse> {
     const user = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.user.findFirst({
         where: { id: userId, deletedAt: null },
-        select: { lockedAt: true },
+        select: {
+          lockedAt: true,
+          roles: { select: { role: true, system: true } },
+        },
       });
-      if (!existing) throw new NotFoundException('User not found');
+      assertInSystem(existing, actor.system);
       // Not locked: nothing changes, so no change row
       if (existing.lockedAt === null) {
         return tx.user.findUniqueOrThrow({
@@ -290,54 +319,107 @@ export class AuthService {
       return updated;
     });
 
-    return this.mapManagedUser(user);
+    return this.mapScopedUser(user, actor.system);
   }
 
-  async listUsers(query: ListUsersQueryDto): Promise<ManagedUserResponse[]> {
+  /**
+   * Only users who hold a role in the caller's system. A `system` query can't widen it: the
+   * strategy already resolved the caller's system from it, so `_query` is accepted and unused.
+   */
+  async listUsers(
+    _query: ListUsersQueryDto,
+    caller: AdminCaller,
+  ): Promise<ScopedUserResponse[]> {
     const users = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
-        ...(query.system
-          ? {
-              roles: {
-                some: {
-                  system: query.system,
-                },
-              },
-            }
-          : {}),
+        roles: { some: { system: caller.system } },
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
-        },
-      },
+      select: MANAGED_USER_SELECT,
       orderBy: {
         createdAt: 'desc',
       },
     });
 
-    return users.map((user) => this.mapManagedUser(user));
+    return users.map((user) => this.mapScopedUser(user, caller.system));
+  }
+
+  /** Spec 0011, AC-29: active accounts outside the caller's system, to attach a role to. */
+  async lookupUsers(
+    q: string,
+    caller: AdminCaller,
+  ): Promise<LookupUserResponse[]> {
+    this.lookupLimiter.hit(caller.id);
+    const users = await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        deletedAt: null,
+        roles: { none: { system: caller.system } },
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { email: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        roles: { select: { system: true } },
+      },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: LOOKUP_LIMIT,
+    });
+
+    return users.map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      systems: otherSystems(user.roles, caller.system),
+    }));
   }
 
   async createUser(
     dto: CreateUserDto,
-    actor: Actor,
-  ): Promise<ManagedUserResponse & { setupEmailSent: boolean }> {
+    actor: AdminCaller,
+  ): Promise<ScopedUserResponse & { setupEmailSent: boolean }> {
     const roleAssignments = this.normalizeRoleAssignments(dto.roleAssignments);
+    assertOwnSystemRoles(roleAssignments, actor.system);
+
+    // Spec 0011, AC-30: an email that already has an account outside this system can be attached
+    const existing = await this.prisma.user.findFirst({
+      where: {
+        email: { equals: dto.email.trim(), mode: 'insensitive' },
+      },
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        deletedAt: true,
+        roles: { select: { role: true, system: true } },
+      },
+    });
+    if (existing) {
+      if (!this.isAttachable(existing, actor.system)) {
+        throw new ConflictException('Email already exists');
+      }
+      if (!dto.attachExisting) {
+        throw new ConflictException({
+          statusCode: 409,
+          message: 'This email already has a WeLinc account.',
+          code: 'ACCOUNT_EXISTS',
+          id: existing.id,
+          name: existing.name,
+          systems: otherSystems(existing.roles, actor.system),
+        });
+      }
+      const attached = await this.attachExistingAccount(
+        existing.id,
+        roleAssignments,
+        actor,
+      );
+      return { ...attached, setupEmailSent: false };
+    }
+
     await validateEmailDomain(dto.email);
 
     let passwordHash: string;
@@ -412,14 +494,68 @@ This code will expire in 1 hour.`,
         })
       : false;
 
-    return { ...this.mapManagedUser(user), setupEmailSent };
+    return { ...this.mapScopedUser(user, actor.system), setupEmailSent };
+  }
+
+  /** Active, not deleted, and not in `system` yet: the only accounts create may attach to. */
+  private isAttachable(
+    user: {
+      isActive: boolean;
+      deletedAt: Date | null;
+      roles: RoleAssignment[];
+    },
+    system: SystemType,
+  ): boolean {
+    return (
+      user.isActive &&
+      !user.deletedAt &&
+      !user.roles.some((r) => r.system === system)
+    );
+  }
+
+  /** Adds the caller's system roles only; password, name and other roles stay (AC-30). */
+  private async attachExistingAccount(
+    userId: string,
+    roleAssignments: RoleAssignment[],
+    actor: AdminCaller,
+  ): Promise<ScopedUserResponse> {
+    const user = await this.prisma.$transaction(async (tx) => {
+      // Decided again inside the transaction, so a deactivate or attach in between wins
+      const current = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          isActive: true,
+          deletedAt: true,
+          roles: { select: { role: true, system: true } },
+        },
+      });
+      if (!current || !this.isAttachable(current, actor.system)) {
+        throw new ConflictException('Email already exists');
+      }
+      await tx.userRoleAssignment.createMany({
+        data: roleAssignments.map((r) => ({ userId, ...r })),
+      });
+      await tx.userChange.create({
+        data: change(userId, actor, UserChangeAction.ROLE_CHANGED, {
+          field: 'roles',
+          oldValue: rolesKey(current.roles),
+          newValue: rolesKey([...current.roles, ...roleAssignments]),
+        }),
+      });
+      return tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: MANAGED_USER_SELECT,
+      });
+    });
+
+    return this.mapScopedUser(user, actor.system);
   }
 
   async updateUser(
     userId: string,
     dto: UpdateUserDto,
-    actor: Actor,
-  ): Promise<ManagedUserResponse> {
+    actor: AdminCaller,
+  ): Promise<ScopedUserResponse> {
     const userSelect = {
       id: true,
       name: true,
@@ -443,16 +579,18 @@ This code will expire in 1 hour.`,
     if (!current || current.deletedAt) {
       throw new NotFoundException('User not found');
     }
+    assertInSystem(current, actor.system);
+
+    const newName = dto.name?.trim();
+    const requestedRoles = dto.roleAssignments
+      ? this.normalizeRoleAssignments(dto.roleAssignments, true)
+      : undefined;
+    if (requestedRoles) assertOwnSystemRoles(requestedRoles, actor.system);
 
     const newEmail = dto.email?.trim().toLowerCase();
     if (dto.email && newEmail && newEmail !== current.email.toLowerCase()) {
       await validateEmailDomain(dto.email);
     }
-
-    const newName = dto.name?.trim();
-    const requestedRoles = dto.roleAssignments
-      ? this.normalizeRoleAssignments(dto.roleAssignments)
-      : undefined;
     const passwordHash = dto.password
       ? await argon2.hash(dto.password)
       : undefined;
@@ -466,13 +604,18 @@ This code will expire in 1 hour.`,
         if (!existingUser || existingUser.deletedAt) {
           throw new NotFoundException('User not found');
         }
+        assertInSystem(existingUser, actor.system);
 
         const isEmailChanging = !!(
           newEmail && newEmail !== existingUser.email.toLowerCase()
         );
+        // Another system's admin keeps their own sign in details (spec 0011, AC-28)
+        if (isEmailChanging || passwordHash) {
+          assertNotAdminElsewhere(existingUser.roles, actor.system);
+        }
         const isNameChanging = !!newName && newName !== existingUser.name;
         const roleAssignments = requestedRoles
-          ? this.mergeRoleAssignments(existingUser.roles, requestedRoles)
+          ? replaceSystemRoles(existingUser.roles, requestedRoles, actor.system)
           : undefined;
         const areRolesChanging =
           !!roleAssignments &&
@@ -565,7 +708,7 @@ This code will expire in 1 hour.`,
         return updated;
       });
 
-      return this.mapManagedUser(user);
+      return this.mapScopedUser(user, actor.system);
     } catch (error) {
       this.handlePrismaError(error);
     }
@@ -574,8 +717,8 @@ This code will expire in 1 hour.`,
   async updateUserStatus(
     userId: string,
     dto: SetUserStatusDto,
-    actor: Actor,
-  ): Promise<ManagedUserResponse> {
+    actor: AdminCaller,
+  ): Promise<ScopedUserResponse> {
     if (!dto.isActive && actor.id === userId) {
       throw new ConflictException(SELF_DEACTIVATE);
     }
@@ -588,7 +731,8 @@ This code will expire in 1 hour.`,
           roles: { select: { role: true, system: true } },
         },
       });
-      if (!existing) throw new NotFoundException('User not found');
+      // A shared account may be deactivated: it blocks every system, and the web app says so
+      assertInSystem(existing, actor.system);
       // No change: no write and no change row
       if (existing.isActive === dto.isActive) {
         return tx.user.findUniqueOrThrow({
@@ -618,10 +762,13 @@ This code will expire in 1 hour.`,
       return updated;
     });
 
-    return this.mapManagedUser(user);
+    return this.mapScopedUser(user, actor.system);
   }
 
-  async deleteUser(userId: string, actor: Actor): Promise<{ id: string }> {
+  async deleteUser(
+    userId: string,
+    actor: AdminCaller,
+  ): Promise<{ id: string }> {
     if (actor.id === userId) throw new ConflictException(SELF_DELETE);
 
     await this.prisma.$transaction(async (tx) => {
@@ -632,7 +779,8 @@ This code will expire in 1 hour.`,
           roles: { select: { role: true, system: true } },
         },
       });
-      if (!existing) throw new NotFoundException('User not found');
+      assertInSystem(existing, actor.system);
+      assertNotShared(existing.roles, actor.system);
       if (existing.isActive) {
         for (const system of adminSystems(existing.roles)) {
           await assertAnotherAdmin(tx, userId, system);
@@ -660,8 +808,14 @@ This code will expire in 1 hour.`,
   async resetPassword(
     userId: string,
     dto: ResetPasswordDto,
-  ): Promise<ManagedUserResponse> {
-    await this.ensureUserExists(userId);
+    actor: AdminCaller,
+  ): Promise<ScopedUserResponse> {
+    const existing = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { roles: { select: { role: true, system: true } } },
+    });
+    assertInSystem(existing, actor.system);
+    assertNotAdminElsewhere(existing.roles, actor.system);
 
     const user = await this.prisma.user.update({
       where: { id: userId },
@@ -670,27 +824,10 @@ This code will expire in 1 hour.`,
         failedLoginAttempts: 0,
         lockedAt: null,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
-        },
-      },
+      select: MANAGED_USER_SELECT,
     });
 
-    return this.mapManagedUser(user);
+    return this.mapScopedUser(user, actor.system);
   }
 
   /**
@@ -1048,13 +1185,20 @@ This code will expire in 10 minutes.`,
     };
   }
 
-  /** Spec 0009, AC-21: a user's change record, newest first, keyset paged on (createdAt, id). */
-  async getUserChanges(userId: string, query: ListChangesQueryDto) {
+  /**
+   * Spec 0009, AC-21: a user's change record, newest first, keyset paged on (createdAt, id).
+   * Only for users in the caller's system (spec 0011, AC-26).
+   */
+  async getUserChanges(
+    userId: string,
+    query: ListChangesQueryDto,
+    caller: AdminCaller,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true },
+      select: { id: true, roles: { select: { role: true, system: true } } },
     });
-    if (!user) throw new NotFoundException('User not found');
+    assertInSystem(user, caller.system);
 
     const limit = query.limit ?? CHANGES_PAGE_SIZE;
     const cursor = query.cursor ? decodeChangeCursor(query.cursor) : null;
@@ -1113,8 +1257,9 @@ This code will expire in 10 minutes.`,
 
   private normalizeRoleAssignments(
     roleAssignments: RoleAssignmentDto[],
+    allowEmpty = false,
   ): RoleAssignment[] {
-    if (roleAssignments.length === 0) {
+    if (roleAssignments.length === 0 && !allowEmpty) {
       throw new BadRequestException('At least one role assignment is required');
     }
 
@@ -1137,17 +1282,16 @@ This code will expire in 10 minutes.`,
     return normalized;
   }
 
-  private mergeRoleAssignments(
-    existingRoles: RoleAssignment[],
-    newRoles: RoleAssignment[],
-  ): RoleAssignment[] {
-    const systemsToReplace = new Set(
-      newRoles.map((assignment) => assignment.system),
-    );
-    const retainedRoles = existingRoles.filter(
-      (assignment) => !systemsToReplace.has(assignment.system),
-    );
-    return [...retainedRoles, ...newRoles];
+  private mapScopedUser(
+    user: ManagedUserRecord,
+    system: SystemType,
+  ): ScopedUserResponse {
+    const mapped = this.mapManagedUser(user);
+    return {
+      ...mapped,
+      roles: mapped.roles.filter((r) => r.system === system),
+      otherSystems: otherSystems(user.roles, system),
+    };
   }
 
   private mapManagedUser(user: ManagedUserRecord): ManagedUserResponse {

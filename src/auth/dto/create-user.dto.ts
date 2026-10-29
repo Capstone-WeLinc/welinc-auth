@@ -38,4 +38,9 @@ export class CreateUserDto {
   @ValidateNested({ each: true })
   @Type(() => RoleAssignmentDto)
   roleAssignments!: RoleAssignmentDto[];
+
+  /** Add the roles to the account that already owns this email (spec 0011, AC-30). */
+  @IsOptional()
+  @IsBoolean()
+  attachExisting?: boolean;
 }
