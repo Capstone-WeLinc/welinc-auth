@@ -13,6 +13,7 @@ The shared auth service for the WeLinc suite: NestJS 11 with Prisma 7 on Postgre
 | `src/auth/auth.service.ts` | Login, lockout (5 failed attempts), OTP and reset flows, user and profile logic |
 | `src/auth/guards/`, `decorators/roles.decorator.ts` | `JwtAuthGuard`, `OptionalJwtAuthGuard` (never rejects, for public routes that act differently for a signed in admin), `RolesGuard`, `@Roles()` |
 | `src/auth/strategies/jwt.strategy.ts` | JWT validation, works out the requested system: a valid `?system=` query first, then the token, `Origin`, `Referer` and the path. `GET /auth/me?system=VRMS` is how backend-vrms checks each caller |
+| `src/auth/user-scope.ts` | The system scope rules for admin user endpoints (spec 0011): who the caller may see, shared account checks and the other system admin block |
 | `src/auth/user-changes.ts` | Admin change record helpers (`UserChange` rows), the last admin guard and the changes cursor |
 | `src/auth/dto/` | Request DTOs validated with `class-validator` |
 | `src/shared/` | `PrismaService`, `MailService` (logs instead of sending when SMTP is blank, in development only; in production it throws), `SharedModule` |
@@ -42,6 +43,8 @@ npx prisma migrate dev   # asks first, see root rules
 - CORS allows localhost always, plus the origins in `CORS_ORIGINS` (comma separated, `*` allows all).
 - Every schema change needs a timestamped migration folder under `prisma/migrations/`.
 - New variables go in `.env.example` only (today: `PORT`, `NODE_ENV`, `DATABASE_URL`, `JWT_SECRET`, `JWT_ACCESS_EXPIRY`, `JWT_REFRESH_EXPIRY`, `SMTP_*`, `CORS_ORIGINS`, `PORTAL_URL`; the last is required when `NODE_ENV=production`).
+- Admin user endpoints act only on users who hold a role in the caller's system (404 for anyone else), and list each user's `roles` for that system only, plus `otherSystems`. An admin may only add, change or remove roles of their own system. A shared account (a role elsewhere) can't be deleted, and its password and email can't be set when it is `ADMIN` in another system (403). Keep these rules, in `user-scope.ts`, on any new admin user route.
+- `GET /auth/users/lookup?q=` (2 characters at least, ADMIN, 30 calls a minute) returns only id, name, email and system names of active accounts outside the caller's system. `POST /auth/users` with an existing email answers 409 `ACCOUNT_EXISTS`; `attachExisting: true` adds only the caller's system roles to it.
 - Every admin write to a user writes `UserChange` rows in the same transaction. No admin can deactivate, delete or demote themselves or the last active admin of a system (409); keep both rules on any new user write path.
 
 ## Gotchas
