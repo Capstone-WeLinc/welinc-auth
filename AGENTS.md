@@ -19,7 +19,7 @@ The shared auth service for the WeLinc suite: NestJS 11 with Prisma 7 on Postgre
 | `src/shared/` | `PrismaService`, `MailService` (logs instead of sending when SMTP is blank, in development only; in production it throws), `SharedModule` |
 | `prisma/schema.prisma`, `prisma/migrations/` | `User`, `UserRoleAssignment` (role plus system), `PasswordResetToken`, `RefreshToken`, `UserChange` |
 | `prisma/seed.ts`, `prisma/seeds/` | Seed users |
-| `nginx.conf` | The gateway on port 3000, routing `/auth`, `/vrms`, `/repairs`, `/ai`, `/analytics` |
+| `nginx.conf` | The gateway on port 3000, routing `/auth`, `/vrms`, `/repairs` |
 
 ## Commands
 
