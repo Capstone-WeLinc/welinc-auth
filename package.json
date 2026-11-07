@@ -25,7 +25,9 @@
     "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts",
     "studio": "prisma studio --port 5555 --browser none",
     "keys:dev": "ts-node scripts/keys-dev.ts",
-    "seed:clients": "ts-node -r tsconfig-paths/register prisma/seed-clients.ts"
+    "seed:clients": "ts-node -r tsconfig-paths/register prisma/seed-clients.ts",
+    "keys:rotate": "ts-node scripts/keys-rotate.ts",
+    "keys:client": "ts-node scripts/keys-client.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

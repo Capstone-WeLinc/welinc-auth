@@ -37,7 +37,11 @@ export class SigningKeysError extends Error {
  * Parses and checks `AUTH_SIGNING_KEYS` without importing any key (spec 0002, AC-2). Shared by
  * the service at startup and by the keys scripts, so both refuse the same bad sets.
  */
-export function parseSigningKeys(raw: string | undefined): SigningKeySet {
+export function parseSigningKeys(
+  raw: string | undefined,
+  /** The rotation script allows no `current` key, for a new environment's first `add`. */
+  options: { allowNoCurrent?: boolean } = {},
+): SigningKeySet {
   if (!raw || raw.trim() === '') {
     throw new SigningKeysError('missing. Run `npm run keys:dev` locally.');
   }
@@ -100,7 +104,7 @@ export function parseSigningKeys(raw: string | undefined): SigningKeySet {
 
   const set = { keys: keys as SigningKeyJwk[] };
   const current = set.keys.filter((key) => key.status === 'current').length;
-  if (current !== 1) {
+  if (current > 1 || (current === 0 && !options.allowNoCurrent)) {
     throw new SigningKeysError(
       `exactly one key must have status "current", found ${current}`,
     );
