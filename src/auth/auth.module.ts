@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { WellKnownController } from './well-known.controller';
@@ -12,9 +13,19 @@ import {
   tokenSettingsProvider,
 } from './tokens/token-config';
 import SharedModule from '../shared/shared.module';
+import {
+  AddressThrottlerGuard,
+  ADDRESS_LIMIT,
+} from './clients/address-throttler.guard';
+import { TokenController } from './clients/token.controller';
+import { TokenEndpointService } from './clients/token-endpoint.service';
 
 @Module({
-  imports: [SharedModule],
+  // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
+  imports: [
+    SharedModule,
+    ThrottlerModule.forRoot({ throttlers: [ADDRESS_LIMIT] }),
+  ],
   providers: [
     tokenSettingsProvider,
     signingKeyRingProvider,
@@ -24,7 +35,9 @@ import SharedModule from '../shared/shared.module';
     JwtAuthGuard,
     OptionalJwtAuthGuard,
     RolesGuard,
+    TokenEndpointService,
+    AddressThrottlerGuard,
   ],
-  controllers: [AuthController, WellKnownController],
+  controllers: [AuthController, WellKnownController, TokenController],
 })
 export default class AuthModule {}

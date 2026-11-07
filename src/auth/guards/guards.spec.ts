@@ -64,6 +64,8 @@ const codeOf = (error: unknown) =>
 describe('welinc-auth guards', () => {
   let tokens: TokenService;
   let findFirst: jest.Mock<(args: unknown) => Promise<Row | null>>;
+  type ClientRow = { isActive: boolean; system: SystemType | null };
+  let findClient: jest.Mock<(args: unknown) => Promise<ClientRow | null>>;
   let authenticator: RequestAuthenticator;
 
   const userToken = (aud: 'VRMS' | 'BMS' = 'VRMS') =>
@@ -90,8 +92,11 @@ describe('welinc-auth guards', () => {
   beforeEach(() => {
     findFirst = jest.fn<(args: unknown) => Promise<Row | null>>();
     findFirst.mockResolvedValue(row());
+    findClient = jest.fn<(args: unknown) => Promise<ClientRow | null>>();
+    findClient.mockResolvedValue({ isActive: true, system: SystemType.VRMS });
     authenticator = new RequestAuthenticator(tokens, {
       user: { findFirst },
+      oAuthClient: { findUnique: findClient },
     } as unknown as PrismaService);
   });
 
@@ -155,7 +160,7 @@ describe('welinc-auth guards', () => {
       ).rejects.toThrow('does not have access');
     });
 
-    it('answers a service caller without reading any account', async () => {
+    it("answers a service caller with its client's system, without reading any account", async () => {
       const caller = await authenticator.authenticate(
         request(await serviceToken()),
       );
@@ -163,8 +168,36 @@ describe('welinc-auth guards', () => {
         kind: 'service',
         clientId: 'vrms',
         scopes: ['directory.read'],
+        system: 'VRMS',
       });
       expect(findFirst).not.toHaveBeenCalled();
+    });
+
+    it('refuses a service token from a switched off client, or one with no system, with 401', async () => {
+      findClient.mockResolvedValueOnce({
+        isActive: false,
+        system: SystemType.VRMS,
+      });
+      await expect(
+        authenticator.authenticate(request(await serviceToken())),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      findClient.mockResolvedValueOnce({ isActive: true, system: null });
+      await expect(
+        authenticator.authenticate(request(await serviceToken())),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it("refuses a service token's ?system= for another system with 403 WRONG_AUDIENCE", async () => {
+      await expect(
+        authenticator.authenticate(
+          request(await serviceToken(), { system: 'VRMS' }),
+        ),
+      ).resolves.toBeDefined();
+      const error = await authenticator
+        .authenticate(request(await serviceToken(), { system: 'BMS' }))
+        .catch((e: unknown) => e);
+      expect((error as HttpException).getStatus()).toBe(403);
+      expect(codeOf(error)).toBe('WRONG_AUDIENCE');
     });
   });
 
@@ -260,13 +293,30 @@ describe('welinc-auth guards', () => {
       ).toBe(false);
     });
 
+    const service = {
+      kind: 'service',
+      clientId: 'vrms',
+      scopes: ['directory.read'],
+      system: SystemType.VRMS,
+    } as Caller;
+
     it('never treats a client as an admin on an unmarked route', () => {
-      const service = {
-        kind: 'service',
-        clientId: 'vrms',
-        scopes: ['directory.read'],
-      } as Caller;
       expect(guard.canActivate(withUser(service))).toBe(false);
+    });
+
+    it('lets a client through on a @ServiceScope() route, whose scope JwtAuthGuard checked', () => {
+      const directoryRoute = () => undefined;
+      Reflect.defineMetadata(ROLES_KEY, [UserRole.ADMIN], directoryRoute);
+      Reflect.defineMetadata(
+        SERVICE_SCOPE_KEY,
+        'directory.read',
+        directoryRoute,
+      );
+      expect(
+        guard.canActivate(
+          context({ user: service } as Partial<Request>, directoryRoute),
+        ),
+      ).toBe(true);
     });
   });
 });

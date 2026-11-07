@@ -349,7 +349,7 @@ export class AuthService {
    */
   async listUsers(
     _query: ListUsersQueryDto,
-    caller: AdminCaller,
+    caller: Pick<AdminCaller, 'system'>,
   ): Promise<ScopedUserResponse[]> {
     const users = await this.prisma.user.findMany({
       where: {

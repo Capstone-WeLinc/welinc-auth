@@ -59,7 +59,9 @@ async function main() {
   console.log(
     `VRMS client key ${client.kid} written to ${vrms.path} (private) and ${auth.path} (public)`,
   );
-  console.log('Recreate the auth-service container, then vrms-backend, so they read the new values.');
+  console.log(
+    'Recreate the auth-service container, run `npm run seed:clients` in it, then recreate vrms-backend.',
+  );
 }
 
 main().catch((error: unknown) => {

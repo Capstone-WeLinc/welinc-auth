@@ -6,12 +6,27 @@ import type { ServerResponse } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 import { AppModule } from './app.module';
 
+/**
+ * Proxy hops in front of welinc-auth (spec 0002, AC-18): 1 locally (nginx), 2 hosted (the
+ * Container Apps ingress plus nginx). Unset trusts none, so a forged X-Forwarded-For is ignored.
+ */
+function trustProxyHops(): number {
+  const raw = process.env['TRUST_PROXY_HOPS'];
+  if (raw === undefined || raw === '') return 0;
+  const hops = Number(raw);
+  if (!Number.isInteger(hops) || hops < 0) {
+    throw new Error('TRUST_PROXY_HOPS must be a whole number, 0 or more');
+  }
+  return hops;
+}
+
 function isLocalDevOrigin(origin: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.set('trust proxy', trustProxyHops());
 
   app.useStaticAssets(join(__dirname, '..', 'uploads'), {
     prefix: '/uploads/',

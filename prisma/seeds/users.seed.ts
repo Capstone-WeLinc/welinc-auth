@@ -47,7 +47,11 @@ export async function seedUsers(prisma: PrismaClient) {
   // 1. BMS Admin
   await seedUser(
     prisma,
-    { id: SEED_IDS.bmsAdmin, email: 'bms.admin@welinc.com', name: 'Bernardo Mendoza' },
+    {
+      id: SEED_IDS.bmsAdmin,
+      email: 'bms.admin@welinc.com',
+      name: 'Bernardo Mendoza',
+    },
     adminPasswordHash,
     [{ role: UserRole.ADMIN, system: SystemType.BMS }],
   );
@@ -60,7 +64,11 @@ export async function seedUsers(prisma: PrismaClient) {
   // 3. VMMS Admin
   await seedUser(
     prisma,
-    { id: SEED_IDS.vmmsAdmin, email: 'vmms.admin@welinc.com', name: 'Valerio Mercado' },
+    {
+      id: SEED_IDS.vmmsAdmin,
+      email: 'vmms.admin@welinc.com',
+      name: 'Valerio Mercado',
+    },
     adminPasswordHash,
     [{ role: UserRole.ADMIN, system: SystemType.VMMS }],
   );
@@ -81,7 +89,11 @@ export async function seedUsers(prisma: PrismaClient) {
 
   await seedUser(
     prisma,
-    { id: SEED_IDS.opsUser, email: 'ops.user@welinc.com', name: 'Oscar Santos' },
+    {
+      id: SEED_IDS.opsUser,
+      email: 'ops.user@welinc.com',
+      name: 'Oscar Santos',
+    },
     opsPasswordHash,
     [{ role: UserRole.OPERATIONS, system: SystemType.BMS }],
   );
@@ -105,7 +117,9 @@ export async function seedUsers(prisma: PrismaClient) {
   ]);
 
   // 6. Bulk seeding for pagination (60 users); their Mechanic rows are made by the VRMS seed
-  console.log('Generating 60 additional mechanics/users with realistic names...');
+  console.log(
+    'Generating 60 additional mechanics/users with realistic names...',
+  );
   for (const m of BULK_MECHANICS) {
     await seedUser(prisma, m, mechanicPassword, mechanicRoles);
   }

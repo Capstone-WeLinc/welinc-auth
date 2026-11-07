@@ -30,6 +30,8 @@ export type ServiceCaller = {
   kind: 'service';
   clientId: string;
   scopes: string[];
+  /** The client's own system, from the registry: what an admin of it would see. */
+  system: SystemType;
   token: VerifiedServiceToken;
 };
 
@@ -73,17 +75,34 @@ export class RequestAuthenticator {
       throw error;
     }
 
+    const asked = querySystem(request);
+
     if (token.tokenUse === 'service') {
+      // A client switched off, or one with no system (the portal), can't act for any system
+      const client = await this.prisma.oAuthClient.findUnique({
+        where: { id: token.clientId },
+        select: { isActive: true, system: true },
+      });
+      if (!client || !client.isActive || !client.system) {
+        throw new UnauthorizedException('Invalid session');
+      }
+      if (asked !== undefined && asked !== client.system) {
+        throw coded(
+          HttpStatus.FORBIDDEN,
+          'WRONG_AUDIENCE',
+          `This client acts for ${client.system}, not ${asked}`,
+        );
+      }
       return {
         kind: 'service',
         clientId: token.clientId,
         scopes: token.scopes,
+        system: client.system,
         token,
       };
     }
 
     const system = token.aud;
-    const asked = querySystem(request);
     if (asked !== undefined && asked !== system) {
       throw coded(
         HttpStatus.FORBIDDEN,
