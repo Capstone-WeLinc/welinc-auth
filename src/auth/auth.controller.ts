@@ -35,6 +35,8 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
+import { ServiceScope } from './decorators/service-scope.decorator';
+import type { Caller } from './guards/request-authenticator';
 
 /**
  * The signed in admin, as the change record names them (spec 0009, AC-19, AC-20), plus the
@@ -92,11 +94,14 @@ export class AuthController {
     return this.authService.getCurrentUser(req.user.sub);
   }
 
+  // An admin of the token's system, or a backend's service token with directory.read, which
+  // sees what an admin of its own system would, read only (spec 0002, AC-19)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
+  @ServiceScope('directory.read')
   @Get('users')
-  listUsers(@Query() query: ListUsersQueryDto, @Req() req: AdminRequest) {
-    return this.authService.listUsers(query, actorOf(req));
+  listUsers(@Query() query: ListUsersQueryDto, @Req() req: { user: Caller }) {
+    return this.authService.listUsers(query, { system: req.user.system });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

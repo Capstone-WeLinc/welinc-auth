@@ -114,3 +114,47 @@ model UserChange {
   @@index([userId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("user_changes")
 }
+
+// Spec 0002: who may ask welinc-auth for tokens (spec 0001 section 4). Seeded from env by
+// `npm run seed:clients`. Holds public keys only, never a client's private key.
+enum ClientKind {
+  FIRST_PARTY_WEB
+  CONFIDENTIAL
+  PUBLIC_NATIVE
+  SERVICE
+}
+
+model OAuthClient {
+  id            String               @id @db.VarChar(64)
+  kind          ClientKind
+  // Null only for the portal
+  system        SystemType?
+  // authorization_code, refresh_token, client_credentials, mobile_login, sso
+  grants        String[]
+  userAudiences String[]             @map("user_audiences")
+  // { "<audience>": ["<scope>", ...] }
+  serviceScopes Json                 @default("{}") @map("service_scopes")
+  redirectUris  String[]             @default([]) @map("redirect_uris")
+  webAddress    String?              @map("web_address") @db.VarChar(255)
+  // { "keys": [public ES256 JWK with kid] }
+  jwks          Json?
+  isActive      Boolean              @default(true) @map("is_active")
+  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  assertionJtis ClientAssertionJti[]
+
+  @@map("oauth_clients")
+}
+
+// A client assertion's jti, kept until it expires so it can't be replayed (spec 0002, AC-17).
+// The primary key enforces one use per client, across replicas.
+model ClientAssertionJti {
+  clientId  String      @map("client_id") @db.VarChar(64)
+  jti       String      @db.VarChar(128)
+  expiresAt DateTime    @map("expires_at") @db.Timestamptz(6)
+  client    OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, jti])
+  @@index([expiresAt])
+  @@map("client_assertion_jtis")
+}

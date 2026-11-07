@@ -1,0 +1,24 @@
+import { HttpException, HttpStatus } from '@nestjs/common';
+
+const ERROR_NAMES: Partial<Record<number, string>> = {
+  [HttpStatus.BAD_REQUEST]: 'Bad Request',
+  [HttpStatus.UNAUTHORIZED]: 'Unauthorized',
+  [HttpStatus.FORBIDDEN]: 'Forbidden',
+  [HttpStatus.SERVICE_UNAVAILABLE]: 'Service Unavailable',
+};
+
+/**
+ * Nest's usual error body plus a stable `code` clients branch on (spec 0001 section 11):
+ * `{ statusCode, message, error, code }`.
+ */
+export function coded(status: HttpStatus, code: string, message: string) {
+  return new HttpException(
+    {
+      statusCode: status,
+      message,
+      error: ERROR_NAMES[status] ?? 'Error',
+      code,
+    },
+    status,
+  );
+}

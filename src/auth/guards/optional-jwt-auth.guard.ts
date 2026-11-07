@@ -1,13 +1,31 @@
-import { Injectable } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import {
+  Injectable,
+  type CanActivate,
+  type ExecutionContext,
+} from '@nestjs/common';
+import type { Request } from 'express';
+import { RequestAuthenticator, type UserCaller } from './request-authenticator';
 
 /**
- * Reads a bearer token when one is sent and valid, and never rejects: `req.user` is the caller or
- * null. For public routes that act differently for a signed in admin (spec 0009, AC-20).
+ * Reads a bearer token when one is sent and valid, and never rejects: `req.user` is the person
+ * or null. A token that fails any check, or a service token, counts as no token at all (spec
+ * 0002, AC-8). For public routes that act differently for a signed in admin (spec 0009, AC-20).
  */
 @Injectable()
-export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
-  handleRequest<TUser>(_err: unknown, user: TUser | false): TUser | null {
-    return user || null;
+export class OptionalJwtAuthGuard implements CanActivate {
+  constructor(private readonly authenticator: RequestAuthenticator) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context
+      .switchToHttp()
+      .getRequest<Request & { user?: UserCaller | null }>();
+    request.user = null;
+    try {
+      const caller = await this.authenticator.authenticate(request);
+      if (caller.kind === 'user') request.user = caller;
+    } catch {
+      // No token, a bad one, or an account that can't sign in: treat the caller as anonymous
+    }
+    return true;
   }
 }
