@@ -1,41 +1,30 @@
 import { Module } from '@nestjs/common';
-import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { JwtStrategy } from './strategies/jwt.strategy';
+import { WellKnownController } from './well-known.controller';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
+import { RequestAuthenticator } from './guards/request-authenticator';
+import { TokenService } from './tokens/token.service';
+import {
+  signingKeyRingProvider,
+  tokenSettingsProvider,
+} from './tokens/token-config';
 import SharedModule from '../shared/shared.module';
 
 @Module({
-  imports: [
-    PassportModule,
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const expiresIn = (config.get<string>('JWT_ACCESS_EXPIRY') ??
-          '15m') as JwtSignOptions['expiresIn'];
-
-        return {
-          secret: config.getOrThrow<string>('JWT_SECRET'),
-          signOptions: {
-            expiresIn,
-          },
-        };
-      },
-    }),
-    SharedModule,
-  ],
+  imports: [SharedModule],
   providers: [
+    tokenSettingsProvider,
+    signingKeyRingProvider,
+    TokenService,
+    RequestAuthenticator,
     AuthService,
-    JwtStrategy,
     JwtAuthGuard,
     OptionalJwtAuthGuard,
     RolesGuard,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, WellKnownController],
 })
 export default class AuthModule {}

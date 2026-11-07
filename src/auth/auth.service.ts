@@ -2,12 +2,12 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
@@ -16,6 +16,9 @@ import * as fs from 'fs/promises';
 import * as dns from 'dns';
 import { Prisma, SystemType, UserChangeAction, UserRole } from '@prisma/client';
 import { PrismaService } from '../shared/prisma.service';
+import { coded } from './errors';
+import { pickLoginSystem } from './tokens/login-system';
+import { TokenService } from './tokens/token.service';
 import { MailService } from '../shared/mail.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
@@ -173,7 +176,7 @@ export class AuthService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
+    private readonly tokens: TokenService,
     private readonly mailService: MailService,
     config: ConfigService,
   ) {
@@ -184,9 +187,11 @@ export class AuthService {
     this.passwordLink = `${(portalUrl || 'http://localhost:8000').replace(/\/+$/, '')}/forgot-password`;
   }
 
-  async login(
-    dto: LoginDto,
-  ): Promise<{ accessToken: string; user: AuthUserResponse }> {
+  async login(dto: LoginDto): Promise<{
+    accessToken: string;
+    system: SystemType;
+    user: AuthUserResponse;
+  }> {
     // TODO: Transparent migration — if passwordHash starts with '$2b$' (bcrypt),
     // verify with bcrypt first, re-hash with argon2, then save. Requires bcrypt as
     // an optional dep. Skipped until all passwords are migrated.
@@ -269,14 +274,30 @@ export class AuthService {
       data: { failedLoginAttempts: 0 },
     });
 
-    const payload = {
+    // Spec 0002, AC-5: the token is for one system, picked here until S4's launcher
+    const system = pickLoginSystem(user.roles, dto.system);
+    if (!system) {
+      throw coded(
+        HttpStatus.FORBIDDEN,
+        'NO_SYSTEM_ACCESS',
+        dto.system
+          ? `This account has no access to ${dto.system}`
+          : 'This account has no access to any system',
+      );
+    }
+
+    const accessToken = await this.tokens.signUserToken({
       sub: user.id,
       email: user.email,
-      roles: user.roles.map((r) => ({ role: r.role, system: r.system })),
-    };
+      aud: system,
+      roles: user.roles
+        .filter((r) => r.system === system)
+        .map((r) => ({ role: r.role, system: r.system })),
+    });
 
     return {
-      accessToken: this.jwtService.sign(payload),
+      accessToken,
+      system,
       user: {
         id: user.id,
         name: user.name,
@@ -324,7 +345,7 @@ export class AuthService {
 
   /**
    * Only users who hold a role in the caller's system. A `system` query can't widen it: the
-   * strategy already resolved the caller's system from it, so `_query` is accepted and unused.
+   * guard already refused a `?system=` that differs from the token's `aud`, so `_query` is unused.
    */
   async listUsers(
     _query: ListUsersQueryDto,

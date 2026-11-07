@@ -3,100 +3,51 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { UserRole } from '@prisma/client';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import { SERVICE_SCOPE_KEY } from '../decorators/service-scope.decorator';
+import type { Caller } from './request-authenticator';
 
+/**
+ * Checks `@Roles()` against the person's roles in the token's system (`aud`, spec 0002, AC-9).
+ * A service token never counts as an admin: it passes only on a `@ServiceScope()` route, where
+ * `JwtAuthGuard` already checked its scope (AC-19).
+ */
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const targets = [context.getHandler(), context.getClass()];
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
       ROLES_KEY,
-      [context.getHandler(), context.getClass()],
+      targets,
     );
 
     if (!requiredRoles || requiredRoles.length === 0) {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest<Request>();
-    const user = request.user as {
-      sub: string;
-      email: string;
-      roles: { role: UserRole; system: string }[];
-      system: string;
-    };
+    const caller = context
+      .switchToHttp()
+      .getRequest<Request & { user?: Caller }>().user;
 
-    if (!user) {
+    if (!caller) {
       return false;
     }
 
-    // Infer system context if missing
-    let targetSystem = user.system;
-    if (!targetSystem) {
-      // 1. Check referer/origin headers
-      const referer = request.headers.referer || '';
-      const origin = request.headers.origin || '';
-      const source = (referer + '|' + origin).toLowerCase();
-
-      if (source.includes(':8001') || source.includes('vrms')) {
-        targetSystem = 'VRMS';
-      } else if (source.includes(':8002') || source.includes('vmms')) {
-        targetSystem = 'VMMS';
-      } else if (source.includes(':8003') || source.includes('bms')) {
-        targetSystem = 'BMS';
-      }
-
-      // 2. Fallback to path checking
-      if (!targetSystem) {
-        const path = request.path || request.url || '';
-        if (path.includes('/vrms') || path.includes('vrms/')) {
-          targetSystem = 'VRMS';
-        } else if (
-          path.includes('/vmms') ||
-          path.includes('vmms/') ||
-          path.startsWith('/checklists') ||
-          path.startsWith('/maintenance-schedules') ||
-          path.startsWith('/vehicles') ||
-          path.startsWith('/drivers') ||
-          path.startsWith('/garages') ||
-          path.startsWith('/locations')
-        ) {
-          targetSystem = 'VMMS';
-        } else if (
-          path.includes('/bms') ||
-          path.includes('bms/') ||
-          path.startsWith('/booking') ||
-          path.startsWith('/scheduling')
-        ) {
-          targetSystem = 'BMS';
-        }
-      }
-
-      // 3. Fallback to query parameter system
-      const querySystem: unknown = Array.isArray(request.query?.system)
-        ? request.query.system[0]
-        : request.query?.system;
-      if (!targetSystem && typeof querySystem === 'string' && querySystem) {
-        targetSystem = querySystem.toUpperCase();
-      }
-
-      // 4. Fallback to body roleAssignments system
-      const body = request.body as
-        | { roleAssignments?: { system?: unknown }[] }
-        | undefined;
-      const bodySystem = body?.roleAssignments?.[0]?.system;
-      if (!targetSystem && typeof bodySystem === 'string' && bodySystem) {
-        targetSystem = bodySystem.toUpperCase();
-      }
-
-      user.system = targetSystem;
+    if (caller.kind === 'service') {
+      return Boolean(
+        this.reflector.getAllAndOverride<string | undefined>(
+          SERVICE_SCOPE_KEY,
+          targets,
+        ),
+      );
     }
 
     return requiredRoles.some((requiredRole) =>
-      user.roles.some(
+      caller.roles.some(
         (assignment) =>
           assignment.role === requiredRole &&
-          assignment.system === targetSystem,
+          assignment.system === caller.system,
       ),
     );
   }

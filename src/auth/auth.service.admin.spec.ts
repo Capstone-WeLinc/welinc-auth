@@ -14,7 +14,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import type { JwtService } from '@nestjs/jwt';
+import type { TokenService } from './tokens/token.service';
 import { SystemType, UserChangeAction, UserRole } from '@prisma/client';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
@@ -90,7 +90,7 @@ function build(env: Record<string, string | undefined> = {}) {
   } as unknown as ConfigService;
   const service = new AuthService(
     db as unknown as PrismaService,
-    {} as JwtService,
+    {} as TokenService,
     { sendMail } as unknown as MailService,
     config,
   );
