@@ -147,6 +147,47 @@ export class DirectoryService {
 
     return { changes, next, hasMore };
   }
+  /**
+   * AC-6: current state of the asked ids that hold, or ever held, a role in the caller's system
+   * (a role row now, or a feed row naming the system). Every other id, unknown and hard deleted
+   * ones included, is in `missing`. Reads current state, so it has no lag.
+   */
+  async lookup(
+    view: DirectoryView,
+    ids: string[],
+  ): Promise<{ users: DirectoryUser[]; missing: string[] }> {
+    const wanted = ids.map((id) => id.toLowerCase());
+    const [rows, history] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { id: { in: wanted } },
+        select: USER_SELECT,
+      }),
+      this.prisma.$queryRaw<{ user_id: string }[]>`
+        SELECT DISTINCT "user_id"::text AS "user_id"
+          FROM "directory_changes"
+         WHERE "user_id" = ANY(${wanted}::uuid[])
+           AND "systems" @> ARRAY[${view.system}::"SystemType"]`,
+    ]);
+    const onceHeld = new Set(history.map((row) => row.user_id));
+    const byId = new Map(
+      rows
+        .filter(
+          (row) =>
+            onceHeld.has(row.id) ||
+            row.roles.some((assignment) => assignment.system === view.system),
+        )
+        .map((row) => [row.id, row]),
+    );
+
+    const users: DirectoryUser[] = [];
+    const missing: string[] = [];
+    wanted.forEach((id, index) => {
+      const row = byId.get(id);
+      if (row) users.push(fromUserRow(row, view));
+      else missing.push(ids[index]);
+    });
+    return { users, missing };
+  }
 }
 
 export function comparePositions(a: FeedPosition, b: FeedPosition): number {

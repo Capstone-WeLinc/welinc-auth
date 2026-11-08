@@ -1,8 +1,11 @@
 import {
+  Body,
   Controller,
   Get,
   Header,
+  HttpCode,
   HttpStatus,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -14,6 +17,8 @@ import { DirectoryService } from './directory.service';
 import type { DirectoryView } from './directory-user';
 
 export const DEFAULT_LIMIT = 100;
+/** AC-6: ids per lookup. */
+export const MAX_LOOKUP_IDS = 200;
 export const MAX_LIMIT = 500;
 
 export const validationFailed = (message: string) =>
@@ -41,6 +46,33 @@ export function parseLimit(raw: unknown): number {
     throw validationFailed(`limit must be between 1 and ${MAX_LIMIT}`);
   }
   return limit;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** AC-6: `{ ids }` with 1 to 200 uuids, no repeats and nothing else. */
+export function parseLookup(body: unknown): string[] {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw validationFailed('The body must be { ids }');
+  }
+  const keys = Object.keys(body);
+  if (keys.length !== 1 || keys[0] !== 'ids') {
+    throw validationFailed('The body must hold only ids');
+  }
+  const ids = (body as { ids: unknown }).ids;
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > MAX_LOOKUP_IDS) {
+    throw validationFailed(
+      `ids must be a list of 1 to ${MAX_LOOKUP_IDS} user ids`,
+    );
+  }
+  if (!ids.every((id) => typeof id === 'string' && UUID.test(id))) {
+    throw validationFailed('Every id must be a uuid');
+  }
+  const lower = (ids as string[]).map((id) => id.toLowerCase());
+  if (new Set(lower).size !== lower.length) {
+    throw validationFailed('ids must not repeat');
+  }
+  return ids as string[];
 }
 
 /** An empty cursor counts as a bad one, not as "from the start". */
@@ -90,6 +122,15 @@ export class DirectoryController {
     const size = parseLimit(limit);
     const from = cursorParam(after, 'after');
     return withCursor(() => this.directory.changes(view(req), from, size));
+  }
+
+  // The body is read as plain JSON (no DTO), so a bad one answers VALIDATION_FAILED like the
+  // other directory inputs instead of the global pipe's uncoded 400
+  @Post('users/lookup')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  lookup(@Body() body: unknown, @Req() req: DirectoryRequest) {
+    return this.directory.lookup(view(req), parseLookup(body));
   }
 }
 
