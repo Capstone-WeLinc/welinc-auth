@@ -85,6 +85,13 @@ export class SessionEndController {
       return;
     }
 
+    const body = bodyOf(req);
+    if (body['refreshToken'] !== undefined) {
+      // A public native client (AC-30): no cookie and no CSRF check, the token is the proof
+      await this.mobileLogout(body);
+      return;
+    }
+
     if (!passesCsrf(req, this.settings.portalOrigin)) throw csrfRejected();
     const session = await this.sessions.liveBySsoHandle(
       readSsoCookie(req, this.settings),
@@ -146,6 +153,25 @@ export class SessionEndController {
     }
     if (!(await this.sessions.recordActivity(sessionId, lastSeenIp))) {
       throw sessionEnded();
+    }
+  }
+
+  /**
+   * `{ refreshToken, clientId }` from a public native client (AC-30): ends the session behind any
+   * of that client's token rows. An unknown client or token, or an ended session, ends nothing,
+   * and the answer is 204 all the same.
+   */
+  private async mobileLogout(body: Form): Promise<void> {
+    const client = await this.endpoint.publicClient(body['clientId']);
+    if (!client) return;
+    const found = await this.sessions.byRefreshToken(
+      client.id,
+      body['refreshToken'],
+    );
+    if (found) {
+      await this.sessions.endNow(found.sessionId, SessionEndReason.LOGOUT, {
+        clientId: client.id,
+      });
     }
   }
 

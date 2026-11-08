@@ -70,7 +70,8 @@ export const CLIENTS: ClientDefinition[] = [
     kind: ClientKind.PUBLIC_NATIVE,
     system: SystemType.VMMS,
     grants: ['mobile_login', 'refresh_token'],
-    userAudiences: ['VMMS'],
+    // VMMS by default; VRMS for its tab in the VMMS app (scope feature 48, spec 0003 AC-29)
+    userAudiences: ['VMMS', 'VRMS'],
     serviceScopes: {},
   },
   {

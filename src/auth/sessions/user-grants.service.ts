@@ -292,6 +292,42 @@ export class UserGrantsService {
     return this.finish(client.id, 'refresh_token', outcome);
   }
 
+  /**
+   * A native login (spec 0003, AC-28): the password is already checked. Creates the mobile
+   * session and its first refresh token, then signs an access token for the client's own
+   * system, answered like the user grants.
+   */
+  async startMobile(
+    client: OAuthClient,
+    input: {
+      user: { id: string; name: string; email: string };
+      deviceName: string | null;
+      ip: string | null;
+    },
+  ): Promise<UserTokenAnswer> {
+    const aud = client.system;
+    if (!aud) return this.refuse(client.id, 'client_without_system');
+    const roles = await this.rolesFor(this.prisma, input.user.id, aud);
+    if (roles.length === 0) {
+      return this.finish(client.id, 'mobile_login', { kind: 'no_access', aud });
+    }
+    const { session, refreshToken } = await this.sessions.createMobile({
+      userId: input.user.id,
+      clientId: client.id,
+      audience: aud,
+      deviceName: input.deviceName,
+      ip: input.ip,
+    });
+    return this.finish(client.id, 'mobile_login', {
+      kind: 'issue',
+      session,
+      refreshToken,
+      user: input.user,
+      roles,
+      aud,
+    });
+  }
+
   /** The session behind a code or token, live, with an active account; ends it at a cutoff. */
   private async liveSession(
     tx: Tx,
@@ -338,7 +374,7 @@ export class UserGrantsService {
   }
 
   private async rolesFor(
-    tx: Tx,
+    tx: Tx | PrismaService,
     userId: string,
     aud: SystemType,
   ): Promise<TokenRole[]> {

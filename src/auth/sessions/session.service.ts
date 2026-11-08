@@ -197,20 +197,7 @@ export class SessionService {
         }
       }
 
-      const open = await tx.session.findMany({
-        where: { userId: input.userId, endedAt: null },
-        orderBy: { lastActivityAt: 'asc' },
-      });
-      const live: Session[] = [];
-      for (const row of open) {
-        const reason = cutoffReason(row, now);
-        if (reason) await this.end(tx, row.id, reason);
-        else live.push(row);
-      }
-      const excess = live.length - (this.settings.maxSessionsPerUser - 1);
-      for (const row of live.slice(0, Math.max(0, excess))) {
-        await this.end(tx, row.id, SessionEndReason.MAX_SESSIONS);
-      }
+      await this.makeRoom(tx, input.userId, now);
 
       return tx.session.create({
         data: {
@@ -234,6 +221,81 @@ export class SessionService {
       `session created sid=${session.id} user=${input.userId} kind=WEB client=portal`,
     );
     return { session, handle };
+  }
+
+  /**
+   * Creates a mobile session at a native login (spec 0003, AC-28, AC-6), with its first refresh
+   * token for `clientId`, in one transaction under the same per user lock and cap as a web
+   * login. A mobile session has no SSO handle and no absolute limit; it rolls 7 days on each
+   * refresh (AC-2).
+   */
+  async createMobile(input: {
+    userId: string;
+    clientId: string;
+    /** The system the first access token is signed for (`sessions.audiences`). */
+    audience: SystemType;
+    deviceName: string | null;
+    ip: string | null;
+  }): Promise<{ session: Session; refreshToken: string }> {
+    const refreshToken = newOpaque();
+    const now = new Date();
+    const session = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${input.userId}, 0))`;
+      await this.makeRoom(tx, input.userId, now);
+      const created = await tx.session.create({
+        data: {
+          userId: input.userId,
+          kind: SessionKind.MOBILE,
+          loginClientId: input.clientId,
+          deviceName: input.deviceName,
+          audiences: [input.audience],
+          createdIp: input.ip,
+          lastSeenIp: input.ip,
+          createdAt: now,
+          lastActivityAt: now,
+          idleExpiresAt: this.idleCutoff(SessionKind.MOBILE, now),
+          absoluteExpiresAt: null,
+        },
+      });
+      await tx.refreshToken.create({
+        data: {
+          sessionId: created.id,
+          clientId: input.clientId,
+          tokenHash: hashOpaque(refreshToken),
+        },
+      });
+      return created;
+    });
+    this.logger.log(
+      `session created sid=${session.id} user=${input.userId} kind=MOBILE client=${input.clientId}`,
+    );
+    return { session, refreshToken };
+  }
+
+  /**
+   * Inside a login transaction holding the user's lock: ends sessions already past a cutoff,
+   * then, when the user is at the cap, the live ones with the oldest `last_activity_at`
+   * (`MAX_SESSIONS`, AC-6), so the new session makes at most the cap.
+   */
+  private async makeRoom(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    now: Date,
+  ): Promise<void> {
+    const open = await tx.session.findMany({
+      where: { userId, endedAt: null },
+      orderBy: { lastActivityAt: 'asc' },
+    });
+    const live: Session[] = [];
+    for (const row of open) {
+      const reason = cutoffReason(row, now);
+      if (reason) await this.end(tx, row.id, reason);
+      else live.push(row);
+    }
+    const excess = live.length - (this.settings.maxSessionsPerUser - 1);
+    for (const row of live.slice(0, Math.max(0, excess))) {
+      await this.end(tx, row.id, SessionEndReason.MAX_SESSIONS);
+    }
   }
 
   /**

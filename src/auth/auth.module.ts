@@ -27,6 +27,7 @@ import { AuthorizeService } from './sessions/authorize.service';
 import { PortalCsrfGuard } from './sessions/csrf';
 import { SsoController } from './sessions/sso.controller';
 import { SessionEndController } from './sessions/session-end.controller';
+import { MobileController } from './sessions/mobile.controller';
 import { SessionSweeper } from './sessions/session-sweeper';
 
 @Module({
@@ -59,6 +60,7 @@ import { SessionSweeper } from './sessions/session-sweeper';
     AuthController,
     SsoController,
     SessionEndController,
+    MobileController,
     WellKnownController,
     TokenController,
   ],

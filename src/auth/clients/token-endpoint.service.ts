@@ -9,7 +9,12 @@ import {
   InjectThrottlerStorage,
   type ThrottlerStorage,
 } from '@nestjs/throttler';
-import { Prisma, type OAuthClient } from '@prisma/client';
+import {
+  ClientKind,
+  Prisma,
+  SystemType,
+  type OAuthClient,
+} from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
 import { TokenService } from '../tokens/token.service';
 import {
@@ -31,6 +36,9 @@ export const ASSERTION_TYPE =
 
 /** The per client limit, counted after the assertion passes (spec 0003 AC-43; was 60). */
 export const CLIENT_LIMIT = { limit: 600, ttlMs: 60_000 };
+
+/** A public native client's refresh: 30 a minute per address (spec 0003, AC-29, AC-38). */
+export const PUBLIC_REFRESH_LIMIT = { limit: 30, ttlMs: 60_000 };
 
 /** The grants `/auth/token` knows; each client row lists the ones it may use. */
 const GRANTS = ['client_credentials', 'authorization_code', 'refresh_token'];
@@ -147,6 +155,13 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
     userAddressHeader?: unknown,
   ): Promise<TokenAnswer | UserTokenAnswer> {
     const grantType = field(form, 'grant_type', true);
+    if (
+      form['client_assertion'] === undefined &&
+      form['client_assertion_type'] === undefined
+    ) {
+      // A public native client (`vmms-mobile`) holds no secret: it names itself (AC-29)
+      return this.publicGrant(form, grantType, address);
+    }
     const { checked, client } = await this.proveClient(form, address);
     const clientId = checked.clientId;
     const refuseGrant = (error: string, description: string) => {
@@ -187,7 +202,7 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
       );
     }
     if (field(form, 'audience', false) !== undefined) {
-      // Only vmms-mobile may name an audience (spec 0003 AC-29, milestone 3)
+      // Only a public native client may name an audience (spec 0003, AC-29)
       throw refuseGrant(
         'invalid_target',
         'This client may not name an audience',
@@ -198,6 +213,88 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
       { refreshToken: field(form, 'refresh_token', true) },
       userAddress,
     );
+  }
+
+  /**
+   * The refresh grant for a public native client (spec 0003, AC-29, AC-38): no assertion, so
+   * every call counts 30 a minute per address before anything is looked up. The client may name
+   * an `audience` its row lists; the user's roles there are checked by the grant itself.
+   * `last_seen_ip` is the request's own address.
+   */
+  private async publicGrant(
+    form: Form,
+    grantType: string,
+    address: string,
+  ): Promise<UserTokenAnswer> {
+    const hit = await this.storage.increment(
+      `public-refresh:${address}`,
+      PUBLIC_REFRESH_LIMIT.ttlMs,
+      PUBLIC_REFRESH_LIMIT.limit,
+      0,
+      'public-refresh',
+    );
+    if (hit.totalHits > PUBLIC_REFRESH_LIMIT.limit) {
+      this.logger.warn(`rate limited public refresh ip=${logSafe(address)}`);
+      throw new AddressRateLimitedError(
+        Math.max(1, Math.ceil(hit.timeToExpire)),
+      );
+    }
+
+    const clientId = field(form, 'client_id', true);
+    const client = await this.publicClient(clientId);
+    if (!client) {
+      this.refused(logSafe(clientId), 'not_a_public_client', address);
+      throw invalidClient();
+    }
+    const refuseGrant = (error: string, description: string) => {
+      this.logger.warn(
+        `refused grant client=${client.id} reason=${error} ip=${logSafe(address)}`,
+      );
+      return oauthError(HttpStatus.BAD_REQUEST, error, description);
+    };
+    if (grantType !== 'refresh_token' || !client.grants.includes(grantType)) {
+      throw refuseGrant(
+        'unauthorized_client',
+        `This client may not use ${logSafe(grantType)}`,
+      );
+    }
+
+    const audience = field(form, 'audience', false);
+    if (
+      audience !== undefined &&
+      !(
+        client.userAudiences.includes(audience) &&
+        (Object.values(SystemType) as string[]).includes(audience)
+      )
+    ) {
+      throw refuseGrant(
+        'invalid_target',
+        `This client may not ask for ${logSafe(audience)}`,
+      );
+    }
+    return this.userGrants.refresh(
+      client,
+      {
+        refreshToken: field(form, 'refresh_token', true),
+        audience: audience as SystemType | undefined,
+      },
+      isIP(address) !== 0 ? address : null,
+    );
+  }
+
+  /**
+   * An active public native client (spec 0001 section 4), by the id it names. These clients
+   * hold no secret, so this proves nothing about the caller: their routes rely on the user's
+   * password or refresh token, plus the per address limits.
+   */
+  async publicClient(clientId: unknown): Promise<OAuthClient | null> {
+    if (typeof clientId !== 'string' || clientId.length > 64) return null;
+    const client = await this.prisma.oAuthClient.findUnique({
+      where: { id: clientId },
+    });
+    return client?.kind === ClientKind.PUBLIC_NATIVE && client.isActive
+      ? client
+      : null;
   }
 
   /**
