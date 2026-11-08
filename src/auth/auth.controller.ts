@@ -33,7 +33,6 @@ import { ListChangesQueryDto } from './dto/list-changes.query.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { SystemAdmin } from './decorators/system-admin.decorator';
-import { ServiceScope } from './decorators/service-scope.decorator';
 import type { Caller } from './guards/request-authenticator';
 
 /**
@@ -87,10 +86,9 @@ export class AuthController {
     return this.authService.getCurrentUser(req.user.sub, req.user.system);
   }
 
-  // An admin of the token's system, or a backend's service token with directory.read, which
-  // sees what an admin of its own system would, read only (spec 0002, AC-19)
+  // Admins of the token's system only. Backends read people through /auth/directory, so a
+  // service token here gets 403 WRONG_TOKEN_USE (spec 0005, AC-9)
   @SystemAdmin()
-  @ServiceScope('directory.read')
   @Get('users')
   listUsers(@Query() query: ListUsersQueryDto, @Req() req: { user: Caller }) {
     return this.authService.listUsers(query, { system: req.user.system });
