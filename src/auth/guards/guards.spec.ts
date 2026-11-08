@@ -121,6 +121,7 @@ describe('welinc-auth guards', () => {
         email: 'pedro@welinc.com',
         roles: row().roles,
         system: 'VRMS',
+        sid: 'sid-1',
       });
     });
 
@@ -287,6 +288,7 @@ describe('welinc-auth guards', () => {
             email: 'e',
             roles,
             system: SystemType.VRMS,
+            sid: 'sid-1',
           }),
         ),
       ).toBe(true);
@@ -298,6 +300,7 @@ describe('welinc-auth guards', () => {
             email: 'e',
             roles,
             system: SystemType.BMS,
+            sid: 'sid-1',
           }),
         ),
       ).toBe(false);

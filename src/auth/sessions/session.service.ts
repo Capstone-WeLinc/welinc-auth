@@ -118,6 +118,17 @@ export class SessionService {
     return true;
   }
 
+  /** `end` outside a caller's transaction. */
+  endNow(
+    sessionId: string,
+    reason: SessionEndReason,
+    meta: { endedById?: string; clientId?: string } = {},
+  ): Promise<boolean> {
+    return this.prisma.$transaction((tx) =>
+      this.end(tx, sessionId, reason, meta),
+    );
+  }
+
   /**
    * Loads a session and enforces its cutoffs on the spot (AC-3): a live row past a cutoff is
    * ended now. Answers the session only when it is live and its account is active.
@@ -225,13 +236,103 @@ export class SessionService {
     return { session, handle };
   }
 
+  /**
+   * Ends every live session of a user (AC-4): deactivation, deletion, an OTP reset, an admin
+   * password set, or a password change that keeps the caller's own session (`exceptSid`).
+   * Answers how many it ended.
+   */
+  async endAllForUser(
+    db: Db,
+    userId: string,
+    reason: SessionEndReason,
+    meta: { exceptSid?: string; endedById?: string } = {},
+  ): Promise<number> {
+    const rows = await db.session.findMany({
+      where: {
+        userId,
+        endedAt: null,
+        ...(meta.exceptSid ? { id: { not: meta.exceptSid } } : {}),
+      },
+      select: { id: true },
+    });
+    let ended = 0;
+    for (const row of rows) {
+      if (await this.end(db, row.id, reason, { endedById: meta.endedById })) {
+        ended++;
+      }
+    }
+    return ended;
+  }
+
+  /**
+   * The session behind any refresh token row of `clientId`, used or not (AC-42). Logout and
+   * activity use it and never run reuse detection; `inGrace` says whether a used token is still
+   * inside its grace window.
+   */
+  async byRefreshToken(
+    clientId: string,
+    token: unknown,
+    now = new Date(),
+  ): Promise<{ sessionId: string; used: boolean; inGrace: boolean } | null> {
+    if (!isOpaqueShape(token)) return null;
+    const row = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash: hashOpaque(token) },
+      select: {
+        sessionId: true,
+        clientId: true,
+        usedAt: true,
+        graceUntil: true,
+      },
+    });
+    if (!row || row.clientId !== clientId) return null;
+    return {
+      sessionId: row.sessionId,
+      used: row.usedAt !== null,
+      inGrace:
+        row.usedAt !== null && row.graceUntil !== null && now <= row.graceUntil,
+    };
+  }
+
+  /** Whether `clientId` has ever held a refresh token in `sessionId` (logout by `sid`, AC-42). */
+  async clientHoldsSession(
+    clientId: string,
+    sessionId: string,
+  ): Promise<boolean> {
+    const row = await this.prisma.refreshToken.findFirst({
+      where: { sessionId, clientId },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
+  /**
+   * An activity ping (AC-2, AC-3): a live session moves its idle cutoff; a session past a cutoff
+   * is ended by `live` first. Answers false when there is no live session to touch.
+   */
+  async recordActivity(
+    sessionId: string,
+    lastSeenIp: string | null,
+    now = new Date(),
+  ): Promise<boolean> {
+    const session = await this.live(sessionId, now);
+    if (!session) return false;
+    await this.touch(this.prisma, session, now, lastSeenIp);
+    return true;
+  }
+
   /** Counts as activity: moves `last_activity_at` and the idle cutoff (never past the absolute). */
-  async touch(db: Db, session: Session, now = new Date()): Promise<void> {
+  async touch(
+    db: Db,
+    session: Session,
+    now = new Date(),
+    lastSeenIp: string | null = null,
+  ): Promise<void> {
     await db.session.update({
       where: { id: session.id },
       data: {
         lastActivityAt: now,
         idleExpiresAt: this.idleCutoff(session.kind, now),
+        ...(lastSeenIp ? { lastSeenIp } : {}),
       },
     });
   }

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
@@ -25,12 +26,16 @@ import { UserGrantsService } from './sessions/user-grants.service';
 import { AuthorizeService } from './sessions/authorize.service';
 import { PortalCsrfGuard } from './sessions/csrf';
 import { SsoController } from './sessions/sso.controller';
+import { SessionEndController } from './sessions/session-end.controller';
+import { SessionSweeper } from './sessions/session-sweeper';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
   imports: [
     SharedModule,
     ThrottlerModule.forRoot({ throttlers: [ADDRESS_LIMIT] }),
+    // The hourly session sweep (spec 0003, AC-37)
+    ScheduleModule.forRoot(),
   ],
   providers: [
     tokenSettingsProvider,
@@ -48,10 +53,12 @@ import { SsoController } from './sessions/sso.controller';
     UserGrantsService,
     AuthorizeService,
     PortalCsrfGuard,
+    SessionSweeper,
   ],
   controllers: [
     AuthController,
     SsoController,
+    SessionEndController,
     WellKnownController,
     TokenController,
   ],

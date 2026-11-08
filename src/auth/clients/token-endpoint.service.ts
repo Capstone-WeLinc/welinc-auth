@@ -9,7 +9,7 @@ import {
   InjectThrottlerStorage,
   type ThrottlerStorage,
 } from '@nestjs/throttler';
-import { Prisma } from '@prisma/client';
+import { Prisma, type OAuthClient } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
 import { TokenService } from '../tokens/token.service';
 import {
@@ -52,11 +52,15 @@ export const JTI_SWEEP_MS = 10 * 60_000;
 export const JTI_GRACE_MS = 60_000;
 
 /** A form field read safely: absent, a repeated field (an array) or an object are all refused. */
-type Form = Record<string, unknown>;
+export type Form = Record<string, unknown>;
 
-function field(form: Form, name: string, required: true): string;
-function field(form: Form, name: string, required: false): string | undefined;
-function field(
+export function field(form: Form, name: string, required: true): string;
+export function field(
+  form: Form,
+  name: string,
+  required: false,
+): string | undefined;
+export function field(
   form: Form,
   name: string,
   required: boolean,
@@ -143,58 +147,8 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
     userAddressHeader?: unknown,
   ): Promise<TokenAnswer | UserTokenAnswer> {
     const grantType = field(form, 'grant_type', true);
-    const assertionType = field(form, 'client_assertion_type', true);
-    const assertion = field(form, 'client_assertion', true);
-    const clientIdField = field(form, 'client_id', false);
-    if (assertionType !== ASSERTION_TYPE) {
-      throw oauthError(
-        HttpStatus.BAD_REQUEST,
-        'invalid_request',
-        `client_assertion_type must be ${ASSERTION_TYPE}`,
-      );
-    }
-
-    // AC-15: the client proves who it is first; every failure looks the same from outside
-    const issuer = this.tokens.settings.issuer;
-    let checked: CheckedAssertion;
-    try {
-      checked = await checkAssertion(assertion, {
-        issuer,
-        clientIdField,
-        findClient: (id) =>
-          this.prisma.oAuthClient.findUnique({ where: { id } }),
-      });
-    } catch (error) {
-      if (error instanceof AssertionRefusedError) {
-        this.refused(error.claimedClient, error.reason, address);
-        // Spec 0003 AC-43: a refused assertion counts against the per address limit
-        await this.countAddress(address);
-        throw invalidClient();
-      }
-      throw error;
-    }
+    const { checked, client } = await this.proveClient(form, address);
     const clientId = checked.clientId;
-
-    // AC-43: assertion callers skip the per address limit and get a per client one
-    const hit = await this.storage.increment(
-      `client:${clientId}`,
-      CLIENT_LIMIT.ttlMs,
-      CLIENT_LIMIT.limit,
-      0,
-      'client',
-    );
-    if (hit.totalHits > CLIENT_LIMIT.limit) {
-      this.logger.warn(
-        `rate limited client=${clientId} ip=${logSafe(address)}`,
-      );
-      throw new ClientRateLimitedError(
-        Math.max(1, Math.ceil(hit.timeToExpire)),
-      );
-    }
-
-    const client = (await this.prisma.oAuthClient.findUnique({
-      where: { id: clientId },
-    }))!;
     const refuseGrant = (error: string, description: string) => {
       this.logger.warn(
         `refused grant client=${clientId} reason=${error} ip=${logSafe(address)}`,
@@ -244,6 +198,79 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
       { refreshToken: field(form, 'refresh_token', true) },
       userAddress,
     );
+  }
+
+  /**
+   * A confidential client proving itself outside `/auth/token` (spec 0003, AC-42, AC-43):
+   * `/auth/logout` and `/auth/session/activity` with the same form fields. The assertion's
+   * `jti` is used up here, so it can't be replayed.
+   */
+  async assertClient(form: Form, address: string): Promise<OAuthClient> {
+    const { checked, client } = await this.proveClient(form, address);
+    await this.recordJti(checked, address);
+    return client;
+  }
+
+  /**
+   * The client proves who it is (spec 0002 AC-15; every failure looks the same from outside),
+   * then counts against its per client limit (spec 0003 AC-43). The jti is not recorded here.
+   */
+  private async proveClient(
+    form: Form,
+    address: string,
+  ): Promise<{ checked: CheckedAssertion; client: OAuthClient }> {
+    const assertionType = field(form, 'client_assertion_type', true);
+    const assertion = field(form, 'client_assertion', true);
+    const clientIdField = field(form, 'client_id', false);
+    if (assertionType !== ASSERTION_TYPE) {
+      throw oauthError(
+        HttpStatus.BAD_REQUEST,
+        'invalid_request',
+        `client_assertion_type must be ${ASSERTION_TYPE}`,
+      );
+    }
+
+    const issuer = this.tokens.settings.issuer;
+    let checked: CheckedAssertion;
+    try {
+      checked = await checkAssertion(assertion, {
+        issuer,
+        clientIdField,
+        findClient: (id) =>
+          this.prisma.oAuthClient.findUnique({ where: { id } }),
+      });
+    } catch (error) {
+      if (error instanceof AssertionRefusedError) {
+        this.refused(error.claimedClient, error.reason, address);
+        // Spec 0003 AC-43: a refused assertion counts against the per address limit
+        await this.countAddress(address);
+        throw invalidClient();
+      }
+      throw error;
+    }
+    const clientId = checked.clientId;
+
+    // AC-43: assertion callers skip the per address limit and get a per client one
+    const hit = await this.storage.increment(
+      `client:${clientId}`,
+      CLIENT_LIMIT.ttlMs,
+      CLIENT_LIMIT.limit,
+      0,
+      'client',
+    );
+    if (hit.totalHits > CLIENT_LIMIT.limit) {
+      this.logger.warn(
+        `rate limited client=${clientId} ip=${logSafe(address)}`,
+      );
+      throw new ClientRateLimitedError(
+        Math.max(1, Math.ceil(hit.timeToExpire)),
+      );
+    }
+
+    const client = (await this.prisma.oAuthClient.findUnique({
+      where: { id: clientId },
+    }))!;
+    return { checked, client };
   }
 
   private async clientCredentials(

@@ -6,6 +6,7 @@ import * as argon2 from 'argon2';
 import type { PrismaService } from '../shared/prisma.service';
 import type { MailService } from '../shared/mail.service';
 import { AuthService } from './auth.service';
+import { SessionService } from './sessions/session.service';
 import { testTokenService } from './testing/test-keys';
 import type { TokenService } from './tokens/token.service';
 
@@ -35,11 +36,15 @@ describe('AuthService.checkCredentials', () => {
     });
     const update = jest.fn<(args: unknown) => Promise<unknown>>();
     update.mockResolvedValue({});
+    const sessions = {
+      endAllForUser: jest.fn(() => Promise.resolve(0)),
+    } as unknown as SessionService;
     return new AuthService(
       { user: { findFirst, update } } as unknown as PrismaService,
       tokens,
       {} as MailService,
       { get: () => undefined } as unknown as ConfigService,
+      sessions,
     );
   }
 

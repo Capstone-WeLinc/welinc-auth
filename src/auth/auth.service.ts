@@ -14,11 +14,18 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as dns from 'dns';
-import { Prisma, SystemType, UserChangeAction, UserRole } from '@prisma/client';
+import {
+  Prisma,
+  SessionEndReason,
+  SystemType,
+  UserChangeAction,
+  UserRole,
+} from '@prisma/client';
 import { PrismaService } from '../shared/prisma.service';
 import { coded } from './errors';
 import { pickLoginSystem } from './tokens/login-system';
 import { TokenService } from './tokens/token.service';
+import { SessionService } from './sessions/session.service';
 import { MailService } from '../shared/mail.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
@@ -179,6 +186,7 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly mailService: MailService,
     config: ConfigService,
+    private readonly sessions: SessionService,
   ) {
     const portalUrl = config.get<string>('PORTAL_URL');
     if (!portalUrl && config.get<string>('NODE_ENV') === 'production') {
@@ -766,6 +774,15 @@ This code will expire in 1 hour.`,
             : UserChangeAction.DEACTIVATED,
         ),
       });
+      // Spec 0003 AC-4: deactivation ends every live session at once
+      if (!dto.isActive) {
+        await this.sessions.endAllForUser(
+          tx,
+          userId,
+          SessionEndReason.DEACTIVATED,
+          { endedById: actor.id },
+        );
+      }
       return updated;
     });
 
@@ -804,6 +821,10 @@ This code will expire in 1 hour.`,
       await tx.userChange.create({
         data: change(userId, actor, UserChangeAction.DELETED),
       });
+      // Spec 0003 AC-4
+      await this.sessions.endAllForUser(tx, userId, SessionEndReason.DELETED, {
+        endedById: actor.id,
+      });
     });
 
     return { id: userId };
@@ -824,14 +845,21 @@ This code will expire in 1 hour.`,
     assertInSystem(existing, actor.system);
     assertNotAdminElsewhere(existing.roles, actor.system);
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        passwordHash: await argon2.hash(dto.password),
-        failedLoginAttempts: 0,
-        lockedAt: null,
-      },
-      select: MANAGED_USER_SELECT,
+    const passwordHash = await argon2.hash(dto.password);
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { passwordHash, failedLoginAttempts: 0, lockedAt: null },
+        select: MANAGED_USER_SELECT,
+      });
+      // Spec 0003 AC-4: an admin password set ends every session of the user
+      await this.sessions.endAllForUser(
+        tx,
+        userId,
+        SessionEndReason.PASSWORD_CHANGED,
+        { endedById: actor.id },
+      );
+      return updated;
     });
 
     return this.mapScopedUser(user, actor.system);
@@ -977,22 +1005,29 @@ This code will expire in 10 minutes.`,
     }
 
     // Mark token as used, update password, and set emailVerified to true atomically
-    await this.prisma.$transaction([
-      this.prisma.passwordResetToken.update({
+    const passwordHash = await argon2.hash(newPassword);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.update({
         where: { id: token.id },
         data: { usedAt: new Date() },
-      }),
-      this.prisma.user.update({
+      });
+      await tx.user.update({
         where: { id: user.id },
         data: {
-          passwordHash: await argon2.hash(newPassword),
+          passwordHash,
           emailVerified: true,
           // Completing a code also ends a lockout (AC-17)
           lockedAt: null,
           failedLoginAttempts: 0,
         },
-      }),
-    ]);
+      });
+      // Spec 0003 AC-4: an OTP reset ends every session of the user
+      await this.sessions.endAllForUser(
+        tx,
+        user.id,
+        SessionEndReason.PASSWORD_CHANGED,
+      );
+    });
 
     return { message: 'Password has been reset successfully.' };
   }
@@ -1074,9 +1109,11 @@ This code will expire in 10 minutes.`,
     return this.mapManagedUser(user);
   }
 
+  /** `currentSid` is the caller's own session, the one a password change keeps (spec 0003 AC-4). */
   async changeOwnPassword(
     userId: string,
     dto: ChangePasswordDto,
+    currentSid: string,
   ): Promise<ManagedUserResponse> {
     if (dto.newPassword !== dto.confirmPassword) {
       throw new BadRequestException(
@@ -1105,29 +1142,37 @@ This code will expire in 10 minutes.`,
       throw new BadRequestException('Current password is incorrect');
     }
 
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        passwordHash: await argon2.hash(dto.newPassword),
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
+    const passwordHash = await argon2.hash(dto.newPassword);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Spec 0003 AC-4: every other session of the user ends; this one stays
+      await this.sessions.endAllForUser(
+        tx,
+        userId,
+        SessionEndReason.PASSWORD_CHANGED,
+        { exceptSid: currentSid },
+      );
+      return tx.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          emailVerified: true,
+          contact: true,
+          profilePicture: true,
+          isActive: true,
+          lockedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          roles: {
+            select: {
+              role: true,
+              system: true,
+            },
           },
         },
-      },
+      });
     });
 
     return this.mapManagedUser(updated);

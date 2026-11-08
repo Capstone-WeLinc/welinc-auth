@@ -19,6 +19,7 @@ import { SystemType, UserChangeAction, UserRole } from '@prisma/client';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
+import { SessionService } from './sessions/session.service';
 import { encodeChangeCursor } from './user-changes';
 
 // Spec 0009: admin safety guards (AC-19), the change record (AC-20, AC-21),
@@ -88,13 +89,17 @@ function build(env: Record<string, string | undefined> = {}) {
   const config = {
     get: (key: string) => env[key],
   } as unknown as ConfigService;
+  const sessions = {
+    endAllForUser: jest.fn(() => Promise.resolve(0)),
+  } as unknown as SessionService;
   const service = new AuthService(
     db as unknown as PrismaService,
     {} as TokenService,
     { sendMail } as unknown as MailService,
     config,
+    sessions,
   );
-  return { service, db, sendMail };
+  return { service, db, sendMail, sessions };
 }
 
 /** The UserChange rows written, from either create or createMany. */

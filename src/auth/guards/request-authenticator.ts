@@ -24,6 +24,8 @@ export type UserCaller = {
   /** Every role the account holds, read from the database on each request. */
   roles: { role: UserRole; system: SystemType }[];
   system: SystemType;
+  /** The token's session (spec 0003): what a password change keeps, and `current` in lists. */
+  sid: string;
 };
 
 /** A backend calling with its own service token (spec 0002, AC-19). */
@@ -162,6 +164,7 @@ export class RequestAuthenticator {
       email: user.email,
       roles: user.roles,
       system,
+      sid: session.id,
     };
   }
 }

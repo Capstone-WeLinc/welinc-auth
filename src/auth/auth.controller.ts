@@ -181,10 +181,10 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Patch('profile/password')
   changeOwnPassword(
-    @Req() req: { user: { sub: string } },
+    @Req() req: { user: { sub: string; sid: string } },
     @Body() dto: ChangePasswordDto,
   ) {
-    return this.authService.changeOwnPassword(req.user.sub, dto);
+    return this.authService.changeOwnPassword(req.user.sub, dto, req.user.sid);
   }
 
   @UseGuards(JwtAuthGuard)
