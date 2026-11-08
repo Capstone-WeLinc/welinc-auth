@@ -4,6 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
 import type { ServerResponse } from 'http';
 import type { Request, Response, NextFunction } from 'express';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
 /**
@@ -27,6 +28,8 @@ function isLocalDevOrigin(origin: string): boolean {
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.set('trust proxy', trustProxyHops());
+  // The portal's SSO cookie (spec 0003, AC-11); unsigned, it holds an opaque handle
+  app.use(cookieParser());
 
   app.useStaticAssets(join(__dirname, '..', 'uploads'), {
     prefix: '/uploads/',

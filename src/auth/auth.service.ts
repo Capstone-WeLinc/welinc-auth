@@ -187,10 +187,13 @@ export class AuthService {
     this.passwordLink = `${(portalUrl || 'http://localhost:8000').replace(/\/+$/, '')}/forgot-password`;
   }
 
-  async login(dto: LoginDto): Promise<{
-    accessToken: string;
+  /**
+   * Checks a password login: lockout (5 failures), deactivation, then the system pick (spec 0002,
+   * AC-5). Answers the user and the system; the caller creates the session (spec 0003, AC-11).
+   */
+  async checkCredentials(dto: LoginDto): Promise<{
     system: SystemType;
-    user: AuthUserResponse;
+    user: { id: string; name: string; email: string };
   }> {
     // TODO: Transparent migration — if passwordHash starts with '$2b$' (bcrypt),
     // verify with bcrypt first, re-hash with argon2, then save. Requires bcrypt as
@@ -286,26 +289,9 @@ export class AuthService {
       );
     }
 
-    const accessToken = await this.tokens.signUserToken({
-      sub: user.id,
-      email: user.email,
-      aud: system,
-      roles: user.roles
-        .filter((r) => r.system === system)
-        .map((r) => ({ role: r.role, system: r.system })),
-    });
-
     return {
-      accessToken,
       system,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        contact: user.contact,
-        profilePicture: user.profilePicture,
-        roles: user.roles.map((r) => ({ role: r.role, system: r.system })),
-      },
+      user: { id: user.id, name: user.name, email: user.email },
     };
   }
 

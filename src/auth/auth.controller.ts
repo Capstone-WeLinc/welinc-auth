@@ -21,7 +21,6 @@ import { AuthService, type OptionalCaller } from './auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
 import { LookupUsersQueryDto } from './dto/lookup-users.query.dto';
-import { LoginDto } from './dto/login.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SetUserStatusDto } from './dto/set-user-status.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -54,12 +53,6 @@ const actorOf = (req: AdminRequest) => ({
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
-
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  async login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
-  }
 
   // Public; an admin's token, when sent, records the reset as theirs (spec 0009, AC-20)
   @UseGuards(OptionalJwtAuthGuard)

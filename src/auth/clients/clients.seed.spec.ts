@@ -54,6 +54,8 @@ describe('seedClients', () => {
       grants: ['authorization_code', 'refresh_token', 'client_credentials'],
       userAudiences: ['VRMS'],
       serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+      webAddress: 'http://localhost:8001',
+      redirectUris: ['http://localhost:3000/vrms/session/callback'],
     });
     expect(calls['vmms-analytics'].update).toMatchObject({
       kind: 'SERVICE',
@@ -62,6 +64,27 @@ describe('seedClients', () => {
     expect(calls.portal.update).toMatchObject({
       system: null,
       grants: ['sso'],
+    });
+  });
+
+  // covers: spec 0003 (the registry's web and redirect addresses come from env)
+  it('builds each callback from API_PUBLIC_URL and the web address from env', async () => {
+    const calls = await run({
+      API_PUBLIC_URL: 'https://api.welinc.tech/',
+      CLIENT_VRMS_WEB_ADDRESS: 'https://vrms.welinc.tech',
+      PORTAL_URL: 'https://portal.welinc.tech',
+    });
+    expect(calls.vrms.update).toMatchObject({
+      webAddress: 'https://vrms.welinc.tech',
+      redirectUris: ['https://api.welinc.tech/vrms/session/callback'],
+    });
+    expect(calls.portal.update).toMatchObject({
+      webAddress: 'https://portal.welinc.tech',
+      redirectUris: [],
+    });
+    expect(calls['vmms-mobile'].update).toMatchObject({
+      webAddress: null,
+      redirectUris: [],
     });
   });
 

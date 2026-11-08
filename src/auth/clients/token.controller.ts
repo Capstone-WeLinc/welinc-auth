@@ -11,6 +11,7 @@ import type { Request, Response } from 'express';
 import { oauthError } from './oauth-error';
 import { AddressThrottlerGuard } from './address-throttler.guard';
 import {
+  AddressRateLimitedError,
   ClientRateLimitedError,
   TokenEndpointService,
 } from './token-endpoint.service';
@@ -40,14 +41,20 @@ export class TokenController {
         ? (req.body as Record<string, unknown>)
         : {};
     try {
-      return await this.endpoint.grant(form, req.ip ?? '');
+      return await this.endpoint.grant(
+        form,
+        req.ip ?? '',
+        req.headers['x-welinc-user-address'],
+      );
     } catch (error) {
       if (error instanceof ClientRateLimitedError) {
         res.setHeader('Retry-After', String(error.retryAfterSeconds));
         throw oauthError(
           HttpStatus.TOO_MANY_REQUESTS,
           'rate_limited',
-          'Too many token requests for this client. Try again later.',
+          error instanceof AddressRateLimitedError
+            ? 'Too many token requests from this address. Try again later.'
+            : 'Too many token requests for this client. Try again later.',
         );
       }
       throw error;

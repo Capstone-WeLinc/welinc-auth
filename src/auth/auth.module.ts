@@ -19,6 +19,12 @@ import {
 } from './clients/address-throttler.guard';
 import { TokenController } from './clients/token.controller';
 import { TokenEndpointService } from './clients/token-endpoint.service';
+import { sessionSettingsProvider } from './sessions/session-config';
+import { SessionService } from './sessions/session.service';
+import { UserGrantsService } from './sessions/user-grants.service';
+import { AuthorizeService } from './sessions/authorize.service';
+import { PortalCsrfGuard } from './sessions/csrf';
+import { SsoController } from './sessions/sso.controller';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -37,7 +43,17 @@ import { TokenEndpointService } from './clients/token-endpoint.service';
     RolesGuard,
     TokenEndpointService,
     AddressThrottlerGuard,
+    sessionSettingsProvider,
+    SessionService,
+    UserGrantsService,
+    AuthorizeService,
+    PortalCsrfGuard,
   ],
-  controllers: [AuthController, WellKnownController, TokenController],
+  controllers: [
+    AuthController,
+    SsoController,
+    WellKnownController,
+    TokenController,
+  ],
 })
 export default class AuthModule {}

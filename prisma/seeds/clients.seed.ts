@@ -12,6 +12,10 @@ type ClientDefinition = {
   grants: string[];
   userAudiences: string[];
   serviceScopes: Record<string, string[]>;
+  /** The system's web address in local development (spec 0001 section 1). */
+  localWebAddress?: string;
+  /** Builds the one exact redirect address from the gateway address (spec 0001 section 4). */
+  callbackPath?: string;
 };
 
 const SYSTEM_GRANTS = [
@@ -25,6 +29,7 @@ export const CLIENTS: ClientDefinition[] = [
   {
     id: 'portal',
     kind: ClientKind.FIRST_PARTY_WEB,
+    localWebAddress: 'http://localhost:8000',
     system: null,
     grants: ['sso'],
     userAudiences: [],
@@ -33,6 +38,8 @@ export const CLIENTS: ClientDefinition[] = [
   {
     id: 'vrms',
     kind: ClientKind.CONFIDENTIAL,
+    localWebAddress: 'http://localhost:8001',
+    callbackPath: '/vrms/session/callback',
     system: SystemType.VRMS,
     grants: SYSTEM_GRANTS,
     userAudiences: ['VRMS'],
@@ -41,6 +48,8 @@ export const CLIENTS: ClientDefinition[] = [
   {
     id: 'vmms',
     kind: ClientKind.CONFIDENTIAL,
+    localWebAddress: 'http://localhost:8002',
+    callbackPath: '/vmms/session/callback',
     system: SystemType.VMMS,
     grants: SYSTEM_GRANTS,
     userAudiences: ['VMMS'],
@@ -49,6 +58,8 @@ export const CLIENTS: ClientDefinition[] = [
   {
     id: 'bms',
     kind: ClientKind.CONFIDENTIAL,
+    localWebAddress: 'http://localhost:8003',
+    callbackPath: '/bms/session/callback',
     system: SystemType.BMS,
     grants: SYSTEM_GRANTS,
     userAudiences: ['BMS'],
@@ -83,6 +94,31 @@ export const CLIENTS: ClientDefinition[] = [
 /** `vmms-analytics` → `CLIENT_VMMS_ANALYTICS_JWKS`. */
 export const jwksEnvName = (id: string) =>
   `CLIENT_${id.toUpperCase().replace(/-/g, '_')}_JWKS`;
+
+/** `vrms` → `CLIENT_VRMS_WEB_ADDRESS`. */
+export const webAddressEnvName = (id: string) =>
+  `CLIENT_${id.toUpperCase().replace(/-/g, '_')}_WEB_ADDRESS`;
+
+const trimSlash = (value: string) => value.trim().replace(/\/+$/, '');
+
+/**
+ * A client's web address and redirect addresses (spec 0003): the web address from
+ * `CLIENT_<ID>_WEB_ADDRESS` (the portal's from `PORTAL_URL`), else the local one; the redirect
+ * address is `API_PUBLIC_URL` (the gateway address the browser sees) plus the callback path.
+ */
+export function addressesFor(
+  client: ClientDefinition,
+  env: NodeJS.ProcessEnv,
+): { webAddress: string | null; redirectUris: string[] } {
+  const fromEnv =
+    client.id === 'portal' ? env['PORTAL_URL'] : env[webAddressEnvName(client.id)];
+  const web = fromEnv?.trim() ? trimSlash(fromEnv) : client.localWebAddress;
+  const api = trimSlash(env['API_PUBLIC_URL'] || 'http://localhost:3000');
+  return {
+    webAddress: web ?? null,
+    redirectUris: client.callbackPath ? [`${api}${client.callbackPath}`] : [],
+  };
+}
 
 /** Checks a client's public key set from env. Refuses a private key: welinc-auth never holds one. */
 export function parseClientJwks(
@@ -134,6 +170,7 @@ export async function seedClients(
       grants: client.grants,
       userAudiences: client.userAudiences,
       serviceScopes: client.serviceScopes,
+      ...addressesFor(client, env),
     };
     await prisma.oAuthClient.upsert({
       where: { id: client.id },

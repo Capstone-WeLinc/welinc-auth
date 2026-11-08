@@ -19,12 +19,34 @@ import {
   type CheckedAssertion,
 } from './client-assertion';
 import { invalidClient, oauthError } from './oauth-error';
+import { ADDRESS_LIMIT } from './address-throttler.guard';
+import { isIP } from 'net';
+import {
+  UserGrantsService,
+  type UserTokenAnswer,
+} from '../sessions/user-grants.service';
 
 export const ASSERTION_TYPE =
   'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 
-/** The per client limit, counted after the assertion passes (spec 0002, AC-18). */
-export const CLIENT_LIMIT = { limit: 60, ttlMs: 60_000 };
+/** The per client limit, counted after the assertion passes (spec 0003 AC-43; was 60). */
+export const CLIENT_LIMIT = { limit: 600, ttlMs: 60_000 };
+
+/** The grants `/auth/token` knows; each client row lists the ones it may use. */
+const GRANTS = ['client_credentials', 'authorization_code', 'refresh_token'];
+
+/**
+ * `X-WeLinc-User-Address` (spec 0003 AC-43): the user's address as a system backend saw it.
+ * Kept only when it is a plain IP address.
+ */
+export function userAddressOf(header: unknown): string | null {
+  const value: unknown = Array.isArray(header)
+    ? (header as unknown[])[0]
+    : header;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length <= 45 && isIP(trimmed) !== 0 ? trimmed : null;
+}
 /** How often expired replay rows are deleted, and how long past `expiresAt` they're kept (AC-17). */
 export const JTI_SWEEP_MS = 10 * 60_000;
 export const JTI_GRACE_MS = 60_000;
@@ -67,9 +89,12 @@ export class ClientRateLimitedError extends Error {
   }
 }
 
+/** Raised when refused assertions from one address pass the address limit. */
+export class AddressRateLimitedError extends ClientRateLimitedError {}
+
 /**
- * `POST /auth/token`, the client credentials grant (spec 0002, AC-14 to AC-17, AC-27). S3 and S4
- * add the user grants.
+ * `POST /auth/token`: client credentials (spec 0002, AC-14 to AC-17, AC-27) and the user grants
+ * (spec 0003): the code exchange and refresh token rotation.
  */
 @Injectable()
 export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
@@ -80,6 +105,7 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly tokens: TokenService,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
+    private readonly userGrants: UserGrantsService,
   ) {}
 
   onModuleInit() {
@@ -106,26 +132,25 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async grant(form: Form, address: string): Promise<TokenAnswer> {
+  /**
+   * Every grant (spec 0002 AC-14 to AC-18, spec 0003 AC-7 to AC-15, AC-43). The client proves
+   * itself first with its assertion; only then does the grant type pick the path.
+   * `userAddressHeader` is `X-WeLinc-User-Address`, trusted only once the assertion passes.
+   */
+  async grant(
+    form: Form,
+    address: string,
+    userAddressHeader?: unknown,
+  ): Promise<TokenAnswer | UserTokenAnswer> {
     const grantType = field(form, 'grant_type', true);
     const assertionType = field(form, 'client_assertion_type', true);
     const assertion = field(form, 'client_assertion', true);
-    const audience = field(form, 'audience', true);
-    const scopeField = field(form, 'scope', true);
     const clientIdField = field(form, 'client_id', false);
     if (assertionType !== ASSERTION_TYPE) {
       throw oauthError(
         HttpStatus.BAD_REQUEST,
         'invalid_request',
         `client_assertion_type must be ${ASSERTION_TYPE}`,
-      );
-    }
-    const scopes = scopeField.split(' ').filter(Boolean);
-    if (scopes.length === 0) {
-      throw oauthError(
-        HttpStatus.BAD_REQUEST,
-        'invalid_request',
-        'scope is empty',
       );
     }
 
@@ -142,13 +167,15 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       if (error instanceof AssertionRefusedError) {
         this.refused(error.claimedClient, error.reason, address);
+        // Spec 0003 AC-43: a refused assertion counts against the per address limit
+        await this.countAddress(address);
         throw invalidClient();
       }
       throw error;
     }
     const clientId = checked.clientId;
 
-    // AC-18: the per client count, only once the assertion is known to be the client's
+    // AC-43: assertion callers skip the per address limit and get a per client one
     const hit = await this.storage.increment(
       `client:${clientId}`,
       CLIENT_LIMIT.ttlMs,
@@ -165,7 +192,6 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    // AC-16: grant, audience and scope, against the registry row
     const client = (await this.prisma.oAuthClient.findUnique({
       where: { id: clientId },
     }))!;
@@ -175,18 +201,71 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
       );
       return oauthError(HttpStatus.BAD_REQUEST, error, description);
     };
-    if (grantType !== 'client_credentials') {
+    if (!GRANTS.includes(grantType)) {
       throw refuseGrant(
         'unsupported_grant_type',
-        'Only client_credentials is supported',
+        `Supported grants: ${GRANTS.join(', ')}`,
       );
     }
-    if (!client.grants.includes('client_credentials')) {
+    if (!client.grants.includes(grantType)) {
       throw refuseGrant(
         'unauthorized_client',
-        'This client may not use client_credentials',
+        `This client may not use ${grantType}`,
       );
     }
+
+    if (grantType === 'client_credentials') {
+      return this.clientCredentials(form, checked, refuseGrant);
+    }
+
+    // The user grants record the jti before acting, so an assertion can't be used twice
+    await this.recordJti(checked, address);
+    const userAddress = userAddressOf(userAddressHeader);
+    if (grantType === 'authorization_code') {
+      return this.userGrants.exchangeCode(
+        client,
+        {
+          code: field(form, 'code', true),
+          redirectUri: field(form, 'redirect_uri', true),
+          verifier: field(form, 'code_verifier', true),
+        },
+        userAddress,
+      );
+    }
+    if (field(form, 'audience', false) !== undefined) {
+      // Only vmms-mobile may name an audience (spec 0003 AC-29, milestone 3)
+      throw refuseGrant(
+        'invalid_target',
+        'This client may not name an audience',
+      );
+    }
+    return this.userGrants.refresh(
+      client,
+      { refreshToken: field(form, 'refresh_token', true) },
+      userAddress,
+    );
+  }
+
+  private async clientCredentials(
+    form: Form,
+    checked: CheckedAssertion,
+    refuseGrant: (error: string, description: string) => Error,
+  ): Promise<TokenAnswer> {
+    const clientId = checked.clientId;
+    const audience = field(form, 'audience', true);
+    const scopeField = field(form, 'scope', true);
+    const scopes = scopeField.split(' ').filter(Boolean);
+    if (scopes.length === 0) {
+      throw oauthError(
+        HttpStatus.BAD_REQUEST,
+        'invalid_request',
+        'scope is empty',
+      );
+    }
+    // AC-16: audience and scope, against the registry row
+    const client = (await this.prisma.oAuthClient.findUnique({
+      where: { id: clientId },
+    }))!;
     const allowed = (client.serviceScopes as Record<string, unknown>)[audience];
     if (!Array.isArray(allowed)) {
       throw refuseGrant(
@@ -202,22 +281,8 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    // AC-17: record the jti last, so a refused grant doesn't use it up. The primary key settles
-    // two requests at the same moment: one row, one token.
-    try {
-      await this.prisma.clientAssertionJti.create({
-        data: { clientId, jti: checked.jti, expiresAt: checked.expiresAt },
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        this.refused(clientId, 'jti_reused', address);
-        throw invalidClient();
-      }
-      throw error;
-    }
+    // AC-17: record the jti last, so a refused grant doesn't use it up
+    await this.recordJti(checked, '');
 
     const { token, jti, expiresIn } = await this.tokens.signServiceToken({
       clientId,
@@ -234,6 +299,44 @@ export class TokenEndpointService implements OnModuleInit, OnModuleDestroy {
       expires_in: expiresIn,
       scope: scopes.join(' '),
     };
+  }
+
+  /** The primary key settles two requests at the same moment: one row, one token (AC-17). */
+  private async recordJti(checked: CheckedAssertion, address: string) {
+    try {
+      await this.prisma.clientAssertionJti.create({
+        data: {
+          clientId: checked.clientId,
+          jti: checked.jti,
+          expiresAt: checked.expiresAt,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        this.refused(checked.clientId, 'jti_reused', address);
+        throw invalidClient();
+      }
+      throw error;
+    }
+  }
+
+  /** The per address count for a request whose assertion failed (AC-43). */
+  private async countAddress(address: string) {
+    const hit = await this.storage.increment(
+      `address:${address}`,
+      ADDRESS_LIMIT.ttl,
+      ADDRESS_LIMIT.limit,
+      0,
+      'address',
+    );
+    if (hit.totalHits > ADDRESS_LIMIT.limit) {
+      throw new AddressRateLimitedError(
+        Math.max(1, Math.ceil(hit.timeToExpire)),
+      );
+    }
   }
 
   private refused(client: string, reason: string, address: string) {

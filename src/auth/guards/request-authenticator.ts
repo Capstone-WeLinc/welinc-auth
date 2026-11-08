@@ -7,6 +7,7 @@ import {
 import type { Request } from 'express';
 import { SystemType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
+import { SessionService } from '../sessions/session.service';
 import { coded } from '../errors';
 import {
   TokenRejectedError,
@@ -60,6 +61,7 @@ export class RequestAuthenticator {
   constructor(
     private readonly tokens: TokenService,
     private readonly prisma: PrismaService,
+    private readonly sessions: SessionService,
   ) {}
 
   async authenticate(request: Request): Promise<Caller> {
@@ -70,6 +72,13 @@ export class RequestAuthenticator {
     try {
       token = await this.tokens.verify(raw);
     } catch (error) {
+      if (error instanceof TokenRejectedError && error.expired) {
+        throw coded(
+          HttpStatus.UNAUTHORIZED,
+          'TOKEN_EXPIRED',
+          'The access token has expired',
+        );
+      }
       if (error instanceof TokenRejectedError)
         throw new UnauthorizedException();
       throw error;
@@ -108,6 +117,17 @@ export class RequestAuthenticator {
         HttpStatus.FORBIDDEN,
         'WRONG_AUDIENCE',
         `This token is for ${system}, not ${asked}`,
+      );
+    }
+
+    // Spec 0003, AC-1: a user token works only while its session is live; the S2 interim
+    // token (no sid) never does
+    const session = token.sid ? await this.sessions.live(token.sid) : null;
+    if (!session || session.userId !== token.sub) {
+      throw coded(
+        HttpStatus.UNAUTHORIZED,
+        'SESSION_ENDED',
+        'The session has ended',
       );
     }
 

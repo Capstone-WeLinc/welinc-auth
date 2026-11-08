@@ -18,6 +18,7 @@ import {
   type TestClient,
 } from '../testing/test-clients';
 import type { TokenService } from '../tokens/token.service';
+import type { UserGrantsService } from '../sessions/user-grants.service';
 import {
   ASSERTION_TYPE,
   ClientRateLimitedError,
@@ -112,6 +113,7 @@ describe('TokenEndpointService', () => {
       prisma,
       tokens,
       new ThrottlerStorageService(),
+      {} as UserGrantsService,
     );
     logs = [];
     jest
@@ -262,8 +264,9 @@ describe('TokenEndpointService', () => {
     });
   });
 
-  it('answers the 61st request from one client in a minute with a rate limit', async () => {
-    for (let i = 0; i < 60; i++) await service.grant(await form(vrms), 'ip');
+  // spec 0003 AC-43 raised the per client limit from 60 to 600 a minute
+  it('answers the 601st request from one client in a minute with a rate limit', async () => {
+    for (let i = 0; i < 600; i++) await service.grant(await form(vrms), 'ip');
     const error = await service
       .grant(await form(vrms), 'ip')
       .catch((e: unknown) => e);

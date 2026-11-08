@@ -23,6 +23,10 @@ export type VerifiedUserToken = {
   clientId: string;
   roles: TokenRole[];
   jti: string;
+  /** The session id (spec 0003, AC-1). Absent only on the S2 interim token, which no route accepts. */
+  sid: string | null;
+  /** Expiry, seconds since the epoch. */
+  exp: number;
 };
 
 /** A checked service access token, `aud: AUTH` (spec 0001 section 5). */
@@ -42,6 +46,11 @@ export class TokenRejectedError extends Error {
     super(`token rejected: ${reason}`);
     this.name = 'TokenRejectedError';
   }
+
+  /** A good token past its `exp`: answered 401 `TOKEN_EXPIRED` (spec 0003, AC-27). */
+  get expired(): boolean {
+    return this.reason === 'ERR_JWT_EXPIRED';
+  }
 }
 
 /** The one place welinc-auth signs and checks access tokens (spec 0002, AC-1, AC-6, AC-8). */
@@ -52,16 +61,19 @@ export class TokenService {
     @Inject(TOKEN_SETTINGS) readonly settings: TokenSettings,
   ) {}
 
-  /** The interim login token until S4: `client_id: portal`, no `sid` (AC-6). */
+  /** A user access token for one system, from one session (spec 0001 section 5, spec 0003 AC-1). */
   async signUserToken(input: {
     sub: string;
     email: string;
     aud: UserAudience;
     roles: TokenRole[];
+    sid: string;
+    clientId: string;
   }): Promise<string> {
     return this.sign(
       {
-        client_id: 'portal',
+        client_id: input.clientId,
+        sid: input.sid,
         token_use: 'user',
         email: input.email,
         roles: input.roles,
@@ -156,6 +168,7 @@ export class TokenService {
       }
       const email = payload['email'];
       const roles = payload['roles'];
+      const sid = payload['sid'];
       if (typeof email !== 'string' || !Array.isArray(roles)) {
         throw new TokenRejectedError('bad_claims');
       }
@@ -167,6 +180,8 @@ export class TokenService {
         clientId,
         roles: roles as TokenRole[],
         jti,
+        sid: typeof sid === 'string' && sid !== '' ? sid : null,
+        exp: payload.exp as number,
       };
     }
 

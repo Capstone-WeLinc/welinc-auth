@@ -30,9 +30,16 @@ describe('WellKnownController', () => {
     ).metadata();
     expect(meta).toEqual({
       issuer: TEST_ISSUER,
+      authorization_endpoint: `${TEST_ISSUER}/authorize`,
       token_endpoint: `${TEST_ISSUER}/token`,
       jwks_uri: `${TEST_ISSUER}/.well-known/jwks.json`,
-      grant_types_supported: ['client_credentials'],
+      grant_types_supported: [
+        'authorization_code',
+        'refresh_token',
+        'client_credentials',
+      ],
+      response_types_supported: ['code'],
+      code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['private_key_jwt'],
       token_endpoint_auth_signing_alg_values_supported: ['ES256'],
     });
