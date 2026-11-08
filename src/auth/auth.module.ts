@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
@@ -19,12 +20,24 @@ import {
 } from './clients/address-throttler.guard';
 import { TokenController } from './clients/token.controller';
 import { TokenEndpointService } from './clients/token-endpoint.service';
+import { sessionSettingsProvider } from './sessions/session-config';
+import { SessionService } from './sessions/session.service';
+import { UserGrantsService } from './sessions/user-grants.service';
+import { AuthorizeService } from './sessions/authorize.service';
+import { PortalCsrfGuard } from './sessions/csrf';
+import { SsoController } from './sessions/sso.controller';
+import { SessionEndController } from './sessions/session-end.controller';
+import { MobileController } from './sessions/mobile.controller';
+import { SessionsController } from './sessions/sessions.controller';
+import { SessionSweeper } from './sessions/session-sweeper';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
   imports: [
     SharedModule,
     ThrottlerModule.forRoot({ throttlers: [ADDRESS_LIMIT] }),
+    // The hourly session sweep (spec 0003, AC-37)
+    ScheduleModule.forRoot(),
   ],
   providers: [
     tokenSettingsProvider,
@@ -37,7 +50,21 @@ import { TokenEndpointService } from './clients/token-endpoint.service';
     RolesGuard,
     TokenEndpointService,
     AddressThrottlerGuard,
+    sessionSettingsProvider,
+    SessionService,
+    UserGrantsService,
+    AuthorizeService,
+    PortalCsrfGuard,
+    SessionSweeper,
   ],
-  controllers: [AuthController, WellKnownController, TokenController],
+  controllers: [
+    AuthController,
+    SsoController,
+    SessionEndController,
+    MobileController,
+    SessionsController,
+    WellKnownController,
+    TokenController,
+  ],
 })
 export default class AuthModule {}

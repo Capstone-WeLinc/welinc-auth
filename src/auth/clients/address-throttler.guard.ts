@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, type ExecutionContext } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { oauthError } from './oauth-error';
@@ -12,6 +12,17 @@ export const ADDRESS_LIMIT = { name: 'default', ttl: 60_000, limit: 120 };
  */
 @Injectable()
 export class AddressThrottlerGuard extends ThrottlerGuard {
+  /**
+   * A request carrying a client assertion skips this count (spec 0003, AC-43): the endpoint
+   * counts it per client once the assertion passes, and per address only when it fails.
+   */
+  protected shouldSkip(context: ExecutionContext): Promise<boolean> {
+    const body = context.switchToHttp().getRequest<Request>().body as
+      | Record<string, unknown>
+      | undefined;
+    return Promise.resolve(typeof body?.['client_assertion'] === 'string');
+  }
+
   protected getTracker(req: Record<string, unknown>): Promise<string> {
     return Promise.resolve((req as unknown as Request).ip ?? 'unknown');
   }

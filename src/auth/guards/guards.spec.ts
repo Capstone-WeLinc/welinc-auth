@@ -22,6 +22,7 @@ import { testTokenService } from '../testing/test-keys';
 import type { TokenService } from '../tokens/token.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
+import type { SessionService } from '../sessions/session.service';
 import { RequestAuthenticator, type Caller } from './request-authenticator';
 import { RolesGuard } from './roles.guard';
 
@@ -67,6 +68,7 @@ describe('welinc-auth guards', () => {
   type ClientRow = { isActive: boolean; system: SystemType | null };
   let findClient: jest.Mock<(args: unknown) => Promise<ClientRow | null>>;
   let authenticator: RequestAuthenticator;
+  let liveSession: jest.Mock<(sid: string) => Promise<unknown>>;
 
   const userToken = (aud: 'VRMS' | 'BMS' = 'VRMS') =>
     tokens.signUserToken({
@@ -74,6 +76,8 @@ describe('welinc-auth guards', () => {
       email: 'pedro@welinc.com',
       aud,
       roles: [],
+      sid: 'sid-1',
+      clientId: 'vrms',
     });
   const serviceToken = (scopes = ['directory.read']) =>
     tokens
@@ -94,10 +98,16 @@ describe('welinc-auth guards', () => {
     findFirst.mockResolvedValue(row());
     findClient = jest.fn<(args: unknown) => Promise<ClientRow | null>>();
     findClient.mockResolvedValue({ isActive: true, system: SystemType.VRMS });
-    authenticator = new RequestAuthenticator(tokens, {
-      user: { findFirst },
-      oAuthClient: { findUnique: findClient },
-    } as unknown as PrismaService);
+    liveSession = jest.fn<(sid: string) => Promise<unknown>>();
+    liveSession.mockResolvedValue({ id: 'sid-1', userId: USER_ID });
+    authenticator = new RequestAuthenticator(
+      tokens,
+      {
+        user: { findFirst },
+        oAuthClient: { findUnique: findClient },
+      } as unknown as PrismaService,
+      { live: liveSession } as unknown as SessionService,
+    );
   });
 
   describe('RequestAuthenticator', () => {
@@ -111,6 +121,7 @@ describe('welinc-auth guards', () => {
         email: 'pedro@welinc.com',
         roles: row().roles,
         system: 'VRMS',
+        sid: 'sid-1',
       });
     });
 
@@ -277,6 +288,7 @@ describe('welinc-auth guards', () => {
             email: 'e',
             roles,
             system: SystemType.VRMS,
+            sid: 'sid-1',
           }),
         ),
       ).toBe(true);
@@ -288,6 +300,7 @@ describe('welinc-auth guards', () => {
             email: 'e',
             roles,
             system: SystemType.BMS,
+            sid: 'sid-1',
           }),
         ),
       ).toBe(false);

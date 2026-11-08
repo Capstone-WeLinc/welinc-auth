@@ -64,12 +64,15 @@ describe('TokenService', () => {
     tokens = await testTokenService(ring);
   });
 
-  it('signs a login token with ES256, the current kid and the AC-6 claims', async () => {
+  // spec 0003 AC-1: every user token carries its sid and the client that got it
+  it('signs a user token with ES256, the current kid, its sid and client', async () => {
     const token = await tokens.signUserToken({
       sub: 'user-1',
       email: 'pedro@welinc.com',
       aud: 'VRMS',
       roles: [{ role: 'MECHANIC', system: 'VRMS' }],
+      sid: 'sid-1',
+      clientId: 'vrms',
     });
 
     expect(decodeProtectedHeader(token)).toEqual({
@@ -82,12 +85,12 @@ describe('TokenService', () => {
       iss: TEST_ISSUER,
       sub: 'user-1',
       aud: 'VRMS',
-      client_id: 'portal',
+      client_id: 'vrms',
+      sid: 'sid-1',
       token_use: 'user',
       email: 'pedro@welinc.com',
       roles: [{ role: 'MECHANIC', system: 'VRMS' }],
     });
-    expect(claims).not.toHaveProperty('sid');
     expect(claims.exp! - claims.iat!).toBe(15 * 60);
     expect(claims.jti).toMatch(/^[0-9a-f-]{36}$/);
 
@@ -95,6 +98,7 @@ describe('TokenService', () => {
       tokenUse: 'user',
       aud: 'VRMS',
       sub: 'user-1',
+      sid: 'sid-1',
     });
   });
 

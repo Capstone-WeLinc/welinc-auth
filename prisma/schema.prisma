@@ -32,6 +32,27 @@ enum UserChangeAction {
   UNLOCKED
   RESET_SENT
   DELETED
+  SESSIONS_ENDED
+}
+
+// Spec 0003: a login is a session that welinc-auth tracks on the server.
+enum SessionKind {
+  WEB
+  MOBILE
+}
+
+enum SessionEndReason {
+  LOGOUT
+  IDLE
+  MAX_AGE
+  USER_ENDED
+  ADMIN_ENDED
+  DEACTIVATED
+  DELETED
+  PASSWORD_CHANGED
+  REFRESH_REUSE
+  CODE_REUSE
+  MAX_SESSIONS
 }
 
 model User {
@@ -50,7 +71,8 @@ model User {
   updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   roles               UserRoleAssignment[]
   passwordResetTokens PasswordResetToken[]
-  refreshTokens       RefreshToken[]
+  sessions            Session[]            @relation("UserSessions")
+  sessionsEnded       Session[]            @relation("SessionsEndedBy")
   changes             UserChange[]         @relation("UserChanges")
   changesMade         UserChange[]         @relation("UserChangesMade")
 
@@ -84,15 +106,94 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
+// Spec 0003: one row per login. "Expired" is never stored: a live row past a cutoff is ended
+// (IDLE or MAX_AGE) by the first call that sees it. An ended row never becomes live again.
+model Session {
+  id                String            @id @default(uuid()) @db.Uuid
+  userId            String            @map("user_id") @db.Uuid
+  kind              SessionKind
+  loginClientId     String            @map("login_client_id") @db.VarChar(64)
+  deviceName        String?           @map("device_name") @db.VarChar(100)
+  userAgent         String?           @map("user_agent") @db.VarChar(512)
+  createdIp         String?           @map("created_ip") @db.VarChar(45)
+  lastSeenIp        String?           @map("last_seen_ip") @db.VarChar(45)
+  // SHA-256 hex of the welinc_sso handle; web only
+  ssoHandleHash     String?           @unique @map("sso_handle_hash") @db.Char(64)
+  // Each system an access token was signed for (shown as `systems`)
+  audiences         SystemType[]      @default([])
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastActivityAt    DateTime          @map("last_activity_at") @db.Timestamptz(6)
+  idleExpiresAt     DateTime          @map("idle_expires_at") @db.Timestamptz(6)
+  // Web: created_at + WEB_SESSION_MAX_HOURS; mobile: null
+  absoluteExpiresAt DateTime?         @map("absolute_expires_at") @db.Timestamptz(6)
+  endedAt           DateTime?         @map("ended_at") @db.Timestamptz(6)
+  endReason         SessionEndReason? @map("end_reason")
+  endedById         String?           @map("ended_by_id") @db.Uuid
+
+  user               User                @relation("UserSessions", fields: [userId], references: [id], onDelete: NoAction)
+  endedBy            User?               @relation("SessionsEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
+  loginClient        OAuthClient         @relation("SessionLoginClient", fields: [loginClientId], references: [id])
+  refreshTokens      RefreshToken[]
+  authorizationCodes AuthorizationCode[]
+
+  @@index([userId, endedAt])
+  @@index([endedAt])
+  @@map("sessions")
+}
+
+// Spec 0003: one row per issued refresh token, chained by parent. Only SHA-256 hashes are stored.
+// At most one unused token per (session, client): a partial unique index in the migration.
 model RefreshToken {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id") @db.Uuid
-  tokenHash String   @map("token_hash")
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid()) @db.Uuid
+  sessionId   String    @map("session_id") @db.Uuid
+  clientId    String    @map("client_id") @db.VarChar(64)
+  tokenHash   String    @unique @map("token_hash") @db.Char(64)
+  parentId    String?   @unique @map("parent_id") @db.Uuid
+  usedAt      DateTime? @map("used_at") @db.Timestamptz(6)
+  // The child token, AES-256-GCM under a key derived from this row's token; cleared after grace
+  graceCipher Bytes?    @map("grace_cipher")
+  graceUntil  DateTime? @map("grace_until") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  session Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  client  OAuthClient   @relation("RefreshTokenClient", fields: [clientId], references: [id])
+  parent  RefreshToken? @relation("RefreshTokenChain", fields: [parentId], references: [id], onDelete: SetNull)
+  child   RefreshToken? @relation("RefreshTokenChain")
 
   @@map("refresh_tokens")
+}
+
+// Spec 0003: checked /auth/authorize parameters, waiting for the portal login. Used once, 10 minutes.
+model LoginRequest {
+  idHash        String    @id @map("id_hash") @db.Char(64)
+  clientId      String    @map("client_id") @db.VarChar(64)
+  redirectUri   String    @map("redirect_uri") @db.Text
+  state         String    @db.Text
+  codeChallenge String    @map("code_challenge") @db.Text
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt        DateTime? @map("used_at") @db.Timestamptz(6)
+
+  client OAuthClient @relation("LoginRequestClient", fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("login_requests")
+}
+
+// Spec 0003: a one time login code, 60 s, bound to client, redirect address, PKCE challenge and sid.
+model AuthorizationCode {
+  codeHash      String    @id @map("code_hash") @db.Char(64)
+  clientId      String    @map("client_id") @db.VarChar(64)
+  sessionId     String    @map("session_id") @db.Uuid
+  redirectUri   String    @map("redirect_uri") @db.Text
+  codeChallenge String    @map("code_challenge") @db.Text
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt        DateTime? @map("used_at") @db.Timestamptz(6)
+
+  client  OAuthClient @relation("AuthorizationCodeClient", fields: [clientId], references: [id], onDelete: Cascade)
+  session Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("authorization_codes")
 }
 
 // Every admin write to a user, written in the same transaction as the change (spec 0009, AC-20).
@@ -142,6 +243,10 @@ model OAuthClient {
   createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   assertionJtis ClientAssertionJti[]
+  sessions      Session[]            @relation("SessionLoginClient")
+  refreshTokens RefreshToken[]       @relation("RefreshTokenClient")
+  loginRequests LoginRequest[]       @relation("LoginRequestClient")
+  authCodes     AuthorizationCode[]  @relation("AuthorizationCodeClient")
 
   @@map("oauth_clients")
 }

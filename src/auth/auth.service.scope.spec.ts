@@ -13,6 +13,7 @@ import { SystemType, UserChangeAction, UserRole } from '@prisma/client';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
+import { SessionService } from './sessions/session.service';
 
 // Spec 0011, AC-26 to AC-30: welinc-auth's admin user endpoints act only inside the
 // caller's system. The database and the mail server are the only things faked.
@@ -77,11 +78,15 @@ function build() {
   db.userChange.findMany.mockResolvedValue([]);
   const sendMail = fn();
   sendMail.mockResolvedValue(undefined);
+  const sessions = {
+    endAllForUser: jest.fn(() => Promise.resolve(0)),
+  } as unknown as SessionService;
   const service = new AuthService(
     db as unknown as PrismaService,
     {} as TokenService,
     { sendMail } as unknown as MailService,
     { get: () => undefined } as unknown as ConfigService,
+    sessions,
   );
   return { service, db };
 }

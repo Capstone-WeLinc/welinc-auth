@@ -21,15 +21,22 @@ export class WellKnownController {
     return this.ring.publicSet;
   }
 
-  /** RFC 8414 metadata. S3 and S4 add their grants and endpoints. */
+  /** RFC 8414 metadata, with the code flow of spec 0003. */
   @Get('oauth-authorization-server')
   metadata() {
     const issuer = this.settings.issuer;
     return {
       issuer,
+      authorization_endpoint: `${issuer}/authorize`,
       token_endpoint: `${issuer}/token`,
       jwks_uri: `${issuer}/.well-known/jwks.json`,
-      grant_types_supported: ['client_credentials'],
+      grant_types_supported: [
+        'authorization_code',
+        'refresh_token',
+        'client_credentials',
+      ],
+      response_types_supported: ['code'],
+      code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['private_key_jwt'],
       token_endpoint_auth_signing_alg_values_supported: ['ES256'],
     };

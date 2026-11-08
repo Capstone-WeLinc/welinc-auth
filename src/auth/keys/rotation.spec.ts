@@ -24,6 +24,8 @@ const sign = (tokens: TokenService) =>
     email: 'pedro@welinc.com',
     aud: 'VRMS',
     roles: [],
+    sid: 'sid-1',
+    clientId: 'vrms',
   });
 
 // covers: spec 0002 AC-26 (a full rotation logs nobody out), AC-24 (the step rules)

@@ -7,6 +7,7 @@ import {
 import type { Request } from 'express';
 import { SystemType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
+import { SessionService } from '../sessions/session.service';
 import { coded } from '../errors';
 import {
   TokenRejectedError,
@@ -23,6 +24,8 @@ export type UserCaller = {
   /** Every role the account holds, read from the database on each request. */
   roles: { role: UserRole; system: SystemType }[];
   system: SystemType;
+  /** The token's session (spec 0003): what a password change keeps, and `current` in lists. */
+  sid: string;
 };
 
 /** A backend calling with its own service token (spec 0002, AC-19). */
@@ -60,6 +63,7 @@ export class RequestAuthenticator {
   constructor(
     private readonly tokens: TokenService,
     private readonly prisma: PrismaService,
+    private readonly sessions: SessionService,
   ) {}
 
   async authenticate(request: Request): Promise<Caller> {
@@ -70,6 +74,13 @@ export class RequestAuthenticator {
     try {
       token = await this.tokens.verify(raw);
     } catch (error) {
+      if (error instanceof TokenRejectedError && error.expired) {
+        throw coded(
+          HttpStatus.UNAUTHORIZED,
+          'TOKEN_EXPIRED',
+          'The access token has expired',
+        );
+      }
       if (error instanceof TokenRejectedError)
         throw new UnauthorizedException();
       throw error;
@@ -111,6 +122,17 @@ export class RequestAuthenticator {
       );
     }
 
+    // Spec 0003, AC-1: a user token works only while its session is live; the S2 interim
+    // token (no sid) never does
+    const session = token.sid ? await this.sessions.live(token.sid) : null;
+    if (!session || session.userId !== token.sub) {
+      throw coded(
+        HttpStatus.UNAUTHORIZED,
+        'SESSION_ENDED',
+        'The session has ended',
+      );
+    }
+
     const user = await this.prisma.user.findFirst({
       where: { id: token.sub, deletedAt: null },
       select: {
@@ -142,6 +164,7 @@ export class RequestAuthenticator {
       email: user.email,
       roles: user.roles,
       system,
+      sid: session.id,
     };
   }
 }
