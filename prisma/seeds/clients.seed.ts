@@ -16,6 +16,11 @@ type ClientDefinition = {
   localWebAddress?: string;
   /** Builds the one exact redirect address from the gateway address (spec 0001 section 4). */
   callbackPath?: string;
+  /**
+   * Spec 0004, AC-18: the roles this app serves, per audience. A system left out lets every role
+   * of that system through. Authoritative: a rerun overwrites a hand edited value.
+   */
+  allowedRoles?: Partial<Record<SystemType, string[]>>;
 };
 
 const SYSTEM_GRANTS = [
@@ -73,6 +78,20 @@ export const CLIENTS: ClientDefinition[] = [
     // VMMS by default; VRMS for its tab in the VMMS app (scope feature 48, spec 0003 AC-29)
     userAudiences: ['VMMS', 'VRMS'],
     serviceScopes: {},
+    allowedRoles: {
+      VMMS: ['MECHANIC', 'CHIEF_MECHANIC'],
+      VRMS: ['MECHANIC', 'CHIEF_MECHANIC'],
+    },
+  },
+  {
+    // The BMS app for drivers and helpers in the field (spec 0004, AC-18)
+    id: 'bms-mobile',
+    kind: ClientKind.PUBLIC_NATIVE,
+    system: SystemType.BMS,
+    grants: ['mobile_login', 'refresh_token'],
+    userAudiences: ['BMS'],
+    serviceScopes: {},
+    allowedRoles: { BMS: ['DRIVER', 'HELPER'] },
   },
   {
     id: 'vmms-analytics',
@@ -156,11 +175,41 @@ export function parseClientJwks(
   return { keys } as Prisma.InputJsonObject;
 }
 
+/**
+ * Spec 0004, AC-18: every allowed role must be in the catalog for its system. Throws before any
+ * write, so a typo never lands half the registry.
+ */
+export function checkAllowedRoles(
+  clients: ClientDefinition[],
+  catalog: { system: SystemType; code: string }[],
+): void {
+  if (catalog.length === 0) {
+    throw new Error('The role catalog is empty. Run npm run db:deploy first.');
+  }
+  const problems: string[] = [];
+  for (const client of clients) {
+    for (const [system, codes] of Object.entries(client.allowedRoles ?? {})) {
+      for (const code of codes ?? []) {
+        if (!catalog.some((r) => r.system === system && r.code === code)) {
+          problems.push(`${client.id}: ${system} has no role '${code}'`);
+        }
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(`Allowed roles not in the catalog: ${problems.join('; ')}`);
+  }
+}
+
 export async function seedClients(
   prisma: PrismaClient,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   console.log('Seeding clients...');
+  checkAllowedRoles(
+    CLIENTS,
+    await prisma.systemRole.findMany({ select: { system: true, code: true } }),
+  );
   for (const client of CLIENTS) {
     const name = jwksEnvName(client.id);
     const raw = env[name]?.trim();
@@ -171,6 +220,7 @@ export async function seedClients(
       grants: client.grants,
       userAudiences: client.userAudiences,
       serviceScopes: client.serviceScopes,
+      allowedRoles: client.allowedRoles ?? {},
       ...addressesFor(client, env),
     };
     await prisma.oAuthClient.upsert({
