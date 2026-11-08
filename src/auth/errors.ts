@@ -4,6 +4,7 @@ const ERROR_NAMES: Partial<Record<number, string>> = {
   [HttpStatus.BAD_REQUEST]: 'Bad Request',
   [HttpStatus.UNAUTHORIZED]: 'Unauthorized',
   [HttpStatus.FORBIDDEN]: 'Forbidden',
+  [HttpStatus.CONFLICT]: 'Conflict',
   [HttpStatus.SERVICE_UNAVAILABLE]: 'Service Unavailable',
 };
 

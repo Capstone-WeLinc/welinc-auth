@@ -19,9 +19,10 @@ import {
   SessionEndReason,
   SystemType,
   UserChangeAction,
-  UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../shared/prisma.service';
+import { CatalogService, holdsAdmin } from './roles/catalog.service';
+import type { RoleAssignment } from './roles/catalog.types';
 import { coded } from './errors';
 import { pickLoginSystem } from './tokens/login-system';
 import { TokenService } from './tokens/token.service';
@@ -44,6 +45,7 @@ import {
   adminSystems,
   assertAnotherAdmin,
   change,
+  lockAccount,
   decodeChangeCursor,
   encodeChangeCursor,
   rolesKey,
@@ -91,11 +93,6 @@ export async function validateEmailDomain(email: string): Promise<void> {
     });
   });
 }
-
-type RoleAssignment = {
-  role: UserRole;
-  system: SystemType;
-};
 
 const MAX_FAILED_ATTEMPTS = 5;
 const CHANGES_PAGE_SIZE = 50;
@@ -187,6 +184,7 @@ export class AuthService {
     private readonly mailService: MailService,
     config: ConfigService,
     private readonly sessions: SessionService,
+    private readonly catalog: CatalogService,
   ) {
     const portalUrl = config.get<string>('PORTAL_URL');
     if (!portalUrl && config.get<string>('NODE_ENV') === 'production') {
@@ -339,16 +337,25 @@ export class AuthService {
 
   /**
    * Only users who hold a role in the caller's system. A `system` query can't widen it: the
-   * guard already refused a `?system=` that differs from the token's `aud`, so `_query` is unused.
+   * guard already refused a `?system=` that differs from the token's `aud`. A `role` filter is
+   * checked against that system's catalog (spec 0004, AC-9).
    */
   async listUsers(
-    _query: ListUsersQueryDto,
+    query: ListUsersQueryDto,
     caller: Pick<AdminCaller, 'system'>,
   ): Promise<ScopedUserResponse[]> {
+    if (query.role !== undefined) {
+      await this.catalog.assertKnownRole(caller.system, query.role);
+    }
     const users = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
-        roles: { some: { system: caller.system } },
+        roles: {
+          some: {
+            system: caller.system,
+            ...(query.role !== undefined ? { role: query.role } : {}),
+          },
+        },
       },
       select: MANAGED_USER_SELECT,
       orderBy: {
@@ -399,6 +406,8 @@ export class AuthService {
   ): Promise<ScopedUserResponse & { setupEmailSent: boolean }> {
     const roleAssignments = this.normalizeRoleAssignments(dto.roleAssignments);
     assertOwnSystemRoles(roleAssignments, actor.system);
+    // Spec 0004, AC-10: 400, 403, then UNKNOWN_ROLE, then ROLE_LIMIT
+    await this.catalog.assertRoleRules(roleAssignments, actor.system);
 
     // Spec 0011, AC-30: an email that already has an account outside this system can be attached
     const existing = await this.prisma.user.findFirst({
@@ -535,6 +544,8 @@ This code will expire in 1 hour.`,
     actor: AdminCaller,
   ): Promise<ScopedUserResponse> {
     const user = await this.prisma.$transaction(async (tx) => {
+      // Spec 0004, AC-13: the account row first, then everything is decided from a fresh read
+      await lockAccount(tx, userId);
       // Decided again inside the transaction, so a deactivate or attach in between wins
       const current = await tx.user.findUnique({
         where: { id: userId },
@@ -547,6 +558,11 @@ This code will expire in 1 hour.`,
       if (!current || !this.isAttachable(current, actor.system)) {
         throw new ConflictException('Email already exists');
       }
+      await this.catalog.assertWithinLimit(
+        [...current.roles, ...roleAssignments],
+        actor.system,
+        tx,
+      );
       await tx.userRoleAssignment.createMany({
         data: roleAssignments.map((r) => ({ userId, ...r })),
       });
@@ -600,7 +616,11 @@ This code will expire in 1 hour.`,
     const requestedRoles = dto.roleAssignments
       ? this.normalizeRoleAssignments(dto.roleAssignments, true)
       : undefined;
-    if (requestedRoles) assertOwnSystemRoles(requestedRoles, actor.system);
+    if (requestedRoles) {
+      assertOwnSystemRoles(requestedRoles, actor.system);
+      // Spec 0004, AC-10: UNKNOWN_ROLE, then ROLE_LIMIT, before the slow work below
+      await this.catalog.assertRoleRules(requestedRoles, actor.system);
+    }
 
     const newEmail = dto.email?.trim().toLowerCase();
     if (dto.email && newEmail && newEmail !== current.email.toLowerCase()) {
@@ -612,6 +632,8 @@ This code will expire in 1 hour.`,
 
     try {
       const user = await this.prisma.$transaction(async (tx) => {
+        // Spec 0004, AC-13: lock the account, then read its roles again
+        await lockAccount(tx, userId);
         const existingUser = await tx.user.findUnique({
           where: { id: userId },
           select: userSelect,
@@ -624,14 +646,22 @@ This code will expire in 1 hour.`,
         const isEmailChanging = !!(
           newEmail && newEmail !== existingUser.email.toLowerCase()
         );
+        const admins = await this.catalog.adminRoles(tx);
         // Another system's admin keeps their own sign in details (spec 0011, AC-28)
         if (isEmailChanging || passwordHash) {
-          assertNotAdminElsewhere(existingUser.roles, actor.system);
+          assertNotAdminElsewhere(existingUser.roles, actor.system, admins);
         }
         const isNameChanging = !!newName && newName !== existingUser.name;
         const roleAssignments = requestedRoles
           ? replaceSystemRoles(existingUser.roles, requestedRoles, actor.system)
           : undefined;
+        if (roleAssignments) {
+          await this.catalog.assertWithinLimit(
+            roleAssignments,
+            actor.system,
+            tx,
+          );
+        }
         const areRolesChanging =
           !!roleAssignments &&
           rolesKey(roleAssignments) !== rolesKey(existingUser.roles);
@@ -648,13 +678,11 @@ This code will expire in 1 hour.`,
 
         // An active admin who stops being one, by role or deactivation, must not be the last
         if (existingUser.isActive) {
-          for (const system of adminSystems(existingUser.roles)) {
+          for (const system of adminSystems(existingUser.roles, admins)) {
             const losesAdmin =
               (isActiveChanging && dto.isActive === false) ||
               (areRolesChanging &&
-                !roleAssignments.some(
-                  (r) => r.role === UserRole.ADMIN && r.system === system,
-                ));
+                !holdsAdmin(roleAssignments, system, admins));
             if (losesAdmin) await assertAnotherAdmin(tx, userId, system);
           }
         }
@@ -739,6 +767,8 @@ This code will expire in 1 hour.`,
     }
 
     const user = await this.prisma.$transaction(async (tx) => {
+      // The account row before any admin role rows (spec 0004, AC-13 lock order)
+      await lockAccount(tx, userId);
       const existing = await tx.user.findFirst({
         where: { id: userId, deletedAt: null },
         select: {
@@ -756,7 +786,8 @@ This code will expire in 1 hour.`,
         });
       }
       if (!dto.isActive) {
-        for (const system of adminSystems(existing.roles)) {
+        const admins = await this.catalog.adminRoles(tx);
+        for (const system of adminSystems(existing.roles, admins)) {
           await assertAnotherAdmin(tx, userId, system);
         }
       }
@@ -796,6 +827,8 @@ This code will expire in 1 hour.`,
     if (actor.id === userId) throw new ConflictException(SELF_DELETE);
 
     await this.prisma.$transaction(async (tx) => {
+      // The account row before any admin role rows (spec 0004, AC-13 lock order)
+      await lockAccount(tx, userId);
       const existing = await tx.user.findFirst({
         where: { id: userId, deletedAt: null },
         select: {
@@ -806,7 +839,8 @@ This code will expire in 1 hour.`,
       assertInSystem(existing, actor.system);
       assertNotShared(existing.roles, actor.system);
       if (existing.isActive) {
-        for (const system of adminSystems(existing.roles)) {
+        const admins = await this.catalog.adminRoles(tx);
+        for (const system of adminSystems(existing.roles, admins)) {
           await assertAnotherAdmin(tx, userId, system);
         }
       }
@@ -843,7 +877,11 @@ This code will expire in 1 hour.`,
       select: { roles: { select: { role: true, system: true } } },
     });
     assertInSystem(existing, actor.system);
-    assertNotAdminElsewhere(existing.roles, actor.system);
+    assertNotAdminElsewhere(
+      existing.roles,
+      actor.system,
+      await this.catalog.adminRoles(),
+    );
 
     const passwordHash = await argon2.hash(dto.password);
     const user = await this.prisma.$transaction(async (tx) => {
@@ -893,12 +931,12 @@ This code will expire in 1 hour.`,
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const admins = caller ? await this.catalog.adminRoles() : null;
     const admin =
       caller &&
-      caller.roles.some(
-        (r) =>
-          r.role === UserRole.ADMIN &&
-          user.roles.some((target) => target.system === r.system),
+      admins &&
+      user.roles.some((target) =>
+        holdsAdmin(caller.roles, target.system, admins),
       )
         ? { id: caller.sub, email: caller.email }
         : null;
@@ -1032,7 +1070,11 @@ This code will expire in 10 minutes.`,
     return { message: 'Password has been reset successfully.' };
   }
 
-  async getCurrentUser(userId: string): Promise<ManagedUserResponse> {
+  /** The signed in user, with only the roles of `system`, the token's `aud` (spec 0004, AC-17). */
+  async getCurrentUser(
+    userId: string,
+    system: SystemType,
+  ): Promise<ManagedUserResponse> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
       select: {
@@ -1059,7 +1101,11 @@ This code will expire in 10 minutes.`,
       throw new NotFoundException('User not found');
     }
 
-    return this.mapManagedUser(user);
+    const mapped = this.mapManagedUser(user);
+    return {
+      ...mapped,
+      roles: mapped.roles.filter((r) => r.system === system),
+    };
   }
 
   async updateOwnProfile(

@@ -1,11 +1,11 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { Prisma, SystemType, UserChangeAction, UserRole } from '@prisma/client';
+import { Prisma, SystemType, UserChangeAction } from '@prisma/client';
+import type { AdminRoles } from './roles/catalog.service';
+import type { RoleAssignment } from './roles/catalog.types';
 
 // Spec 0009, AC-19 to AC-21: the admin change record and the admin safety guards.
 
 export type Actor = { id: string; email: string };
-
-type RoleAssignment = { role: UserRole; system: SystemType };
 
 export const SELF_DEACTIVATE = "You can't deactivate your own account.";
 export const SELF_ROLE = "You can't change your own role.";
@@ -20,15 +20,30 @@ export function rolesKey(roles: RoleAssignment[]): string {
 }
 
 /**
- * The systems this user is an ADMIN of, sorted. Callers lock each system's admin rows in this
- * order, so two writes that touch the same systems always lock them the same way and can't
- * deadlock.
+ * The systems this user holds the admin role of (the catalog's `isSystemAdmin`, spec 0004
+ * AC-14), sorted. Callers lock each system's admin rows in this order, so two writes that touch
+ * the same systems always lock them the same way and can't deadlock.
  */
-export function adminSystems(roles: RoleAssignment[]): SystemType[] {
+export function adminSystems(
+  roles: RoleAssignment[],
+  admins: AdminRoles,
+): SystemType[] {
   return roles
-    .filter((r) => r.role === UserRole.ADMIN)
+    .filter((r) => admins.get(r.system) === r.role)
     .map((r) => r.system)
     .sort();
+}
+
+/**
+ * Spec 0004, AC-13: the first statement of every role write on an existing account. Locks the
+ * account row, so two admins editing one account run one after the other. Lock order is always
+ * this row first, then any `user_roles` rows (`assertAnotherAdmin`).
+ */
+export async function lockAccount(
+  tx: Prisma.TransactionClient,
+  userId: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId}::uuid FOR UPDATE`;
 }
 
 /** One UserChange row for `userId`, made by `actor`. */
@@ -54,9 +69,9 @@ export function change(
 }
 
 /**
- * Inside the write's transaction: 409 unless another active, non deleted ADMIN of `system` stays.
- * Locks that system's ADMIN role rows first, so two admins demoting or deactivating each other at
- * once can't both pass.
+ * Inside the write's transaction: 409 unless another active, non deleted holder of `system`'s
+ * admin role stays (spec 0004, AC-15). Locks that system's admin role rows first, so two admins
+ * demoting or deactivating each other at once can't both pass.
  */
 export async function assertAnotherAdmin(
   tx: Prisma.TransactionClient,
@@ -64,15 +79,16 @@ export async function assertAnotherAdmin(
   system: SystemType,
 ): Promise<void> {
   await tx.$queryRaw`
-    SELECT id FROM user_roles
-    WHERE role = 'ADMIN'::"UserRole" AND system = ${system}::"SystemType"
-    FOR UPDATE`;
+    SELECT ur.id FROM user_roles ur
+    JOIN system_roles sr ON sr.system = ur.system AND sr.code = ur.role
+    WHERE sr.is_system_admin AND ur.system = ${system}::"SystemType"
+    FOR UPDATE OF ur`;
   const others = await tx.user.count({
     where: {
       id: { not: targetId },
       isActive: true,
       deletedAt: null,
-      roles: { some: { role: UserRole.ADMIN, system } },
+      roles: { some: { system, systemRole: { isSystemAdmin: true } } },
     },
   });
   if (others === 0) {

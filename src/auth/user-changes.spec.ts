@@ -1,11 +1,6 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import {
-  SystemType,
-  UserChangeAction,
-  UserRole,
-  type Prisma,
-} from '@prisma/client';
+import { SystemType, UserChangeAction, type Prisma } from '@prisma/client';
 import {
   adminSystems,
   assertAnotherAdmin,
@@ -17,21 +12,28 @@ import {
 
 const ID = '3f2b8c1e-5a4d-4e6f-9a7b-1c2d3e4f5a6b';
 
+/** Today's catalog: ADMIN is every system's admin role. */
+const ADMINS = new Map([
+  [SystemType.VRMS, 'ADMIN'],
+  [SystemType.VMMS, 'ADMIN'],
+  [SystemType.BMS, 'ADMIN'],
+]);
+
 describe('rolesKey', () => {
   // covers: AC-20
   it('sorts roles into a comma separated ROLE@SYSTEM list', () => {
     const key = rolesKey([
-      { role: UserRole.MECHANIC, system: SystemType.VRMS },
-      { role: UserRole.ADMIN, system: SystemType.VRMS },
-      { role: UserRole.ADMIN, system: SystemType.BMS },
+      { role: 'MECHANIC', system: SystemType.VRMS },
+      { role: 'ADMIN', system: SystemType.VRMS },
+      { role: 'ADMIN', system: SystemType.BMS },
     ]);
 
     expect(key).toBe('ADMIN@BMS,ADMIN@VRMS,MECHANIC@VRMS');
   });
 
   it('gives the same key whatever order the roles come in', () => {
-    const a = { role: UserRole.ADMIN, system: SystemType.VRMS };
-    const b = { role: UserRole.MECHANIC, system: SystemType.VRMS };
+    const a = { role: 'ADMIN', system: SystemType.VRMS };
+    const b = { role: 'MECHANIC', system: SystemType.VRMS };
 
     expect(rolesKey([a, b])).toBe(rolesKey([b, a]));
   });
@@ -43,35 +45,44 @@ describe('rolesKey', () => {
 
 describe('adminSystems', () => {
   it('lists only the systems where the user is ADMIN', () => {
-    const systems = adminSystems([
-      { role: UserRole.ADMIN, system: SystemType.VRMS },
-      { role: UserRole.MECHANIC, system: SystemType.VMMS },
-      { role: UserRole.ADMIN, system: SystemType.BMS },
-    ]);
+    const systems = adminSystems(
+      [
+        { role: 'ADMIN', system: SystemType.VRMS },
+        { role: 'MECHANIC', system: SystemType.VMMS },
+        { role: 'ADMIN', system: SystemType.BMS },
+      ],
+      ADMINS,
+    );
 
     expect(systems).toEqual([SystemType.BMS, SystemType.VRMS]);
   });
 
   it('sorts the systems whatever order the roles come in, so locks are always taken in one order', () => {
-    const vrmsFirst = adminSystems([
-      { role: UserRole.ADMIN, system: SystemType.VRMS },
-      { role: UserRole.ADMIN, system: SystemType.BMS },
-    ]);
-    const bmsFirst = adminSystems([
-      { role: UserRole.ADMIN, system: SystemType.BMS },
-      { role: UserRole.ADMIN, system: SystemType.VRMS },
-    ]);
+    const vrmsFirst = adminSystems(
+      [
+        { role: 'ADMIN', system: SystemType.VRMS },
+        { role: 'ADMIN', system: SystemType.BMS },
+      ],
+      ADMINS,
+    );
+    const bmsFirst = adminSystems(
+      [
+        { role: 'ADMIN', system: SystemType.BMS },
+        { role: 'ADMIN', system: SystemType.VRMS },
+      ],
+      ADMINS,
+    );
 
     expect(vrmsFirst).toEqual(bmsFirst);
   });
 
   it('does not reorder the roles it was given', () => {
     const roles = [
-      { role: UserRole.ADMIN, system: SystemType.VRMS },
-      { role: UserRole.ADMIN, system: SystemType.BMS },
+      { role: 'ADMIN', system: SystemType.VRMS },
+      { role: 'ADMIN', system: SystemType.BMS },
     ];
 
-    adminSystems(roles);
+    adminSystems(roles, ADMINS);
 
     expect(roles.map((r) => r.system)).toEqual([
       SystemType.VRMS,
@@ -79,9 +90,27 @@ describe('adminSystems', () => {
     ]);
   });
 
+  // covers: spec 0004 AC-14
+  it('follows the catalog flag, not the ADMIN code', () => {
+    const moved = new Map([[SystemType.VMMS, 'OPERATIONS']]);
+
+    expect(
+      adminSystems(
+        [
+          { role: 'ADMIN', system: SystemType.VMMS },
+          { role: 'OPERATIONS', system: SystemType.VMMS },
+        ],
+        moved,
+      ),
+    ).toEqual([SystemType.VMMS]);
+    expect(
+      adminSystems([{ role: 'ADMIN', system: SystemType.VMMS }], moved),
+    ).toEqual([]);
+  });
+
   it('returns an empty list for a user with no admin role', () => {
     expect(
-      adminSystems([{ role: UserRole.MECHANIC, system: SystemType.VRMS }]),
+      adminSystems([{ role: 'MECHANIC', system: SystemType.VRMS }], ADMINS),
     ).toEqual([]);
   });
 });
@@ -132,7 +161,9 @@ describe('change', () => {
 describe('assertAnotherAdmin', () => {
   function fakeTx(otherAdmins: number) {
     const queryRaw = jest.fn(() => Promise.resolve([]));
-    const count = jest.fn(() => Promise.resolve(otherAdmins));
+    const count = jest.fn<(args: unknown) => Promise<number>>(() =>
+      Promise.resolve(otherAdmins),
+    );
     const tx = {
       $queryRaw: queryRaw,
       user: { count },
@@ -188,7 +219,9 @@ describe('assertAnotherAdmin', () => {
         id: { not: ID },
         isActive: true,
         deletedAt: null,
-        roles: { some: { role: UserRole.ADMIN, system: SystemType.BMS } },
+        roles: {
+          some: { system: SystemType.BMS, systemRole: { isSystemAdmin: true } },
+        },
       },
     });
   });

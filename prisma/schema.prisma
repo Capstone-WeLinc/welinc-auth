@@ -9,14 +9,6 @@ datasource db {
   provider = "postgresql"
 }
 
-enum UserRole {
-  ADMIN
-  MECHANIC
-  CHIEF_MECHANIC
-  CUSTOMER_SUPPORT
-  OPERATIONS
-}
-
 enum SystemType {
   VRMS
   VMMS
@@ -80,15 +72,49 @@ model User {
   @@map("users")
 }
 
+// Spec 0004: each system's roles, written only by `npm run catalog:sync` from prisma/catalog/
+// (and the migration that created them). No route edits them.
+model System {
+  code            SystemType   @id
+  name            String       @db.VarChar(100)
+  // Null means no limit; at least 1 when set (checked by the sync)
+  maxRolesPerUser Int?         @map("max_roles_per_user")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  roles           SystemRole[]
+
+  @@map("systems")
+}
+
+model SystemRole {
+  system        SystemType
+  // ^[A-Z][A-Z0-9_]{1,39}$, never changed once synced
+  code          String               @db.VarChar(40)
+  name          String               @db.VarChar(60)
+  description   String               @db.VarChar(200)
+  // Position in the catalog file: display order and power order (0 is the most powerful)
+  sortOrder     Int                  @map("sort_order")
+  // Exactly one per system, checked by the sync
+  isSystemAdmin Boolean              @default(false) @map("is_system_admin")
+  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  systemRef     System               @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  assignments   UserRoleAssignment[]
+
+  @@id([system, code])
+  @@map("system_roles")
+}
+
 model UserRoleAssignment {
   id        String     @id @default(uuid()) @db.Uuid
   userId    String     @map("user_id") @db.Uuid
-  role      UserRole
+  role      String     @db.VarChar(40)
   system    SystemType
   createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  systemRole SystemRole @relation(fields: [system, role], references: [system, code], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([userId, role, system])
   @@map("user_roles")
@@ -237,6 +263,9 @@ model OAuthClient {
   serviceScopes Json                 @default("{}") @map("service_scopes")
   redirectUris  String[]             @default([]) @map("redirect_uris")
   webAddress    String?              @map("web_address") @db.VarChar(255)
+  // Spec 0004, AC-18: { "<SYSTEM>": ["<role code>", ...] }. A system missing from it means every
+  // role of that system may use this client. Set only by seed:clients
+  allowedRoles  Json                 @default("{}") @map("allowed_roles")
   // { "keys": [public ES256 JWK with kid] }
   jwks          Json?
   isActive      Boolean              @default(true) @map("is_active")

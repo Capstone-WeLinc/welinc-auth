@@ -12,12 +12,11 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { SessionEndReason, UserChangeAction, UserRole } from '@prisma/client';
+import { SessionEndReason, UserChangeAction } from '@prisma/client';
 import type { Response } from 'express';
 import { PrismaService } from '../../shared/prisma.service';
-import { Roles } from '../decorators/roles.decorator';
+import { SystemAdmin } from '../decorators/system-admin.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { RolesGuard } from '../guards/roles.guard';
 import type { UserCaller } from '../guards/request-authenticator';
 import { change } from '../user-changes';
 import { assertInSystem } from '../user-scope';
@@ -75,8 +74,7 @@ export class SessionsController {
 
   /** A user's live sessions, for an admin who can see them (AC-32). */
   @Get('users/:id/sessions')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   async ofUser(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: UserRequest,
@@ -92,8 +90,7 @@ export class SessionsController {
    * `SESSIONS_ENDED` change holding the count, in one transaction (AC-32).
    */
   @Delete('users/:id/sessions')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   async endAllOfUser(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: UserRequest,

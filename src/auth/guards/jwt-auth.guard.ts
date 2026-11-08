@@ -26,6 +26,9 @@ export class JwtAuthGuard implements CanActivate {
     const request = context
       .switchToHttp()
       .getRequest<Request & { user?: Caller }>();
+    // Already authenticated by a controller wide JwtAuthGuard: `@SystemAdmin()` on a method adds
+    // its own, and the token and session are checked once per request
+    if (request.user) return true;
     const caller = await this.authenticator.authenticate(request);
 
     if (caller.kind === 'service') {

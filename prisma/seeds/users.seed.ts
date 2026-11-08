@@ -1,4 +1,5 @@
-import { PrismaClient, UserRole, SystemType } from '@prisma/client';
+import { PrismaClient, SystemType } from '@prisma/client';
+import type { RoleAssignment } from '../../src/auth/roles/catalog.types';
 import * as argon2 from 'argon2';
 import {
   BULK_MECHANICS,
@@ -15,7 +16,7 @@ async function seedUser(
   prisma: PrismaClient,
   person: SeedPerson,
   passwordHash: string,
-  roles: { role: UserRole; system: SystemType }[],
+  roles: RoleAssignment[],
 ) {
   const user = await prisma.user.upsert({
     where: { email: person.email },
@@ -53,12 +54,12 @@ export async function seedUsers(prisma: PrismaClient) {
       name: 'Bernardo Mendoza',
     },
     adminPasswordHash,
-    [{ role: UserRole.ADMIN, system: SystemType.BMS }],
+    [{ role: 'ADMIN', system: SystemType.BMS }],
   );
 
   // 2. VRMS Admin
   await seedUser(prisma, VRMS_ADMIN, adminPasswordHash, [
-    { role: UserRole.ADMIN, system: SystemType.VRMS },
+    { role: 'ADMIN', system: SystemType.VRMS },
   ]);
 
   // 3. VMMS Admin
@@ -70,7 +71,7 @@ export async function seedUsers(prisma: PrismaClient) {
       name: 'Valerio Mercado',
     },
     adminPasswordHash,
-    [{ role: UserRole.ADMIN, system: SystemType.VMMS }],
+    [{ role: 'ADMIN', system: SystemType.VMMS }],
   );
 
   console.log('  Partitioned admin users created (BMS, VRMS, VMMS)');
@@ -84,7 +85,7 @@ export async function seedUsers(prisma: PrismaClient) {
     prisma,
     { id: SEED_IDS.csUser, email: 'cs.user@welinc.com', name: 'Clara Reyes' },
     csPasswordHash,
-    [{ role: UserRole.CUSTOMER_SUPPORT, system: SystemType.BMS }],
+    [{ role: 'CUSTOMER_SUPPORT', system: SystemType.BMS }],
   );
 
   await seedUser(
@@ -95,16 +96,15 @@ export async function seedUsers(prisma: PrismaClient) {
       name: 'Oscar Santos',
     },
     opsPasswordHash,
-    [{ role: UserRole.OPERATIONS, system: SystemType.BMS }],
+    [{ role: 'OPERATIONS', system: SystemType.BMS }],
   );
 
   // 5. Mechanics (VRMS and VMMS)
   console.log('Creating sample mechanics...');
   const mechanicPassword = await argon2.hash('mechanic1234');
-  const mechanicRoles = [SystemType.VRMS, SystemType.VMMS].map((system) => ({
-    role: UserRole.MECHANIC,
-    system,
-  }));
+  const mechanicRoles: RoleAssignment[] = [SystemType.VRMS, SystemType.VMMS].map(
+    (system) => ({ role: 'MECHANIC', system }),
+  );
 
   for (const m of NAMED_MECHANICS) {
     await seedUser(prisma, m, mechanicPassword, mechanicRoles);
@@ -113,7 +113,7 @@ export async function seedUsers(prisma: PrismaClient) {
   // 5b. Chief mechanic (VRMS only)
   console.log('Creating chief mechanic...');
   await seedUser(prisma, CHIEF, mechanicPassword, [
-    { role: UserRole.CHIEF_MECHANIC, system: SystemType.VRMS },
+    { role: 'CHIEF_MECHANIC', system: SystemType.VRMS },
   ]);
 
   // 6. Bulk seeding for pagination (60 users); their Mechanic rows are made by the VRMS seed

@@ -12,6 +12,11 @@ import { coded } from '../errors';
 import { oauthError } from '../clients/oauth-error';
 import { TokenService, type TokenRole } from '../tokens/token.service';
 import {
+  allowedCodes,
+  appNotAllowedMessage,
+  filterAllowed,
+} from '../roles/allowed-roles';
+import {
   hashOpaque,
   isOpaqueShape,
   isPkceVerifier,
@@ -53,7 +58,14 @@ type Outcome =
       aud: SystemType;
     }
   | { kind: 'invalid'; reason: string }
-  | { kind: 'no_access'; aud: SystemType };
+  | { kind: 'no_access'; aud: SystemType }
+  | { kind: 'not_allowed'; message: string };
+
+/** What `rolesFor` found: the roles held in the audience, then the ones this client allows. */
+type GrantRoles =
+  | { kind: 'ok'; roles: TokenRole[] }
+  | { kind: 'no_access'; aud: SystemType }
+  | { kind: 'not_allowed'; message: string };
 
 type CodeRow = {
   client_id: string;
@@ -134,8 +146,14 @@ export class UserGrantsService {
 
         const live = await this.liveSession(tx, code.session_id, now);
         if (live.kind !== 'live') return live;
-        const roles = await this.rolesFor(tx, live.session.userId, aud);
-        if (roles.length === 0) return { kind: 'no_access', aud };
+        const granted = await this.rolesFor(
+          tx,
+          live.session.userId,
+          aud,
+          client,
+        );
+        if (granted.kind !== 'ok') return granted;
+        const roles = granted.roles;
 
         await tx.authorizationCode.update({
           where: { codeHash: hashOpaque(input.code) },
@@ -228,9 +246,16 @@ export class UserGrantsService {
           return { kind: 'invalid', reason: 'token_reused' };
         }
 
-        // 7, checked before any write: roles for the audience (AC-41)
-        const roles = await this.rolesFor(tx, live.session.userId, aud);
-        if (roles.length === 0) return { kind: 'no_access', aud };
+        // 7, checked before any write: roles for the audience (AC-41), and the ones this
+        // client allows (spec 0004, AC-19)
+        const granted = await this.rolesFor(
+          tx,
+          live.session.userId,
+          aud,
+          client,
+        );
+        if (granted.kind !== 'ok') return granted;
+        const roles = granted.roles;
 
         let refreshToken: string;
         if (inGrace) {
@@ -307,10 +332,17 @@ export class UserGrantsService {
   ): Promise<UserTokenAnswer> {
     const aud = client.system;
     if (!aud) return this.refuse(client.id, 'client_without_system');
-    const roles = await this.rolesFor(this.prisma, input.user.id, aud);
-    if (roles.length === 0) {
-      return this.finish(client.id, 'mobile_login', { kind: 'no_access', aud });
+    // Before the session is created (spec 0004, AC-19)
+    const granted = await this.rolesFor(
+      this.prisma,
+      input.user.id,
+      aud,
+      client,
+    );
+    if (granted.kind !== 'ok') {
+      return this.finish(client.id, 'mobile_login', granted);
     }
+    const roles = granted.roles;
     const { session, refreshToken } = await this.sessions.createMobile({
       userId: input.user.id,
       clientId: client.id,
@@ -373,16 +405,38 @@ export class UserGrantsService {
     };
   }
 
+  /**
+   * The roles a token for `aud` carries on this client: the ones held there, kept only when the
+   * client's `allowedRoles` lets them through (spec 0004, AC-19). None held answers
+   * `NO_SYSTEM_ACCESS`; held but none allowed answers `APP_NOT_ALLOWED`.
+   */
   private async rolesFor(
     tx: Tx | PrismaService,
     userId: string,
     aud: SystemType,
-  ): Promise<TokenRole[]> {
+    client: Pick<OAuthClient, 'allowedRoles'>,
+  ): Promise<GrantRoles> {
     const rows = await tx.userRoleAssignment.findMany({
       where: { userId, system: aud },
       select: { role: true, system: true },
     });
-    return rows.map((r) => ({ role: r.role, system: r.system }));
+    const held = rows.map((r) => ({ role: r.role, system: r.system }));
+    if (held.length === 0) return { kind: 'no_access', aud };
+
+    const allowed = allowedCodes(client.allowedRoles, aud);
+    const roles = filterAllowed(held, allowed);
+    if (roles.length > 0) return { kind: 'ok', roles };
+
+    // Names in the client's list order, from the catalog
+    const named = await tx.systemRole.findMany({
+      where: { system: aud, code: { in: allowed ?? [] } },
+      select: { code: true, name: true },
+    });
+    const names = (allowed ?? []).flatMap((code) => {
+      const row = named.find((n) => n.code === code);
+      return row ? [row.name] : [];
+    });
+    return { kind: 'not_allowed', message: appNotAllowedMessage(names) };
   }
 
   private async finish(
@@ -401,6 +455,12 @@ export class UserGrantsService {
         'NO_SYSTEM_ACCESS',
         `This account has no access to ${outcome.aud}`,
       );
+    }
+    if (outcome.kind === 'not_allowed') {
+      this.logger.warn(
+        `refused grant client=${clientId} grant=${grant} reason=app_not_allowed`,
+      );
+      throw coded(HttpStatus.FORBIDDEN, 'APP_NOT_ALLOWED', outcome.message);
     }
     const { session, user, roles, aud } = outcome;
     const accessToken = await this.tokens.signUserToken({

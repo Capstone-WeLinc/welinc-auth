@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, jest } from '@jest/globals';
 import type { PrismaClient } from '@prisma/client';
+import { CATALOG } from '../../../prisma/catalog';
 import {
   CLIENTS,
+  checkAllowedRoles,
   jwksEnvName,
   parseClientJwks,
   seedClients,
@@ -26,8 +28,14 @@ describe('seedClients', () => {
     const upsert = jest
       .fn<(args: Upsert) => Promise<unknown>>()
       .mockResolvedValue({});
+    const catalog = CATALOG.flatMap((d) =>
+      d.roles.map((r) => ({ system: d.system, code: r.code })),
+    );
     await seedClients(
-      { oAuthClient: { upsert } } as unknown as PrismaClient,
+      {
+        oAuthClient: { upsert },
+        systemRole: { findMany: () => Promise.resolve(catalog) },
+      } as unknown as PrismaClient,
       env,
     );
     return Object.fromEntries(
@@ -35,12 +43,13 @@ describe('seedClients', () => {
     );
   }
 
-  it('upserts the seven clients of the contract', async () => {
+  it('upserts the eight clients of the contract', async () => {
     const calls = await run({});
     expect(Object.keys(calls).sort()).toEqual(
       [
         'bms',
         'bms-analytics',
+        'bms-mobile',
         'portal',
         'vmms',
         'vmms-analytics',
@@ -54,6 +63,7 @@ describe('seedClients', () => {
       grants: ['authorization_code', 'refresh_token', 'client_credentials'],
       userAudiences: ['VRMS'],
       serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+      allowedRoles: {},
       webAddress: 'http://localhost:8001',
       redirectUris: ['http://localhost:3000/vrms/session/callback'],
     });
@@ -65,6 +75,32 @@ describe('seedClients', () => {
       system: null,
       grants: ['sso'],
     });
+  });
+
+  // covers: spec 0004 AC-18
+  it('limits the mobile apps to their roles, per audience', async () => {
+    const calls = await run({});
+    expect(calls['vmms-mobile'].update.allowedRoles).toEqual({
+      VMMS: ['MECHANIC', 'CHIEF_MECHANIC'],
+      VRMS: ['MECHANIC', 'CHIEF_MECHANIC'],
+    });
+    expect(calls['bms-mobile'].update).toMatchObject({
+      kind: 'PUBLIC_NATIVE',
+      system: 'BMS',
+      grants: ['mobile_login', 'refresh_token'],
+      userAudiences: ['BMS'],
+      allowedRoles: { BMS: ['DRIVER', 'HELPER'] },
+    });
+  });
+
+  it('refuses an allowed role the catalog does not have, and an empty catalog', () => {
+    const catalog = [{ system: 'BMS' as const, code: 'DRIVER' }];
+    expect(() => checkAllowedRoles(CLIENTS, [])).toThrow(
+      'Run npm run db:deploy first.',
+    );
+    expect(() => checkAllowedRoles(CLIENTS, catalog)).toThrow(
+      "bms-mobile: BMS has no role 'HELPER'",
+    );
   });
 
   // covers: spec 0003 (the registry's web and redirect addresses come from env)
@@ -107,7 +143,7 @@ describe('seedClients', () => {
 
   it('names the env value after the client id', () => {
     expect(jwksEnvName('vmms-analytics')).toBe('CLIENT_VMMS_ANALYTICS_JWKS');
-    expect(CLIENTS).toHaveLength(7);
+    expect(CLIENTS).toHaveLength(8);
   });
 
   it('refuses a private key, bad JSON and a key that is not ES256', async () => {

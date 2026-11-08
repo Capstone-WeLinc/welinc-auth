@@ -15,7 +15,8 @@ import {
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { TokenService } from './tokens/token.service';
-import { SystemType, UserChangeAction, UserRole } from '@prisma/client';
+import { SystemType, UserChangeAction } from '@prisma/client';
+import { FakeCatalogService } from './testing/catalog.fake';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
@@ -38,7 +39,7 @@ type Fn = jest.Mock<(...args: any[]) => any>;
 const fn = (): Fn => jest.fn<(...args: any[]) => any>();
 
 const NOW = new Date('2026-10-27T08:00:00.000Z');
-const VRMS_MECHANIC = [{ role: UserRole.MECHANIC, system: SystemType.VRMS }];
+const VRMS_MECHANIC = [{ role: 'MECHANIC', system: SystemType.VRMS }];
 
 function managedRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -52,7 +53,7 @@ function managedRow(overrides: Record<string, unknown> = {}) {
     lockedAt: null,
     createdAt: NOW,
     updatedAt: NOW,
-    roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+    roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
     ...overrides,
   };
 }
@@ -98,8 +99,19 @@ function build(env: Record<string, string | undefined> = {}) {
     { sendMail } as unknown as MailService,
     config,
     sessions,
+    new FakeCatalogService(),
   );
   return { service, db, sendMail, sessions };
+}
+
+/**
+ * The raw locks on admin role rows (`assertAnotherAdmin`), leaving out the account row lock every
+ * role write takes first (spec 0004, AC-13).
+ */
+function adminLocks(db: ReturnType<typeof build>['db']) {
+  return db.$queryRaw.mock.calls.filter((call) =>
+    (call[0] as TemplateStringsArray).join('?').includes('user_roles'),
+  );
 }
 
 /** The UserChange rows written, from either create or createMany. */
@@ -138,7 +150,7 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: true,
-        roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+        roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
       });
       db.user.count.mockResolvedValue(0);
 
@@ -153,7 +165,7 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: true,
-        roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+        roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
       });
       db.user.update.mockResolvedValue(managedRow({ isActive: false }));
 
@@ -171,7 +183,7 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: true,
-        roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+        roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
       });
       db.user.update.mockResolvedValue(managedRow({ isActive: false }));
 
@@ -193,13 +205,13 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: false,
-        roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+        roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
       });
       db.user.update.mockResolvedValue(managedRow());
 
       await service.updateUserStatus(USER_ID, { isActive: true }, actor);
 
-      expect(db.$queryRaw).not.toHaveBeenCalled();
+      expect(adminLocks(db)).toHaveLength(0);
       expect(changesWritten(db)[0]).toMatchObject({
         action: UserChangeAction.ACTIVATED,
       });
@@ -246,7 +258,7 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: true,
-        roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+        roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
       });
       db.user.count.mockResolvedValue(0);
 
@@ -260,13 +272,13 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: false,
-        roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+        roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
       });
 
       await expect(service.deleteUser(USER_ID, actor)).resolves.toEqual({
         id: USER_ID,
       });
-      expect(db.$queryRaw).not.toHaveBeenCalled();
+      expect(adminLocks(db)).toHaveLength(0);
     });
 
     // covers: AC-20
@@ -274,7 +286,7 @@ describe('AuthService admin writes', () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
         isActive: true,
-        roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+        roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
       });
 
       await service.deleteUser(USER_ID, actor);
@@ -349,7 +361,7 @@ describe('AuthService admin writes', () => {
       email: 'pedro@welinc.com',
       isActive: true,
       deletedAt: null,
-      roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+      roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
       ...overrides,
     });
 
@@ -365,7 +377,7 @@ describe('AuthService admin writes', () => {
       const { service, db } = arrange(
         existing({
           id: ADMIN_ID,
-          roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+          roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
         }),
       );
 
@@ -373,9 +385,7 @@ describe('AuthService admin writes', () => {
         service.updateUser(
           ADMIN_ID,
           {
-            roleAssignments: [
-              { role: UserRole.MECHANIC, system: SystemType.VRMS },
-            ],
+            roleAssignments: [{ role: 'MECHANIC', system: SystemType.VRMS }],
           },
           actor,
         ),
@@ -405,7 +415,7 @@ describe('AuthService admin writes', () => {
     it('refuses to remove ADMIN from the last admin of a system', async () => {
       const { service, db } = arrange(
         existing({
-          roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+          roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
         }),
       );
       db.user.count.mockResolvedValue(0);
@@ -414,9 +424,7 @@ describe('AuthService admin writes', () => {
         service.updateUser(
           USER_ID,
           {
-            roleAssignments: [
-              { role: UserRole.MECHANIC, system: SystemType.VRMS },
-            ],
+            roleAssignments: [{ role: 'MECHANIC', system: SystemType.VRMS }],
           },
           actor,
         ),
@@ -427,7 +435,7 @@ describe('AuthService admin writes', () => {
     it('refuses to deactivate the last admin through an edit', async () => {
       const { service, db } = arrange(
         existing({
-          roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+          roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
         }),
       );
       db.user.count.mockResolvedValue(0);
@@ -440,32 +448,32 @@ describe('AuthService admin writes', () => {
     it('does not run the admin check when the admin keeps the ADMIN role', async () => {
       const { service, db } = arrange(
         existing({
-          roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+          roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
         }),
       );
 
       await service.updateUser(USER_ID, { name: 'Renamed' }, actor);
 
-      expect(db.$queryRaw).not.toHaveBeenCalled();
+      expect(adminLocks(db)).toHaveLength(0);
     });
 
     // Follow up from the review: decisions come from a read inside the transaction
     it('decides from the read inside the transaction, not the one before it', async () => {
       const { service, db } = arrange(
         existing({
-          roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+          roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
         }),
       );
       // Between the two reads, another admin made this user the last VRMS admin
       db.user.findUnique
         .mockResolvedValueOnce(
           existing({
-            roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+            roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
           }),
         )
         .mockResolvedValueOnce(
           existing({
-            roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+            roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
           }),
         );
       db.user.count.mockResolvedValue(0);
@@ -510,15 +518,15 @@ describe('AuthService admin writes', () => {
       const { service, db } = arrange(
         existing({
           roles: [
-            { role: UserRole.ADMIN, system: SystemType.VRMS },
-            { role: UserRole.ADMIN, system: SystemType.BMS },
+            { role: 'ADMIN', system: SystemType.VRMS },
+            { role: 'ADMIN', system: SystemType.BMS },
           ],
         }),
       );
 
       await service.updateUser(USER_ID, { isActive: false }, actor);
 
-      const locked = db.$queryRaw.mock.calls.map((call) => call[1]);
+      const locked = adminLocks(db).map((call) => call[1]);
       expect(locked).toEqual([SystemType.BMS, SystemType.VRMS]);
     });
 
@@ -549,14 +557,20 @@ describe('AuthService admin writes', () => {
     });
 
     it('writes ROLE_CHANGED with sorted ROLE@SYSTEM lists', async () => {
-      const { service, db } = arrange();
+      const { service, db } = arrange(
+        existing({
+          roles: [
+            { role: 'OPERATIONS', system: SystemType.BMS },
+            { role: 'MECHANIC', system: SystemType.VRMS },
+          ],
+        }),
+      );
 
       await service.updateUser(
         USER_ID,
         {
           roleAssignments: [
-            { role: UserRole.MECHANIC, system: SystemType.VRMS },
-            { role: UserRole.ADMIN, system: SystemType.VRMS },
+            { role: 'CHIEF_MECHANIC', system: SystemType.VRMS },
           ],
         },
         actor,
@@ -566,8 +580,8 @@ describe('AuthService admin writes', () => {
         expect.objectContaining({
           action: UserChangeAction.ROLE_CHANGED,
           field: 'roles',
-          oldValue: 'MECHANIC@VRMS',
-          newValue: 'ADMIN@VRMS,MECHANIC@VRMS',
+          oldValue: 'MECHANIC@VRMS,OPERATIONS@BMS',
+          newValue: 'CHIEF_MECHANIC@VRMS,OPERATIONS@BMS',
         }),
       ]);
     });
@@ -592,9 +606,7 @@ describe('AuthService admin writes', () => {
           name: 'Pedro',
           email: 'PEDRO@welinc.com',
           isActive: true,
-          roleAssignments: [
-            { role: UserRole.MECHANIC, system: SystemType.VRMS },
-          ],
+          roleAssignments: [{ role: 'MECHANIC', system: SystemType.VRMS }],
         },
         actor,
       );
@@ -632,7 +644,7 @@ describe('AuthService admin writes', () => {
     const dto = {
       name: ' Pedro ',
       email: 'Pedro@welinc.com',
-      roleAssignments: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+      roleAssignments: [{ role: 'MECHANIC', system: SystemType.VRMS }],
     };
 
     function arrange(env: Record<string, string | undefined> = {}) {
@@ -725,7 +737,7 @@ describe('AuthService admin writes', () => {
 
     it('rejects a duplicate role assignment before touching the database', async () => {
       const { service, db } = arrange();
-      const role = { role: UserRole.MECHANIC, system: SystemType.VRMS };
+      const role = { role: 'MECHANIC', system: SystemType.VRMS };
 
       await expect(
         service.createUser({ ...dto, roleAssignments: [role, role] }, actor),
@@ -807,7 +819,7 @@ describe('AuthService password links and reset', () => {
     const vrmsAdmin = {
       sub: ADMIN_ID,
       email: 'admin@welinc.com',
-      roles: [{ role: UserRole.ADMIN, system: SystemType.VRMS }],
+      roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
     };
 
     afterEach(() => jest.restoreAllMocks());
@@ -922,14 +934,14 @@ describe('AuthService password links and reset', () => {
         'the caller is only a mechanic',
         {
           ...vrmsAdmin,
-          roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+          roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
         },
       ],
       [
         'the caller is an admin of a different system',
         {
           ...vrmsAdmin,
-          roles: [{ role: UserRole.ADMIN, system: SystemType.BMS }],
+          roles: [{ role: 'ADMIN', system: SystemType.BMS }],
         },
       ],
     ])('records nothing when %s', async (_l, caller) => {
@@ -1033,7 +1045,7 @@ describe('AuthService.getUserChanges', () => {
     const ctx = build();
     ctx.db.user.findUnique.mockResolvedValue({
       id: USER_ID,
-      roles: [{ role: UserRole.MECHANIC, system: SystemType.VRMS }],
+      roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
     });
     ctx.db.userChange.findMany.mockResolvedValue(rows);
     return ctx;

@@ -5,15 +5,15 @@ import {
   HttpStatus,
   NotFoundException,
 } from '@nestjs/common';
-import { SystemType, UserRole } from '@prisma/client';
+import { SystemType } from '@prisma/client';
 import type { Actor } from './user-changes';
+import type { AdminRoles } from './roles/catalog.service';
+import type { RoleAssignment } from './roles/catalog.types';
 
 // Spec 0011, AC-26 to AC-30: admin user endpoints act only inside the caller's system.
 
 /** The signed in admin plus the system their request resolved to (spec 0009, AC-24). */
 export type AdminCaller = Actor & { system: SystemType };
-
-type RoleAssignment = { role: UserRole; system: SystemType };
 
 /** Lookups each admin may run per minute (AC-29). */
 export const LOOKUP_PER_MINUTE = 30;
@@ -39,13 +39,14 @@ export function otherSystems(
   ].sort();
 }
 
-/** The other systems this account is an ADMIN of, sorted. */
+/** The other systems this account holds the admin role of, sorted (spec 0004, AC-14). */
 export function otherAdminSystems(
   roles: RoleAssignment[],
   system: SystemType,
+  admins: AdminRoles,
 ): SystemType[] {
   return otherSystems(
-    roles.filter((r) => r.role === UserRole.ADMIN),
+    roles.filter((r) => admins.get(r.system) === r.role),
     system,
   );
 }
@@ -79,8 +80,9 @@ export function replaceSystemRoles(
 export function assertNotAdminElsewhere(
   roles: RoleAssignment[],
   system: SystemType,
+  admins: AdminRoles,
 ): void {
-  const systems = otherAdminSystems(roles, system);
+  const systems = otherAdminSystems(roles, system, admins);
   if (systems.length > 0) {
     throw new ForbiddenException(
       `This account is an admin in ${systems.join(', ')}. Send a reset code instead.`,

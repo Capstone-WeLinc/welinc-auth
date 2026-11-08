@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, jest } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import { SystemType, UserRole } from '@prisma/client';
+import { SystemType } from '@prisma/client';
+import { FakeCatalogService } from './testing/catalog.fake';
+import type { RoleCode } from './roles/catalog.types';
 import * as argon2 from 'argon2';
 import type { PrismaService } from '../shared/prisma.service';
 import type { MailService } from '../shared/mail.service';
@@ -20,7 +22,7 @@ describe('AuthService.checkCredentials', () => {
     passwordHash = await argon2.hash('secret123');
   });
 
-  function build(roles: { role: UserRole; system: SystemType }[]) {
+  function build(roles: { role: RoleCode; system: SystemType }[]) {
     const findFirst = jest.fn<(args: unknown) => Promise<unknown>>();
     findFirst.mockResolvedValue({
       id: 'user-1',
@@ -45,12 +47,13 @@ describe('AuthService.checkCredentials', () => {
       {} as MailService,
       { get: () => undefined } as unknown as ConfigService,
       sessions,
+      new FakeCatalogService(),
     );
   }
 
   const both = [
-    { role: UserRole.MECHANIC, system: SystemType.VRMS },
-    { role: UserRole.OPERATIONS, system: SystemType.BMS },
+    { role: 'MECHANIC', system: SystemType.VRMS },
+    { role: 'OPERATIONS', system: SystemType.BMS },
   ];
 
   it('picks VRMS by default and answers the user with no token', async () => {
