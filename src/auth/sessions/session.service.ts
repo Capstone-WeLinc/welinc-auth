@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../../shared/prisma.service';
 import { hashOpaque, isOpaqueShape, newOpaque } from './opaque';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
+import { deviceLabel } from './device-label';
 
 type Db = Prisma.TransactionClient | PrismaService;
 
@@ -36,6 +37,18 @@ const USER_FIELDS = {
   isActive: true,
   deletedAt: true,
 } as const;
+
+/** One session in a sessions list (spec 0003, AC-31, AC-34, AC-35). */
+export type SessionView = {
+  sid: string;
+  kind: 'web' | 'mobile';
+  device: string;
+  client: string;
+  systems: SystemType[];
+  createdAt: string;
+  lastActiveAt: string;
+  current?: boolean;
+};
 
 /** The session's expiry as answers report it: the earlier of the idle and absolute cutoffs. */
 export function sessionExpiresAt(session: SessionTimes): Date {
@@ -397,6 +410,37 @@ export class SessionService {
         ...(lastSeenIp ? { lastSeenIp } : {}),
       },
     });
+  }
+
+  /**
+   * A user's live sessions, newest activity first (AC-31). Rows past a cutoff are left out
+   * here; the next call that touches them, or the hourly sweep, writes them as ended. With
+   * `currentSid`, the caller's own row is marked `current`.
+   */
+  async listLive(
+    userId: string,
+    currentSid?: string,
+    now = new Date(),
+  ): Promise<SessionView[]> {
+    const rows = await this.prisma.session.findMany({
+      where: {
+        userId,
+        endedAt: null,
+        idleExpiresAt: { gt: now },
+        OR: [{ absoluteExpiresAt: null }, { absoluteExpiresAt: { gt: now } }],
+      },
+      orderBy: [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }],
+    });
+    return rows.map((row) => ({
+      sid: row.id,
+      kind: row.kind === SessionKind.WEB ? 'web' : 'mobile',
+      device: deviceLabel(row),
+      client: row.loginClientId,
+      systems: row.audiences,
+      createdAt: row.createdAt.toISOString(),
+      lastActiveAt: row.lastActivityAt.toISOString(),
+      ...(currentSid !== undefined ? { current: row.id === currentSid } : {}),
+    }));
   }
 
   /** Records each system an access token was signed for (`sessions.audiences`). */

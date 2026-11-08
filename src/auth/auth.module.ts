@@ -28,6 +28,7 @@ import { PortalCsrfGuard } from './sessions/csrf';
 import { SsoController } from './sessions/sso.controller';
 import { SessionEndController } from './sessions/session-end.controller';
 import { MobileController } from './sessions/mobile.controller';
+import { SessionsController } from './sessions/sessions.controller';
 import { SessionSweeper } from './sessions/session-sweeper';
 
 @Module({
@@ -61,6 +62,7 @@ import { SessionSweeper } from './sessions/session-sweeper';
     SsoController,
     SessionEndController,
     MobileController,
+    SessionsController,
     WellKnownController,
     TokenController,
   ],
