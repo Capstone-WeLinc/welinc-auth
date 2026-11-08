@@ -292,3 +292,36 @@ model ClientAssertionJti {
   @@index([expiresAt])
   @@map("client_assertion_jtis")
 }
+
+// Spec 0005: the user directory change feed. Both tables, the backfill and the deferred triggers
+// that write `directory_changes` live in the hand written migration 20261111000000_directory_feed;
+// these models only keep later `migrate dev` runs from dropping them. Never write these tables
+// from code: the triggers on `users` and `user_roles` own them.
+
+// One row: the epoch every directory cursor carries (a restored database gets a new one)
+model DirectoryFeed {
+  id    Boolean @id @default(true)
+  epoch String  @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  @@map("directory_feed")
+}
+
+model DirectoryChange {
+  seq       BigInt                 @id @default(autoincrement())
+  // pg_current_xact_id() of the writing transaction; read order is (txid, seq)
+  txid      Unsupported("xid8")    @default(dbgenerated("pg_current_xact_id()"))
+  // No relation: a hard delete must keep its `deleted` row
+  userId    String                 @map("user_id") @db.Uuid
+  // created, updated, roles_changed, activated, deactivated, deleted (check constraint)
+  type      String
+  systems   SystemType[]
+  // { id, name, email, contact, profilePicture, isActive, deletedAt, updatedAt, roles }
+  snapshot  Json
+  createdAt DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([txid, userId])
+  @@index([txid, seq])
+  @@index([userId, txid, seq])
+  @@index([systems], type: Gin)
+  @@map("directory_changes")
+}

@@ -32,6 +32,9 @@ import { SessionEndController } from './sessions/session-end.controller';
 import { MobileController } from './sessions/mobile.controller';
 import { SessionsController } from './sessions/sessions.controller';
 import { SessionSweeper } from './sessions/session-sweeper';
+import { DirectoryController } from './directory/directory.controller';
+import { DirectoryGuard } from './directory/directory.guard';
+import { DirectoryService } from './directory/directory.service';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -59,6 +62,8 @@ import { SessionSweeper } from './sessions/session-sweeper';
     AuthorizeService,
     PortalCsrfGuard,
     SessionSweeper,
+    DirectoryService,
+    DirectoryGuard,
   ],
   controllers: [
     AuthController,
@@ -69,6 +74,7 @@ import { SessionSweeper } from './sessions/session-sweeper';
     WellKnownController,
     SystemsController,
     TokenController,
+    DirectoryController,
   ],
 })
 export default class AuthModule {}

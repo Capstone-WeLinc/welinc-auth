@@ -1,4 +1,4 @@
-import { PrismaClient, SystemType } from '@prisma/client';
+import { Prisma, SystemType } from '@prisma/client';
 import type { RoleAssignment } from '../../src/auth/roles/catalog.types';
 import * as argon2 from 'argon2';
 import {
@@ -13,7 +13,7 @@ import {
 // Every seeded user gets a fixed id from shared-ids.ts, so the VRMS seed can link its
 // Mechanic rows to the same ids (spec 0009, AC-22).
 async function seedUser(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   person: SeedPerson,
   passwordHash: string,
   roles: RoleAssignment[],
@@ -40,10 +40,30 @@ async function seedUser(
   return user;
 }
 
-export async function seedUsers(prisma: PrismaClient) {
+export type SeedPasswords = {
+  admin: string;
+  cs: string;
+  ops: string;
+  mechanic: string;
+};
+
+/** Hashed before the seed transaction opens, so it stays short (argon2 is slow on purpose). */
+export async function hashSeedPasswords(): Promise<SeedPasswords> {
+  return {
+    admin: await argon2.hash('admin1234'),
+    cs: await argon2.hash('cs1234'),
+    ops: await argon2.hash('ops1234'),
+    mechanic: await argon2.hash('mechanic1234'),
+  };
+}
+
+export async function seedUsers(
+  prisma: Prisma.TransactionClient,
+  passwords: SeedPasswords,
+) {
   console.log('Creating partitioned admin users...');
 
-  const adminPasswordHash = await argon2.hash('admin1234');
+  const adminPasswordHash = passwords.admin;
 
   // 1. BMS Admin
   await seedUser(
@@ -78,8 +98,8 @@ export async function seedUsers(prisma: PrismaClient) {
 
   // 4. CS and Ops Users
   console.log('Creating Customer Service and Operations users...');
-  const csPasswordHash = await argon2.hash('cs1234');
-  const opsPasswordHash = await argon2.hash('ops1234');
+  const csPasswordHash = passwords.cs;
+  const opsPasswordHash = passwords.ops;
 
   await seedUser(
     prisma,
@@ -101,7 +121,7 @@ export async function seedUsers(prisma: PrismaClient) {
 
   // 5. Mechanics (VRMS and VMMS)
   console.log('Creating sample mechanics...');
-  const mechanicPassword = await argon2.hash('mechanic1234');
+  const mechanicPassword = passwords.mechanic;
   const mechanicRoles: RoleAssignment[] = [SystemType.VRMS, SystemType.VMMS].map(
     (system) => ({ role: 'MECHANIC', system }),
   );
