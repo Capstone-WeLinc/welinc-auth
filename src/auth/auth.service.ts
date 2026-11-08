@@ -62,14 +62,31 @@ import {
   replaceSystemRoles,
 } from './user-scope';
 
+/** A 6 digit setup or reset code from a secure random source (never `Math.random`). */
+export function newOtp(): string {
+  return crypto.randomInt(100_000, 1_000_000).toString();
+}
+
+/** Domains a development machine accepts without a DNS lookup. */
+export const DEV_EMAIL_DOMAINS = [
+  'welinc.com',
+  'localhost',
+  'test.com',
+  'example.com',
+];
+
 export async function validateEmailDomain(email: string): Promise<void> {
   const domain = email.split('@')[1];
   if (!domain) {
     throw new BadRequestException('Invalid email format');
   }
 
-  const devDomains = ['welinc.com', 'localhost', 'test.com', 'example.com'];
-  if (devDomains.includes(domain.toLowerCase())) {
+  // Made up test addresses skip the mail check on your own machine only; when hosted, every
+  // address must be on a domain that can receive mail, or its setup and reset codes never arrive
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    DEV_EMAIL_DOMAINS.includes(domain.toLowerCase())
+  ) {
     return;
   }
 
@@ -454,7 +471,7 @@ export class AuthService {
     } else {
       const tempPassword = crypto.randomBytes(32).toString('hex');
       passwordHash = await argon2.hash(tempPassword);
-      setupOtp = Math.floor(100000 + Math.random() * 900000).toString();
+      setupOtp = newOtp();
     }
 
     let user: Prisma.UserGetPayload<{ select: typeof MANAGED_USER_SELECT }>;
@@ -929,7 +946,7 @@ This code will expire in 1 hour.`,
       return { message: FORGOT_PASSWORD_MESSAGE };
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = newOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     const admins = caller ? await this.catalog.adminRoles() : null;
     const admin =
