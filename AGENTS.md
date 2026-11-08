@@ -37,6 +37,7 @@ npm run lint         # runs eslint with --fix, so it edits files
 npm run build
 npm run test         # Jest unit tests
 npm run test:e2e
+npm run test:db      # migration tests on a throwaway database; locally: docker exec welinc_auth_service npm run test:db
 npm run seed
 npm run studio       # Prisma Studio on 5555
 npm run keys:dev     # local signing key plus the VRMS client key pair, written into both .env files

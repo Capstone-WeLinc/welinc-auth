@@ -29,7 +29,12 @@
 
 ```bash
 $ npm install
+$ npm run db:deploy      # migrations, then the role catalog sync (prisma/catalog/); never a bare migrate deploy
+$ npm run seed           # local seed users
+$ npm run seed:clients   # the client registry, after db:deploy
 ```
+
+To deploy a new version: stop welinc-auth, back up the database, run `npm run db:deploy`, then start the new version (spec 0004).
 
 ## Compile and run the project
 
@@ -52,6 +57,9 @@ $ npm run test
 
 # e2e tests
 $ npm run test:e2e
+
+# migration tests on a throwaway database (needs DATABASE_URL with CREATE DATABASE rights)
+$ npm run test:db
 
 # test coverage
 $ npm run test:cov
