@@ -11,7 +11,8 @@ The shared auth service for the WeLinc suite: NestJS 11 with Prisma 7 on Postgre
 | `src/main.ts` | Bootstrap, security headers, strict global `ValidationPipe`, CORS, static `/uploads/` |
 | `src/auth/auth.controller.ts` | The `/auth/*` routes for people: forgot password, verify OTP, reset password, `me`, user admin, profile (login lives in `sessions/`) |
 | `src/auth/auth.service.ts` | `checkCredentials` (password, lockout after 5 failed attempts, the system pick), OTP and reset flows, user and profile logic |
-| `src/auth/guards/`, `decorators/` | `JwtAuthGuard`, `OptionalJwtAuthGuard` (never rejects, for public routes that act differently for a signed in admin), `RolesGuard`, `@Roles()`, `@ServiceScope()` (lets a service token with that scope into a route) |
+| `src/auth/guards/`, `decorators/` | `JwtAuthGuard` (skips a request already authenticated), `OptionalJwtAuthGuard` (never rejects, for public routes that act differently for a signed in admin), `@SystemAdmin()` with `SystemAdminGuard` (the caller holds their system's `isSystemAdmin` role, read per request), `@ServiceScope()` (lets a service token with that scope into a route) |
+| `src/auth/roles/`, `prisma/catalog/`, `prisma/catalog-sync.ts` | Spec 0004: one role file per system (`vrms.ts`, `vmms.ts`, `bms.ts`; order is display and power order, the admin role first), `catalog:sync` (pure plan and refusals in `catalog-plan.ts`), `CatalogService` (`UNKNOWN_ROLE`, `ROLE_LIMIT`, admin roles; no cache), the public `GET /auth/systems` (`systems.controller.ts`, `Cache-Control` and `ETag`), and `allowed-roles.ts` (`oauth_clients.allowed_roles`, `APP_NOT_ALLOWED`). `testing/catalog.fake.ts` is the catalog for unit tests |
 | `src/auth/guards/request-authenticator.ts` | Turns a bearer token into a user or service caller. The system is the token's `aud`; a `?system=` that differs answers 403 `WRONG_AUDIENCE`. A user token works only while its session (`sid`) is live (401 `SESSION_ENDED`); an expired one answers 401 `TOKEN_EXPIRED` (spec 0003) |
 | `src/auth/keys/` | `SigningKeyRing` (loads and self tests `AUTH_SIGNING_KEYS` at startup), `rotation.ts` (the add, promote, remove steps and the waits they enforce), `kid.ts` |
 | `src/auth/tokens/` | `TokenService` (ES256 sign and verify with `jose`), `token-config.ts` (issuer, lifetimes, audiences), `login-system.ts` (which system a login token is for) |
@@ -39,7 +40,9 @@ npm run test:e2e
 npm run seed
 npm run studio       # Prisma Studio on 5555
 npm run keys:dev     # local signing key plus the VRMS client key pair, written into both .env files
-npm run seed:clients # applies the client registry and the CLIENT_*_JWKS public keys
+npm run db:deploy    # prisma migrate deploy, then catalog:sync; use it instead of a bare migrate deploy
+npm run catalog:sync # makes systems and system_roles match prisma/catalog/ (--dry-run to preview); refuses unsafe changes
+npm run seed:clients # applies the client registry and the CLIENT_*_JWKS public keys (after db:deploy)
 npm run keys:rotate -- <env file> <add|promote|remove> [--now] [<kid>]
 npm run keys:client -- <client id> <private env file> <public env file> [--force]
 npx prisma generate
@@ -48,7 +51,7 @@ npx prisma migrate dev   # asks first, see root rules
 
 ## Conventions
 
-- Routes use `JwtAuthGuard`, plus `RolesGuard` with `@Roles(UserRole.ADMIN)` for user admin routes.
+- Routes use `JwtAuthGuard`; user admin routes use `@SystemAdmin()` (it authenticates too). There is no `UserRole` enum: a role is a `RoleCode` string checked against the catalog, and `npm run build` fails on a `UserRole` import (`scripts/check-no-user-role.mjs`). A role change is a pull request to `prisma/catalog/<system>.ts` plus a deploy; never write `system_roles` by hand (spec 0004).
 - A user holds roles per system (`UserRoleAssignment`, `SystemType`). Tokens are ES256 with a single `aud` (spec 0002): a user token (`token_use: user`) is for one system, carries `roles: [{ role, system }]` and its session's `sid`, and comes only from the `/auth/token` code exchange or refresh (spec 0003). `/auth/login` sets the `welinc_sso` cookie and never answers a token; it answers `{ user, system, url }` with the system welinc-auth picks. A service token (`token_use: service`, `aud: AUTH`) carries `scope`. Never sign with anything but `TokenService`.
 - The global `ValidationPipe` uses `whitelist` and `forbidNonWhitelisted`, so every body needs a DTO and unknown fields are rejected.
 - CORS allows localhost always, plus the origins in `CORS_ORIGINS` (comma separated, `*` allows all). Through the gateway, browsers see only nginx's exact allow list instead.
