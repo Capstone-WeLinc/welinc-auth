@@ -1,0 +1,379 @@
+import { describe, it, expect } from '@jest/globals';
+import { SystemType } from '@prisma/client';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { CATALOG } from '../../../prisma/catalog';
+import {
+  describePlan,
+  hasChanges,
+  planCatalogSync,
+  type CurrentRole,
+  type CurrentSystem,
+  type Holding,
+} from './catalog-plan';
+import type { SystemDefinition } from './catalog.types';
+import { etagOf, matchesEtag } from './systems.controller';
+import { roleLimitMessage } from './catalog.service';
+
+// Spec 0004: the catalog files, the sync's plan and refusals (AC-1 to AC-4, AC-6), and the
+// /auth/systems cache headers (AC-16).
+
+const ALL = Object.values(SystemType);
+
+/** The tables exactly as the files say: what the AC-6 migration leaves. */
+function synced(definitions: SystemDefinition[] = CATALOG): {
+  systems: CurrentSystem[];
+  roles: CurrentRole[];
+} {
+  return {
+    systems: definitions.map((d) => ({
+      code: d.system,
+      name: d.name,
+      maxRolesPerUser: d.maxRolesPerUser,
+    })),
+    roles: definitions.flatMap((d) =>
+      d.roles.map((r, i) => ({
+        system: d.system,
+        code: r.code,
+        name: r.name,
+        description: r.description,
+        sortOrder: i,
+        isSystemAdmin: r.isSystemAdmin === true,
+      })),
+    ),
+  };
+}
+
+const holding = (
+  system: SystemType,
+  role: string,
+  email = 'pedro@welinc.com',
+  overrides: Partial<Holding> = {},
+): Holding => ({
+  userId: email,
+  email,
+  system,
+  role,
+  active: true,
+  ...overrides,
+});
+
+/** The catalog with one system's file changed. */
+function edit(
+  system: SystemType,
+  change: (d: SystemDefinition) => SystemDefinition,
+): SystemDefinition[] {
+  return CATALOG.map((d) => (d.system === system ? change(d) : d));
+}
+
+describe('catalog files', () => {
+  // covers: AC-1
+  it('has one file per SystemType, each with exactly one admin role listed first', () => {
+    expect(CATALOG.map((d) => d.system).sort()).toEqual([...ALL].sort());
+    for (const d of CATALOG) {
+      expect(d.roles[0].isSystemAdmin).toBe(true);
+      expect(d.roles.filter((r) => r.isSystemAdmin)).toHaveLength(1);
+      expect(d.maxRolesPerUser).toBe(1);
+    }
+  });
+
+  // covers: AC-21
+  it('gives BMS Driver and Helper', () => {
+    const bms = CATALOG.find((d) => d.system === SystemType.BMS);
+    expect(bms?.roles.map((r) => r.code)).toEqual([
+      'ADMIN',
+      'OPERATIONS',
+      'CUSTOMER_SUPPORT',
+      'DRIVER',
+      'HELPER',
+    ]);
+  });
+
+  // covers: AC-6
+  it('matches the starting catalog the migration inserts, so the first sync changes nothing', () => {
+    const sql = readFileSync(
+      join(
+        __dirname,
+        '../../../prisma/migrations/20261110000000_roles_per_system/migration.sql',
+      ),
+      'utf8',
+    );
+    const systems = [
+      ...sql.matchAll(/\('(\w+)', '([^']+)', (\d+|NULL), CURRENT_TIMESTAMP\)/g),
+    ].map((m) => ({
+      code: m[1] as SystemType,
+      name: m[2],
+      maxRolesPerUser: m[3] === 'NULL' ? null : Number(m[3]),
+    }));
+    const roles = [
+      ...sql.matchAll(
+        /\('(\w+)', '(\w+)', '([^']+)', '([^']+)', (\d+), (true|false), CURRENT_TIMESTAMP\)/g,
+      ),
+    ].map((m) => ({
+      system: m[1] as SystemType,
+      code: m[2],
+      name: m[3],
+      description: m[4],
+      sortOrder: Number(m[5]),
+      isSystemAdmin: m[6] === 'true',
+    }));
+
+    const plan = planCatalogSync(CATALOG, ALL, { systems, roles }, []);
+
+    expect(plan.errors).toEqual([]);
+    expect(plan.systems.filter(hasChanges)).toEqual([]);
+    expect(roles).toHaveLength(12);
+  });
+});
+
+describe('planCatalogSync', () => {
+  // covers: AC-2
+  it('reports no change per system when the tables match the files', () => {
+    const plan = planCatalogSync(CATALOG, ALL, synced(), []);
+
+    expect(plan.errors).toEqual([]);
+    expect(plan.systems.map(describePlan)).toEqual([
+      'VRMS: 3 roles, no change',
+      'VMMS: 4 roles, no change',
+      'BMS: 5 roles, no change',
+    ]);
+  });
+
+  it('inserts every row into empty tables', () => {
+    const plan = planCatalogSync(CATALOG, ALL, { systems: [], roles: [] }, []);
+
+    expect(plan.errors).toEqual([]);
+    const vrms = plan.systems[0];
+    expect(vrms.systemRow).toEqual({
+      code: 'VRMS',
+      name: 'Vehicle Repair Management System',
+      maxRolesPerUser: 1,
+    });
+    expect(vrms.inserts.map((r) => [r.code, r.sortOrder])).toEqual([
+      ['ADMIN', 0],
+      ['CHIEF_MECHANIC', 1],
+      ['MECHANIC', 2],
+    ]);
+  });
+
+  it('updates names, descriptions and order, and adds a new role', () => {
+    const files = edit(SystemType.VRMS, (d) => ({
+      ...d,
+      roles: [
+        d.roles[0],
+        {
+          code: 'SERVICE_ADVISOR',
+          name: 'Service Advisor',
+          description: 'Writes up repairs',
+        },
+        { ...d.roles[1], description: 'Leads the shop' },
+        d.roles[2],
+      ],
+    }));
+
+    const plan = planCatalogSync(files, ALL, synced(), []);
+
+    const vrms = plan.systems[0];
+    expect(plan.errors).toEqual([]);
+    expect(vrms.inserts.map((r) => r.code)).toEqual(['SERVICE_ADVISOR']);
+    expect(vrms.updates.map((r) => [r.code, r.sortOrder])).toEqual([
+      ['CHIEF_MECHANIC', 2],
+      ['MECHANIC', 3],
+    ]);
+    expect(describePlan(vrms)).toBe(
+      'VRMS: 4 roles, added SERVICE_ADVISOR; updated CHIEF_MECHANIC, MECHANIC',
+    );
+  });
+
+  it('removes a role nobody holds', () => {
+    const files = edit(SystemType.BMS, (d) => ({
+      ...d,
+      roles: d.roles.filter((r) => r.code !== 'HELPER'),
+    }));
+
+    const plan = planCatalogSync(files, ALL, synced(), []);
+
+    expect(plan.errors).toEqual([]);
+    expect(plan.systems[2].deletes).toEqual(['HELPER']);
+  });
+
+  // covers: AC-3
+  describe('refusals', () => {
+    const errorsFor = (files: SystemDefinition[], holdings: Holding[] = []) =>
+      planCatalogSync(files, ALL, synced(), holdings).errors;
+
+    it('refuses dropping a role someone holds, listing the holders', () => {
+      const files = edit(SystemType.BMS, (d) => ({
+        ...d,
+        roles: d.roles.filter((r) => r.code !== 'HELPER'),
+      }));
+
+      expect(
+        errorsFor(files, [holding(SystemType.BMS, 'HELPER', 'h@welinc.com')]),
+      ).toEqual([
+        "BMS: can't remove HELPER, 1 account holds it: h@welinc.com. Move them to another role first.",
+      ]);
+    });
+
+    it('lists at most 20 holder emails', () => {
+      const files = edit(SystemType.BMS, (d) => ({
+        ...d,
+        roles: d.roles.filter((r) => r.code !== 'HELPER'),
+      }));
+      const many = Array.from({ length: 23 }, (_, i) =>
+        holding(
+          SystemType.BMS,
+          'HELPER',
+          `h${String(i).padStart(2, '0')}@welinc.com`,
+        ),
+      );
+
+      const [error] = errorsFor(files, many);
+
+      expect(error).toContain('23 accounts hold it');
+      expect(error).toContain('h19@welinc.com and 3 more');
+      expect(error).not.toContain('h20@welinc.com');
+    });
+
+    // covers: AC-4
+    it('treats a renamed code as a drop plus an add, so a held role refuses', () => {
+      const files = edit(SystemType.VRMS, (d) => ({
+        ...d,
+        roles: d.roles.map((r) =>
+          r.code === 'MECHANIC' ? { ...r, code: 'TECHNICIAN' } : r,
+        ),
+      }));
+
+      expect(errorsFor(files, [holding(SystemType.VRMS, 'MECHANIC')])).toEqual([
+        expect.stringContaining("VRMS: can't remove MECHANIC"),
+      ]);
+    });
+
+    it.each([
+      ['a bad code', { code: 'mechanic' }, 'must match'],
+      ['a one letter code', { code: 'M' }, 'must match'],
+      ['a code repeated', { code: 'ADMIN' }, "'ADMIN' appears twice"],
+    ])('refuses %s', (_label, roleChange, message) => {
+      const files = edit(SystemType.VRMS, (d) => ({
+        ...d,
+        roles: d.roles.map((r) =>
+          r.code === 'MECHANIC' ? { ...r, ...roleChange } : r,
+        ),
+      }));
+
+      expect(errorsFor(files).join('\n')).toContain(message);
+    });
+
+    it('refuses a system with no role', () => {
+      const files = edit(SystemType.VMMS, (d) => ({ ...d, roles: [] }));
+      expect(errorsFor(files)).toContain('VMMS: has no role.');
+    });
+
+    it('refuses no admin role, and two admin roles', () => {
+      const none = edit(SystemType.VRMS, (d) => ({
+        ...d,
+        roles: d.roles.map((r) => ({ ...r, isSystemAdmin: false })),
+      }));
+      const two = edit(SystemType.VRMS, (d) => ({
+        ...d,
+        roles: d.roles.map((r) => ({
+          ...r,
+          isSystemAdmin: r.code !== 'MECHANIC',
+        })),
+      }));
+
+      expect(errorsFor(none)).toContain(
+        'VRMS: needs exactly one isSystemAdmin role, found 0.',
+      );
+      expect(errorsFor(two)).toContain(
+        'VRMS: needs exactly one isSystemAdmin role, found 2.',
+      );
+    });
+
+    it('refuses a limit below 1', () => {
+      const files = edit(SystemType.VRMS, (d) => ({
+        ...d,
+        maxRolesPerUser: 0,
+      }));
+      expect(errorsFor(files).join()).toContain('maxRolesPerUser');
+    });
+
+    it('refuses a SystemType with no file', () => {
+      const files = CATALOG.filter((d) => d.system !== SystemType.BMS);
+      expect(errorsFor(files)).toContain(
+        'BMS: has no catalog file in prisma/catalog/.',
+      );
+    });
+
+    it('refuses a limit below what an account already holds', () => {
+      const files = edit(SystemType.VRMS, (d) => ({
+        ...d,
+        maxRolesPerUser: 1,
+      }));
+      const current = synced(
+        edit(SystemType.VRMS, (d) => ({ ...d, maxRolesPerUser: 2 })),
+      );
+
+      const errors = planCatalogSync(files, ALL, current, [
+        holding(SystemType.VRMS, 'ADMIN', 'two@welinc.com'),
+        holding(SystemType.VRMS, 'MECHANIC', 'two@welinc.com'),
+      ]).errors;
+
+      expect(errors).toEqual([
+        'VRMS: maxRolesPerUser 1 is below what 1 account already holds: two@welinc.com.',
+      ]);
+    });
+
+    it('refuses moving the admin flag to a role no active account holds', () => {
+      const files = edit(SystemType.VMMS, (d) => ({
+        ...d,
+        roles: d.roles.map((r) => ({
+          ...r,
+          isSystemAdmin: r.code === 'OPERATIONS',
+        })),
+      }));
+
+      expect(
+        errorsFor(files, [
+          holding(SystemType.VMMS, 'OPERATIONS', 'gone@welinc.com', {
+            active: false,
+          }),
+        ]),
+      ).toEqual([
+        "VMMS: the admin flag can't move to OPERATIONS, no active account holds it.",
+      ]);
+      expect(
+        errorsFor(files, [holding(SystemType.VMMS, 'OPERATIONS')]),
+      ).toEqual([]);
+    });
+  });
+});
+
+describe('/auth/systems cache headers', () => {
+  // covers: AC-16
+  it('gives the same body the same strong tag, and a different body another', () => {
+    expect(etagOf('{"a":1}')).toBe(etagOf('{"a":1}'));
+    expect(etagOf('{"a":1}')).not.toBe(etagOf('{"a":2}'));
+    expect(etagOf('x')).toMatch(/^"[A-Za-z0-9_-]{32}"$/);
+  });
+
+  it('matches If-None-Match lists, weak tags and *', () => {
+    const tag = etagOf('body');
+    expect(matchesEtag(tag, tag)).toBe(true);
+    expect(matchesEtag(`"other", W/${tag}`, tag)).toBe(true);
+    expect(matchesEtag('*', tag)).toBe(true);
+    expect(matchesEtag('"other"', tag)).toBe(false);
+    expect(matchesEtag(undefined, tag)).toBe(false);
+  });
+});
+
+describe('ROLE_LIMIT message', () => {
+  it('says one role or N roles', () => {
+    expect(roleLimitMessage(SystemType.VRMS, 1)).toBe(
+      'VRMS allows one role per person.',
+    );
+    expect(roleLimitMessage(SystemType.BMS, 2)).toBe(
+      'BMS allows 2 roles per person.',
+    );
+  });
+});

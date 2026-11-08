@@ -5,7 +5,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { SystemType, UserRole } from '@prisma/client';
+import { SystemType } from '@prisma/client';
+import type { RoleAssignment } from '../roles/catalog.types';
 import { PrismaService } from '../../shared/prisma.service';
 import { SessionService } from '../sessions/session.service';
 import { coded } from '../errors';
@@ -22,7 +23,7 @@ export type UserCaller = {
   sub: string;
   email: string;
   /** Every role the account holds, read from the database on each request. */
-  roles: { role: UserRole; system: SystemType }[];
+  roles: RoleAssignment[];
   system: SystemType;
   /** The token's session (spec 0003): what a password change keeps, and `current` in lists. */
   sid: string;

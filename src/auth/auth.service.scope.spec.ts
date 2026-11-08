@@ -9,7 +9,9 @@ import {
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { TokenService } from './tokens/token.service';
-import { SystemType, UserChangeAction, UserRole } from '@prisma/client';
+import { SystemType, UserChangeAction } from '@prisma/client';
+import { FakeCatalogService } from './testing/catalog.fake';
+import type { RoleCode } from './roles/catalog.types';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
@@ -26,11 +28,11 @@ const vrmsAdmin = {
   system: SystemType.VRMS,
 };
 
-const role = (r: UserRole, system: SystemType) => ({ role: r, system });
-const VRMS_MECHANIC = role(UserRole.MECHANIC, SystemType.VRMS);
-const BMS_ADMIN = role(UserRole.ADMIN, SystemType.BMS);
-const BMS_OPERATIONS = role(UserRole.OPERATIONS, SystemType.BMS);
-const VMMS_ADMIN = role(UserRole.ADMIN, SystemType.VMMS);
+const role = (r: RoleCode, system: SystemType) => ({ role: r, system });
+const VRMS_MECHANIC = role('MECHANIC', SystemType.VRMS);
+const BMS_ADMIN = role('ADMIN', SystemType.BMS);
+const BMS_OPERATIONS = role('OPERATIONS', SystemType.BMS);
+const VMMS_ADMIN = role('ADMIN', SystemType.VMMS);
 
 type Fn = jest.Mock<(...args: any[]) => any>;
 const fn = (): Fn => jest.fn<(...args: any[]) => any>();
@@ -87,6 +89,7 @@ function build() {
     { sendMail } as unknown as MailService,
     { get: () => undefined } as unknown as ConfigService,
     sessions,
+    new FakeCatalogService(),
   );
   return { service, db };
 }
@@ -199,7 +202,7 @@ describe('welinc-auth system scoping', () => {
 
     it("replaces the VRMS roles and keeps every other system's role", async () => {
       const { service, db } = arrange([VRMS_MECHANIC, BMS_OPERATIONS]);
-      const chief = role(UserRole.CHIEF_MECHANIC, SystemType.VRMS);
+      const chief = role('CHIEF_MECHANIC', SystemType.VRMS);
 
       await service.updateUser(
         USER_ID,

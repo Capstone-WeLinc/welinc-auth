@@ -5,7 +5,9 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { WellKnownController } from './well-known.controller';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { RolesGuard } from './guards/roles.guard';
+import { SystemAdminGuard } from './guards/system-admin.guard';
+import { CatalogService } from './roles/catalog.service';
+import { SystemsController } from './roles/systems.controller';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { RequestAuthenticator } from './guards/request-authenticator';
 import { TokenService } from './tokens/token.service';
@@ -47,7 +49,8 @@ import { SessionSweeper } from './sessions/session-sweeper';
     AuthService,
     JwtAuthGuard,
     OptionalJwtAuthGuard,
-    RolesGuard,
+    SystemAdminGuard,
+    CatalogService,
     TokenEndpointService,
     AddressThrottlerGuard,
     sessionSettingsProvider,
@@ -64,6 +67,7 @@ import { SessionSweeper } from './sessions/session-sweeper';
     MobileController,
     SessionsController,
     WellKnownController,
+    SystemsController,
     TokenController,
   ],
 })

@@ -13,25 +13,27 @@ import {
   type ExecutionContext,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { SystemType, UserRole } from '@prisma/client';
+import { SystemType } from '@prisma/client';
 import type { Request } from 'express';
 import type { PrismaService } from '../../shared/prisma.service';
 import { SERVICE_SCOPE_KEY } from '../decorators/service-scope.decorator';
-import { ROLES_KEY } from '../decorators/roles.decorator';
+import type { RoleAssignment } from '../roles/catalog.types';
+import { FakeCatalogService } from '../testing/catalog.fake';
+import { CATALOG } from '../../../prisma/catalog';
 import { testTokenService } from '../testing/test-keys';
 import type { TokenService } from '../tokens/token.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 import type { SessionService } from '../sessions/session.service';
 import { RequestAuthenticator, type Caller } from './request-authenticator';
-import { RolesGuard } from './roles.guard';
+import { SystemAdminGuard } from './system-admin.guard';
 
 type Row = {
   id: string;
   email: string;
   isActive: boolean;
   lockedAt: Date | null;
-  roles: { role: UserRole; system: SystemType }[];
+  roles: RoleAssignment[];
 };
 
 const USER_ID = '3f2b8c1e-5a4d-4e6f-9a7b-1c2d3e4f5a6b';
@@ -41,8 +43,8 @@ const row = (overrides: Partial<Row> = {}): Row => ({
   isActive: true,
   lockedAt: null,
   roles: [
-    { role: UserRole.ADMIN, system: SystemType.VRMS },
-    { role: UserRole.OPERATIONS, system: SystemType.BMS },
+    { role: 'ADMIN', system: SystemType.VRMS },
+    { role: 'OPERATIONS', system: SystemType.BMS },
   ],
   ...overrides,
 });
@@ -164,7 +166,7 @@ describe('welinc-auth guards', () => {
         authenticator.authenticate(request(await userToken())),
       ).rejects.toBeInstanceOf(ForbiddenException);
       findFirst.mockResolvedValueOnce(
-        row({ roles: [{ role: UserRole.OPERATIONS, system: SystemType.BMS }] }),
+        row({ roles: [{ role: 'OPERATIONS', system: SystemType.BMS }] }),
       );
       await expect(
         authenticator.authenticate(request(await userToken())),
@@ -271,39 +273,60 @@ describe('welinc-auth guards', () => {
     });
   });
 
-  describe('RolesGuard', () => {
+  // covers: spec 0004 AC-14
+  describe('SystemAdminGuard', () => {
     const adminRoute = () => undefined;
-    Reflect.defineMetadata(ROLES_KEY, [UserRole.ADMIN], adminRoute);
-    const guard = new RolesGuard(new Reflector());
-    const withUser = (user: Caller) =>
-      context({ user } as Partial<Request>, adminRoute);
+    const guard = new SystemAdminGuard(
+      new Reflector(),
+      new FakeCatalogService(),
+    );
+    const withUser = (user: Caller, route: () => void = adminRoute) =>
+      context({ user } as Partial<Request>, route);
+    const person = (system: SystemType, roles = row().roles): Caller => ({
+      kind: 'user',
+      sub: USER_ID,
+      email: 'e',
+      roles,
+      system,
+      sid: 'sid-1',
+    });
 
-    it('checks roles in the token system only', () => {
-      const roles = row().roles;
-      expect(
-        guard.canActivate(
-          withUser({
-            kind: 'user',
-            sub: USER_ID,
-            email: 'e',
-            roles,
-            system: SystemType.VRMS,
-            sid: 'sid-1',
-          }),
+    it('checks the admin role in the token system only', async () => {
+      await expect(
+        guard.canActivate(withUser(person(SystemType.VRMS))),
+      ).resolves.toBe(true);
+      await expect(
+        guard.canActivate(withUser(person(SystemType.BMS))),
+      ).resolves.toBe(false);
+    });
+
+    it('follows the catalog flag: with it moved to OPERATIONS, Operations passes and ADMIN does not', async () => {
+      const moved = CATALOG.map((d) =>
+        d.system !== SystemType.BMS
+          ? d
+          : {
+              ...d,
+              roles: d.roles.map((r) => ({
+                ...r,
+                isSystemAdmin: r.code === 'OPERATIONS',
+              })),
+            },
+      );
+      const movedGuard = new SystemAdminGuard(
+        new Reflector(),
+        new FakeCatalogService(moved),
+      );
+
+      await expect(
+        movedGuard.canActivate(withUser(person(SystemType.BMS))),
+      ).resolves.toBe(true);
+      await expect(
+        movedGuard.canActivate(
+          withUser(
+            person(SystemType.BMS, [{ role: 'ADMIN', system: SystemType.BMS }]),
+          ),
         ),
-      ).toBe(true);
-      expect(
-        guard.canActivate(
-          withUser({
-            kind: 'user',
-            sub: USER_ID,
-            email: 'e',
-            roles,
-            system: SystemType.BMS,
-            sid: 'sid-1',
-          }),
-        ),
-      ).toBe(false);
+      ).resolves.toBe(false);
     });
 
     const service = {
@@ -313,23 +336,26 @@ describe('welinc-auth guards', () => {
       system: SystemType.VRMS,
     } as Caller;
 
-    it('never treats a client as an admin on an unmarked route', () => {
-      expect(guard.canActivate(withUser(service))).toBe(false);
+    it('never treats a client as an admin on an unmarked route', async () => {
+      await expect(guard.canActivate(withUser(service))).resolves.toBe(false);
     });
 
-    it('lets a client through on a @ServiceScope() route, whose scope JwtAuthGuard checked', () => {
+    it('lets a client through on a @ServiceScope() route, whose scope JwtAuthGuard checked', async () => {
       const directoryRoute = () => undefined;
-      Reflect.defineMetadata(ROLES_KEY, [UserRole.ADMIN], directoryRoute);
       Reflect.defineMetadata(
         SERVICE_SCOPE_KEY,
         'directory.read',
         directoryRoute,
       );
-      expect(
-        guard.canActivate(
-          context({ user: service } as Partial<Request>, directoryRoute),
-        ),
-      ).toBe(true);
+      await expect(
+        guard.canActivate(withUser(service, directoryRoute)),
+      ).resolves.toBe(true);
+    });
+
+    it('refuses a request nobody authenticated', async () => {
+      await expect(
+        guard.canActivate(context({} as Partial<Request>, adminRoute)),
+      ).resolves.toBe(false);
     });
   });
 });

@@ -16,7 +16,7 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { SystemType, UserRole } from '@prisma/client';
+import { SystemType } from '@prisma/client';
 import { AuthService, type OptionalCaller } from './auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
@@ -32,8 +32,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ListChangesQueryDto } from './dto/list-changes.query.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
-import { RolesGuard } from './guards/roles.guard';
-import { Roles } from './decorators/roles.decorator';
+import { SystemAdmin } from './decorators/system-admin.decorator';
 import { ServiceScope } from './decorators/service-scope.decorator';
 import type { Caller } from './guards/request-authenticator';
 
@@ -81,38 +80,35 @@ export class AuthController {
     );
   }
 
+  // Spec 0004, AC-17: only the roles of the token's system (`aud`), whatever the query says
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@Req() req: { user: { sub: string } }) {
-    return this.authService.getCurrentUser(req.user.sub);
+  me(@Req() req: { user: { sub: string; system: SystemType } }) {
+    return this.authService.getCurrentUser(req.user.sub, req.user.system);
   }
 
   // An admin of the token's system, or a backend's service token with directory.read, which
   // sees what an admin of its own system would, read only (spec 0002, AC-19)
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @ServiceScope('directory.read')
   @Get('users')
   listUsers(@Query() query: ListUsersQueryDto, @Req() req: { user: Caller }) {
     return this.authService.listUsers(query, { system: req.user.system });
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Get('users/lookup')
   lookupUsers(@Query() query: LookupUsersQueryDto, @Req() req: AdminRequest) {
     return this.authService.lookupUsers(query.q, actorOf(req));
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Post('users')
   createUser(@Body() dto: CreateUserDto, @Req() req: AdminRequest) {
     return this.authService.createUser(dto, actorOf(req));
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Patch('users/:id')
   updateUser(
     @Param('id', ParseUUIDPipe) id: string,
@@ -122,8 +118,7 @@ export class AuthController {
     return this.authService.updateUser(id, dto, actorOf(req));
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Patch('users/:id/status')
   updateUserStatus(
     @Param('id', ParseUUIDPipe) id: string,
@@ -133,15 +128,13 @@ export class AuthController {
     return this.authService.updateUserStatus(id, dto, actorOf(req));
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Delete('users/:id')
   deleteUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
     return this.authService.deleteUser(id, actorOf(req));
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Get('users/:id/changes')
   listUserChanges(
     @Param('id', ParseUUIDPipe) id: string,
@@ -151,8 +144,7 @@ export class AuthController {
     return this.authService.getUserChanges(id, query, actorOf(req));
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Patch('users/:id/password')
   resetPassword(
     @Param('id', ParseUUIDPipe) id: string,
@@ -162,8 +154,7 @@ export class AuthController {
     return this.authService.resetPassword(id, dto, actorOf(req));
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @SystemAdmin()
   @Patch('users/:id/unlock')
   unlockUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
     return this.authService.unlockUser(id, actorOf(req));
