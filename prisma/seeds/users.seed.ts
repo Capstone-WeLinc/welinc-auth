@@ -1,148 +1,112 @@
 import { Prisma, SystemType } from '@prisma/client';
-import type { RoleAssignment } from '../../src/auth/roles/catalog.types';
 import * as argon2 from 'argon2';
 import {
-  BULK_MECHANICS,
-  CHIEF,
-  NAMED_MECHANICS,
-  SEED_IDS,
-  SeedPerson,
-  VRMS_ADMIN,
-} from './shared-ids';
+  emailConflicts,
+  stateFields,
+  type Manifest,
+  type ManifestPerson,
+} from './manifest';
 
-// Every seeded user gets a fixed id from shared-ids.ts, so the VRMS seed can link its
-// Mechanic rows to the same ids (spec 0009, AC-22).
-async function seedUser(
-  prisma: Prisma.TransactionClient,
-  person: SeedPerson,
-  passwordHash: string,
-  roles: RoleAssignment[],
+// Spec 0006: seed people come only from people.json. Each person is upserted by their fixed id,
+// so every system links its own rows to the same ids, and users not in the manifest are never
+// touched (outside a local --reset).
+
+/** Each distinct password hashed once, before the transaction opens (argon2 is slow on purpose). */
+export async function hashSeedPasswords(
+  manifest: Manifest,
+): Promise<Map<string, string>> {
+  const hashes = new Map<string, string>();
+  for (const [key, plain] of Object.entries(manifest.passwords)) {
+    hashes.set(key, await argon2.hash(plain));
+  }
+  return hashes;
+}
+
+/**
+ * AC-9: removes every user and what hangs off them, in foreign key order. Sessions go first
+ * (their refresh tokens and login codes cascade). login_requests and directory_changes have no
+ * user key and stay.
+ */
+export async function resetUsers(tx: Prisma.TransactionClient) {
+  await tx.session.deleteMany({});
+  await tx.userChange.deleteMany({});
+  await tx.passwordResetToken.deleteMany({});
+  await tx.userRoleAssignment.deleteMany({});
+  await tx.user.deleteMany({});
+}
+
+export class SeedConflictError extends Error {
+  constructor(readonly problems: string[]) {
+    super(
+      `These manifest emails belong to other users:\n  ${problems.join('\n  ')}\n` +
+        'Nothing was written. Free the emails, or run npm run seed -- --reset on a local database.',
+    );
+  }
+}
+
+/**
+ * AC-7: upserts each manifest person by id and sets exactly their listed roles, inside the
+ * caller's transaction. Refuses (throws, so the transaction rolls back) when a manifest email is
+ * held by another id. `now` is the run's one clock (AC-5).
+ */
+export async function seedPeople(
+  tx: Prisma.TransactionClient,
+  people: ManifestPerson[],
+  hashes: Map<string, string>,
+  now: Date,
 ) {
-  const user = await prisma.user.upsert({
-    where: { email: person.email },
-    update: { emailVerified: true },
-    create: {
-      id: person.id,
-      name: person.name,
-      email: person.email,
-      emailVerified: true,
-      passwordHash,
+  const ids = people.map((p) => p.id);
+  const before = await tx.user.findMany({
+    where: {
+      OR: [
+        { id: { in: ids } },
+        {
+          email: {
+            in: people.map((p) => p.email.toLowerCase()),
+            mode: 'insensitive',
+          },
+        },
+      ],
     },
+    select: { id: true, email: true, lockedAt: true, deletedAt: true },
   });
+  const conflicts = emailConflicts(people, before);
+  if (conflicts.length > 0) throw new SeedConflictError(conflicts);
 
-  for (const { role, system } of roles) {
-    await prisma.userRoleAssignment.upsert({
-      where: { userId_role_system: { userId: user.id, role, system } },
-      update: {},
-      create: { userId: user.id, role, system },
+  const existing = new Map(before.map((u) => [u.id, u]));
+  for (const person of people) {
+    const passwordHash = hashes.get(person.password);
+    if (passwordHash === undefined) {
+      throw new Error(`No password hash for key ${person.password}`);
+    }
+    const fields = {
+      name: person.name,
+      email: person.email.toLowerCase(),
+      contact: person.contact,
+      passwordHash,
+      ...stateFields(person.state, existing.get(person.id), now),
+    };
+    await tx.user.upsert({
+      where: { id: person.id },
+      create: { id: person.id, ...fields },
+      update: fields,
     });
+
+    const listed = person.roles.map((r) => ({
+      system: r.system as SystemType,
+      role: r.role,
+    }));
+    await tx.userRoleAssignment.deleteMany({
+      where: {
+        userId: person.id,
+        ...(listed.length > 0 ? { NOT: { OR: listed } } : {}),
+      },
+    });
+    if (listed.length > 0) {
+      await tx.userRoleAssignment.createMany({
+        data: listed.map((r) => ({ userId: person.id, ...r })),
+        skipDuplicates: true,
+      });
+    }
   }
-  return user;
-}
-
-export type SeedPasswords = {
-  admin: string;
-  cs: string;
-  ops: string;
-  mechanic: string;
-};
-
-/** Hashed before the seed transaction opens, so it stays short (argon2 is slow on purpose). */
-export async function hashSeedPasswords(): Promise<SeedPasswords> {
-  return {
-    admin: await argon2.hash('admin1234'),
-    cs: await argon2.hash('cs1234'),
-    ops: await argon2.hash('ops1234'),
-    mechanic: await argon2.hash('mechanic1234'),
-  };
-}
-
-export async function seedUsers(
-  prisma: Prisma.TransactionClient,
-  passwords: SeedPasswords,
-) {
-  console.log('Creating partitioned admin users...');
-
-  const adminPasswordHash = passwords.admin;
-
-  // 1. BMS Admin
-  await seedUser(
-    prisma,
-    {
-      id: SEED_IDS.bmsAdmin,
-      email: 'bms.admin@welinc.com',
-      name: 'Bernardo Mendoza',
-    },
-    adminPasswordHash,
-    [{ role: 'ADMIN', system: SystemType.BMS }],
-  );
-
-  // 2. VRMS Admin
-  await seedUser(prisma, VRMS_ADMIN, adminPasswordHash, [
-    { role: 'ADMIN', system: SystemType.VRMS },
-  ]);
-
-  // 3. VMMS Admin
-  await seedUser(
-    prisma,
-    {
-      id: SEED_IDS.vmmsAdmin,
-      email: 'vmms.admin@welinc.com',
-      name: 'Valerio Mercado',
-    },
-    adminPasswordHash,
-    [{ role: 'ADMIN', system: SystemType.VMMS }],
-  );
-
-  console.log('  Partitioned admin users created (BMS, VRMS, VMMS)');
-
-  // 4. CS and Ops Users
-  console.log('Creating Customer Service and Operations users...');
-  const csPasswordHash = passwords.cs;
-  const opsPasswordHash = passwords.ops;
-
-  await seedUser(
-    prisma,
-    { id: SEED_IDS.csUser, email: 'cs.user@welinc.com', name: 'Clara Reyes' },
-    csPasswordHash,
-    [{ role: 'CUSTOMER_SUPPORT', system: SystemType.BMS }],
-  );
-
-  await seedUser(
-    prisma,
-    {
-      id: SEED_IDS.opsUser,
-      email: 'ops.user@welinc.com',
-      name: 'Oscar Santos',
-    },
-    opsPasswordHash,
-    [{ role: 'OPERATIONS', system: SystemType.BMS }],
-  );
-
-  // 5. Mechanics (VRMS and VMMS)
-  console.log('Creating sample mechanics...');
-  const mechanicPassword = passwords.mechanic;
-  const mechanicRoles: RoleAssignment[] = [SystemType.VRMS, SystemType.VMMS].map(
-    (system) => ({ role: 'MECHANIC', system }),
-  );
-
-  for (const m of NAMED_MECHANICS) {
-    await seedUser(prisma, m, mechanicPassword, mechanicRoles);
-  }
-
-  // 5b. Chief mechanic (VRMS only)
-  console.log('Creating chief mechanic...');
-  await seedUser(prisma, CHIEF, mechanicPassword, [
-    { role: 'CHIEF_MECHANIC', system: SystemType.VRMS },
-  ]);
-
-  // 6. Bulk seeding for pagination (60 users); their Mechanic rows are made by the VRMS seed
-  console.log(
-    'Generating 60 additional mechanics/users with realistic names...',
-  );
-  for (const m of BULK_MECHANICS) {
-    await seedUser(prisma, m, mechanicPassword, mechanicRoles);
-  }
-
-  console.log('  All seed users and mechanics successfully processed.\n');
 }

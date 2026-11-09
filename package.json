@@ -28,6 +28,7 @@
     "studio": "prisma studio --port 5555 --browser none",
     "keys:dev": "ts-node scripts/keys-dev.ts",
     "seed:clients": "ts-node -r tsconfig-paths/register prisma/seed-clients.ts",
+    "seed:check": "ts-node -r tsconfig-paths/register prisma/seed-check.ts",
     "catalog:sync": "ts-node -r tsconfig-paths/register prisma/catalog-sync.ts",
     "db:deploy": "prisma migrate deploy && npm run catalog:sync",
     "keys:rotate": "ts-node scripts/keys-rotate.ts",
