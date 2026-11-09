@@ -218,6 +218,14 @@ describe('LauncherService.answerFor', () => {
       'NO_SYSTEM_ACCESS',
     ]);
     expect(db.oAuthClient.findMany).not.toHaveBeenCalled();
+    const body = await service
+      .answerFor(USER)
+      .catch((e: HttpException) => e.getResponse() as Record<string, unknown>);
+    expect(body).toMatchObject({
+      statusCode: 403,
+      code: 'NO_SYSTEM_ACCESS',
+      user: { email: 'multi.lead@welinc.com' },
+    });
   });
 
   it('answers 403 when every held system lacks a client, and warns naming the system, never the email', async () => {

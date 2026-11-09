@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ClientKind, SystemType } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
 import { coded } from '../errors';
@@ -94,12 +94,21 @@ export function buildLauncherSystems(
   return { systems, missing, duplicates };
 }
 
-export const noSystemAccess = () =>
-  coded(
+/**
+ * 403 `NO_SYSTEM_ACCESS` with the caller's own email, so the portal's no access state can say
+ * who is signed in (spec 0007, AC-19). Only ever the caller's own address.
+ */
+export function noSystemAccess(email: string): HttpException {
+  const error = coded(
     HttpStatus.FORBIDDEN,
     'NO_SYSTEM_ACCESS',
     'This account has no access to any system',
   );
+  return new HttpException(
+    { ...(error.getResponse() as object), user: { email } },
+    HttpStatus.FORBIDDEN,
+  );
+}
 
 @Injectable()
 export class LauncherService {
@@ -122,7 +131,7 @@ export class LauncherService {
       select: { system: true, role: true },
     });
     const codes = launcherOrder(held);
-    if (codes.length === 0) throw noSystemAccess();
+    if (codes.length === 0) throw noSystemAccess(user.email);
 
     const [catalog, clients] = await Promise.all([
       this.prisma.system.findMany({
@@ -161,7 +170,7 @@ export class LauncherService {
         `${system} has more than one active confidential client with a web address; the oldest is used.`,
       );
     }
-    if (systems.length === 0) throw noSystemAccess();
+    if (systems.length === 0) throw noSystemAccess(user.email);
     return {
       user: {
         id: user.id,
