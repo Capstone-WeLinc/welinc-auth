@@ -29,6 +29,7 @@ function synced(definitions: SystemDefinition[] = CATALOG): {
     systems: definitions.map((d) => ({
       code: d.system,
       name: d.name,
+      description: d.description,
       maxRolesPerUser: d.maxRolesPerUser,
     })),
     roles: definitions.flatMap((d) =>
@@ -90,7 +91,8 @@ describe('catalog files', () => {
   });
 
   // covers: AC-6
-  it('matches the starting catalog the migration inserts, so the first sync changes nothing', () => {
+  // covers: spec 0007 AC-5, AC-7 (the description migration leaves '' until the sync writes it)
+  it('matches the starting catalog the migrations insert, so the first sync writes only the descriptions', () => {
     const sql = readFileSync(
       join(
         __dirname,
@@ -103,6 +105,7 @@ describe('catalog files', () => {
     ].map((m) => ({
       code: m[1] as SystemType,
       name: m[2],
+      description: '',
       maxRolesPerUser: m[3] === 'NULL' ? null : Number(m[3]),
     }));
     const roles = [
@@ -121,7 +124,15 @@ describe('catalog files', () => {
     const plan = planCatalogSync(CATALOG, ALL, { systems, roles }, []);
 
     expect(plan.errors).toEqual([]);
-    expect(plan.systems.filter(hasChanges)).toEqual([]);
+    const changed = plan.systems.filter(hasChanges);
+    expect(changed.map((p) => p.system)).toEqual(['VRMS', 'VMMS', 'BMS']);
+    for (const p of changed) {
+      expect(p.inserts).toEqual([]);
+      expect(p.updates).toEqual([]);
+      expect(p.deletes).toEqual([]);
+      const before = systems.find((x) => x.code === p.system)!;
+      expect({ ...p.systemRow, description: '' }).toEqual(before);
+    }
     expect(roles).toHaveLength(12);
   });
 });
@@ -147,6 +158,7 @@ describe('planCatalogSync', () => {
     expect(vrms.systemRow).toEqual({
       code: 'VRMS',
       name: 'Vehicle Repair Management System',
+      description: 'Repair tickets, mechanics and workshop work',
       maxRolesPerUser: 1,
     });
     expect(vrms.inserts.map((r) => [r.code, r.sortOrder])).toEqual([
@@ -288,6 +300,36 @@ describe('planCatalogSync', () => {
       expect(errorsFor(two)).toContain(
         'VRMS: needs exactly one isSystemAdmin role, found 2.',
       );
+    });
+
+    // covers: spec 0007 AC-5
+    it('refuses an empty or too long system description, listing every problem', () => {
+      const files = CATALOG.map((d) =>
+        d.system === SystemType.VRMS
+          ? { ...d, description: '  ' }
+          : d.system === SystemType.BMS
+            ? { ...d, description: 'x'.repeat(201) }
+            : d,
+      );
+      const errors = errorsFor(files).filter((e) =>
+        e.includes('system description'),
+      );
+      expect(errors).toEqual([
+        'VRMS: the system description must be 1 to 200 characters.',
+        'BMS: the system description must be 1 to 200 characters.',
+      ]);
+    });
+
+    it('updates a reworded system description and nothing else', () => {
+      const files = edit(SystemType.VMMS, (d) => ({
+        ...d,
+        description: 'Fleet upkeep',
+      }));
+      const plan = planCatalogSync(files, ALL, synced(), []);
+      expect(plan.errors).toEqual([]);
+      expect(plan.systems.filter(hasChanges).map(describePlan)).toEqual([
+        'VMMS: 4 roles, system details updated',
+      ]);
     });
 
     it('refuses a limit below 1', () => {

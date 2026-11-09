@@ -15,14 +15,12 @@ import {
   InjectThrottlerStorage,
   type ThrottlerStorage,
 } from '@nestjs/throttler';
-import { ClientKind, type SystemType } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../shared/prisma.service';
 import { AuthService } from '../auth.service';
 import { LoginDto } from '../dto/login.dto';
 import { coded } from '../errors';
 import { bearerToken } from '../guards/request-authenticator';
-import { pickLoginSystem } from '../tokens/login-system';
 import {
   TokenRejectedError,
   TokenService,
@@ -34,12 +32,16 @@ import {
   type AuthorizeResult,
 } from './authorize.service';
 import { PortalCsrfGuard } from './csrf';
+import { LauncherService, type LauncherAnswer } from './launcher';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 import { SessionService, sessionExpiresAt } from './session.service';
 import { readSsoCookie, setSsoCookie } from './sso-cookie';
 
 /** `/auth/authorize` allows 30 a minute per address (spec 0003, AC-13, AC-38). */
 export const AUTHORIZE_LIMIT = { limit: 30, ttlMs: 60_000 };
+
+/** `/auth/sso` allows 60 a minute per address (spec 0007, AC-4). */
+export const SSO_LIMIT = { limit: 60, ttlMs: 60_000 };
 
 const sessionEnded = () =>
   coded(HttpStatus.UNAUTHORIZED, 'SESSION_ENDED', 'The session has ended');
@@ -56,13 +58,16 @@ export class SsoController {
     private readonly authorize: AuthorizeService,
     private readonly tokens: TokenService,
     private readonly prisma: PrismaService,
+    private readonly launcher: LauncherService,
     @Inject(SESSION_SETTINGS) private readonly settings: SessionSettings,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
   /**
-   * The portal login (AC-11): checks the password, creates a web session and sets `welinc_sso`.
-   * Never answers a token. A browser that already holds an SSO session loses it first.
+   * The portal login (spec 0003, AC-11; spec 0007, AC-3): checks the password, builds the
+   * launcher answer, then creates a web session and sets `welinc_sso`. Never answers a token.
+   * No usable system means 403 and no session. A browser that already holds an SSO session
+   * loses it first.
    */
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -71,10 +76,10 @@ export class SsoController {
     @Body() dto: LoginDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ) {
+  ): Promise<LauncherAnswer> {
     res.setHeader('Cache-Control', 'no-store');
-    const { user, system } = await this.auth.checkCredentials(dto);
-    const url = await this.webAddress(system);
+    const { user } = await this.auth.checkCredentials(dto);
+    const answer = await this.launcher.answerFor(user);
     const { session, handle } = await this.sessions.createWeb({
       userId: user.id,
       userAgent: req.headers['user-agent'] ?? null,
@@ -82,35 +87,42 @@ export class SsoController {
       previousHandle: readSsoCookie(req, this.settings),
     });
     setSsoCookie(res, this.settings, handle, session.absoluteExpiresAt!);
-    return { user, system, url };
+    return answer;
   }
 
-  /** Whether this browser holds a live SSO session, and where it would go (AC-12). */
+  /**
+   * Whether this browser holds a live SSO session, and the systems the launcher lists
+   * (spec 0007, AC-1, AC-2, AC-4). Never counts as activity.
+   */
   @Get('sso')
-  async sso(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+  async sso(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<LauncherAnswer> {
     res.setHeader('Cache-Control', 'no-store');
+    const hit = await this.storage.increment(
+      `sso:${req.ip ?? 'unknown'}`,
+      SSO_LIMIT.ttlMs,
+      SSO_LIMIT.limit,
+      0,
+      'sso',
+    );
+    if (hit.totalHits > SSO_LIMIT.limit) {
+      res.setHeader(
+        'Retry-After',
+        String(Math.max(1, Math.ceil(hit.timeToExpire))),
+      );
+      throw coded(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'RATE_LIMITED',
+        'Too many requests from this address. Wait a minute and try again.',
+      );
+    }
     const session = await this.sessions.liveBySsoHandle(
       readSsoCookie(req, this.settings),
     );
     if (!session) throw sessionEnded();
-    const roles = await this.prisma.userRoleAssignment.findMany({
-      where: { userId: session.userId },
-      select: { system: true },
-    });
-    const system = pickLoginSystem(roles);
-    if (!system) {
-      throw coded(
-        HttpStatus.FORBIDDEN,
-        'NO_SYSTEM_ACCESS',
-        'This account has no access to any system',
-      );
-    }
-    const { id, name, email } = session.user;
-    return {
-      user: { id, name, email },
-      system,
-      url: await this.webAddress(system),
-    };
+    return this.launcher.answerFor(session.user);
   }
 
   /** The start of the code flow (AC-13). */
@@ -226,22 +238,6 @@ export class SsoController {
         email: session.user.email,
       },
     };
-  }
-
-  /** The web address of a system's client, where the portal sends a user after login. */
-  private async webAddress(system: SystemType): Promise<string> {
-    const client = await this.prisma.oAuthClient.findFirst({
-      where: { system, kind: ClientKind.CONFIDENTIAL, isActive: true },
-      select: { webAddress: true },
-    });
-    if (!client?.webAddress) {
-      throw coded(
-        HttpStatus.SERVICE_UNAVAILABLE,
-        'AUTH_UNAVAILABLE',
-        `${system} has no web address in the client registry. Run npm run seed:clients.`,
-      );
-    }
-    return client.webAddress;
   }
 
   private send(res: Response, result: AuthorizeResult) {

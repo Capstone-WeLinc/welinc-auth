@@ -28,6 +28,7 @@ import { UserGrantsService } from './sessions/user-grants.service';
 import { AuthorizeService } from './sessions/authorize.service';
 import { PortalCsrfGuard } from './sessions/csrf';
 import { SsoController } from './sessions/sso.controller';
+import { LauncherService } from './sessions/launcher';
 import { SessionEndController } from './sessions/session-end.controller';
 import { MobileController } from './sessions/mobile.controller';
 import { SessionsController } from './sessions/sessions.controller';
@@ -59,6 +60,7 @@ import { DirectoryService } from './directory/directory.service';
     sessionSettingsProvider,
     SessionService,
     UserGrantsService,
+    LauncherService,
     AuthorizeService,
     PortalCsrfGuard,
     SessionSweeper,

@@ -79,13 +79,13 @@ export class MobileController {
         'This app may not sign in here',
       );
     }
+    // The client's system is checked by the grant (NO_SYSTEM_ACCESS, APP_NOT_ALLOWED)
     const { user } = await this.auth.checkCredentials({
       email: dto.email,
       password: dto.password,
-      system: client.system,
     });
     const answer = await this.grants.startMobile(client, {
-      user,
+      user: { id: user.id, name: user.name, email: user.email },
       deviceName: deviceNameOf(dto.deviceName),
       ip: req.ip ?? null,
     });

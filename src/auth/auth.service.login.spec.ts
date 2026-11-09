@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, jest } from '@jest/globals';
-import { HttpException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { SystemType } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
@@ -12,7 +11,7 @@ import { SessionService } from './sessions/session.service';
 import { testTokenService } from './testing/test-keys';
 import type { TokenService } from './tokens/token.service';
 
-// covers: spec 0002 AC-5 (system pick and NO_SYSTEM_ACCESS); spec 0003 AC-11 (no token in the answer)
+// covers: spec 0003 AC-11 (no token in the answer); spec 0007 AC-3 (no system pick here)
 describe('AuthService.checkCredentials', () => {
   let tokens: TokenService;
   let passwordHash: string;
@@ -56,46 +55,27 @@ describe('AuthService.checkCredentials', () => {
     { role: 'OPERATIONS', system: SystemType.BMS },
   ];
 
-  it('picks VRMS by default and answers the user with no token', async () => {
+  it('answers the user with no token and no system pick', async () => {
     const answer = await build(both).checkCredentials({
       email: 'pedro@welinc.com',
       password: 'secret123',
     });
     expect(answer).toEqual({
-      system: 'VRMS',
-      user: { id: 'user-1', name: 'Pedro', email: 'pedro@welinc.com' },
+      user: {
+        id: 'user-1',
+        name: 'Pedro',
+        email: 'pedro@welinc.com',
+        profilePicture: null,
+      },
     });
   });
 
-  it('picks the requested system', async () => {
-    const answer = await build(both).checkCredentials({
+  it('leaves the no system check to the caller (spec 0007, AC-3)', async () => {
+    const answer = await build([]).checkCredentials({
       email: 'pedro@welinc.com',
       password: 'secret123',
-      system: SystemType.BMS,
     });
-    expect(answer.system).toBe('BMS');
-  });
-
-  it('answers 403 NO_SYSTEM_ACCESS and no token for a system the user lacks, or no system at all', async () => {
-    for (const [roles, system] of [
-      [both, SystemType.VMMS],
-      [[], undefined],
-    ] as const) {
-      const error = await build([...roles])
-        .checkCredentials({
-          email: 'pedro@welinc.com',
-          password: 'secret123',
-          system,
-        })
-        .catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(HttpException);
-      expect((error as HttpException).getStatus()).toBe(403);
-      expect((error as HttpException).getResponse()).toMatchObject({
-        statusCode: 403,
-        error: 'Forbidden',
-        code: 'NO_SYSTEM_ACCESS',
-      });
-    }
+    expect(answer.user.id).toBe('user-1');
   });
 
   it('still refuses a wrong password before picking a system', async () => {

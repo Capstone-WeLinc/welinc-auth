@@ -21,6 +21,7 @@ export type CatalogRole = {
 export type CatalogSystem = {
   code: SystemType;
   name: string;
+  description: string;
   maxRolesPerUser: number | null;
   roles: CatalogRole[];
 };
@@ -65,6 +66,7 @@ export class CatalogService {
       select: {
         code: true,
         name: true,
+        description: true,
         maxRolesPerUser: true,
         roles: {
           select: {
@@ -91,6 +93,7 @@ export class CatalogService {
       select: {
         code: true,
         name: true,
+        description: true,
         maxRolesPerUser: true,
         roles: {
           select: {

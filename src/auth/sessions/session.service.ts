@@ -25,6 +25,7 @@ export type LiveSession = Session & {
     id: string;
     name: string;
     email: string;
+    profilePicture: string | null;
     isActive: boolean;
     deletedAt: Date | null;
   };
@@ -34,6 +35,7 @@ const USER_FIELDS = {
   id: true,
   name: true,
   email: true,
+  profilePicture: true,
   isActive: true,
   deletedAt: true,
 } as const;
