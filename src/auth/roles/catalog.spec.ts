@@ -12,7 +12,9 @@ import {
   type Holding,
 } from './catalog-plan';
 import type { SystemDefinition } from './catalog.types';
-import { etagOf, matchesEtag } from './systems.controller';
+import { SystemsController, etagOf, matchesEtag } from './systems.controller';
+import type { CatalogService } from './catalog.service';
+import type { PrismaService } from '../../shared/prisma.service';
 import { roleLimitMessage } from './catalog.service';
 
 // Spec 0004: the catalog files, the sync's plan and refusals (AC-1 to AC-4, AC-6), and the
@@ -406,6 +408,79 @@ describe('/auth/systems cache headers', () => {
     expect(matchesEtag('*', tag)).toBe(true);
     expect(matchesEtag('"other"', tag)).toBe(false);
     expect(matchesEtag(undefined, tag)).toBe(false);
+  });
+});
+
+describe('GET /auth/systems carries the description', () => {
+  // covers: spec 0007 AC-5 (`description` in each system, and the ETag moves with it)
+  async function answer(description: string, ifNoneMatch?: string) {
+    const catalog = {
+      systems: () =>
+        Promise.resolve([
+          {
+            code: SystemType.BMS,
+            name: 'Booking Management System',
+            description,
+            maxRolesPerUser: 1,
+            roles: [],
+          },
+        ]),
+    };
+    const prisma = {
+      oAuthClient: {
+        findMany: () =>
+          Promise.resolve([
+            { system: SystemType.BMS, webAddress: 'http://localhost:8003' },
+          ]),
+      },
+    };
+    const controller = new SystemsController(
+      catalog as unknown as CatalogService,
+      prisma as unknown as PrismaService,
+    );
+    const headers: Record<string, string> = {};
+    let status = 0;
+    let body = '';
+    const res = {
+      setHeader: (k: string, v: string) => (headers[k] = v),
+      status(code: number) {
+        status = code;
+        return res;
+      },
+      type: () => res,
+      send(b: string) {
+        body = b;
+      },
+      end: () => undefined,
+    };
+    await controller.systems(
+      { headers: { 'if-none-match': ifNoneMatch } } as never,
+      res as never,
+    );
+    return { headers, status, body };
+  }
+
+  it('puts the description in each system and a strong tag on the answer', async () => {
+    const a = await answer('Bookings, dispatch and trips');
+    expect(a.status).toBe(200);
+    expect(
+      (JSON.parse(a.body) as { systems: { description: string }[] }).systems[0]
+        .description,
+    ).toBe('Bookings, dispatch and trips');
+    expect(a.headers.ETag).toBe(etagOf(a.body));
+  });
+
+  it('changes the ETag when only a description changes, and answers 304 for the current tag', async () => {
+    const before = await answer('Bookings, dispatch and trips');
+    const after = await answer('Bookings and dispatch');
+    expect(after.headers.ETag).not.toBe(before.headers.ETag);
+    expect(
+      (await answer('Bookings, dispatch and trips', before.headers.ETag))
+        .status,
+    ).toBe(304);
+    expect(
+      (await answer('Bookings and dispatch', before.headers.ETag)).status,
+    ).toBe(200);
   });
 });
 

@@ -109,6 +109,31 @@ describe('GET /auth/sso', () => {
     expect(t.launcher.answerFor).not.toHaveBeenCalled();
   });
 
+  // covers: AC-1 (the call never counts as activity)
+  it('never counts as activity, with or without a live session', async () => {
+    const live = build();
+    await live.controller.sso(live.req, live.res);
+    expect(live.sessions.touch).not.toHaveBeenCalled();
+
+    const ended = build();
+    ended.sessions.liveBySsoHandle.mockResolvedValue(null);
+    await refusal(ended.controller.sso(ended.req, ended.res));
+    expect(ended.sessions.touch).not.toHaveBeenCalled();
+  });
+
+  // covers: AC-1 (the no access 403 keeps its body: the launcher service builds the email)
+  it('passes the no access answer through unchanged, with its email', async () => {
+    const t = build();
+    const body = { code: 'NO_SYSTEM_ACCESS', user: { email: 'm@welinc.com' } };
+    t.launcher.answerFor.mockRejectedValue(new HttpException(body, 403));
+    const error = await t.controller.sso(t.req, t.res).then(
+      () => null,
+      (e: unknown) => e as HttpException,
+    );
+    expect(error?.getStatus()).toBe(403);
+    expect(error?.getResponse()).toEqual(body);
+  });
+
   it('answers 429 RATE_LIMITED with Retry-After on the 61st call', async () => {
     const t = build(61);
     expect(await refusal(t.controller.sso(t.req, t.res))).toEqual([
@@ -131,6 +156,42 @@ describe('POST /auth/login', () => {
     expect(answer).toBe(ANSWER);
     expect(t.sessions.createWeb).toHaveBeenCalled();
     expect(t.cookie).toHaveBeenCalled();
+  });
+
+  // covers: AC-3 (the systems list is built after the password check, before the session)
+  it('checks the password first, then builds the answer for that user, then creates the session', async () => {
+    const t = build();
+    await t.controller.login(
+      { email: 'm@welinc.com', password: 'x' },
+      t.req,
+      t.res,
+    );
+    const check = t.auth.checkCredentials.mock.invocationCallOrder[0];
+    const answer = t.launcher.answerFor.mock.invocationCallOrder[0];
+    const create = t.sessions.createWeb.mock.invocationCallOrder[0];
+    expect(check).toBeLessThan(answer);
+    expect(answer).toBeLessThan(create);
+    expect(t.launcher.answerFor).toHaveBeenCalledWith(USER);
+  });
+
+  // covers: AC-3, security (a wrong password leaks nothing and starts nothing)
+  it('builds no answer, session or cookie when the credentials are refused', async () => {
+    const t = build();
+    t.auth.checkCredentials.mockRejectedValue(
+      new HttpException({ code: 'INVALID_CREDENTIALS' }, 401),
+    );
+    expect(
+      await refusal(
+        t.controller.login(
+          { email: 'm@welinc.com', password: 'wrong' },
+          t.req,
+          t.res,
+        ),
+      ),
+    ).toEqual([401, 'INVALID_CREDENTIALS']);
+    expect(t.launcher.answerFor).not.toHaveBeenCalled();
+    expect(t.sessions.createWeb).not.toHaveBeenCalled();
+    expect(t.cookie).not.toHaveBeenCalled();
   });
 
   it('creates no session and no cookie when no usable system is left', async () => {
