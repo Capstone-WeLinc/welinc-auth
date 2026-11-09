@@ -30,7 +30,9 @@ export function summaryLines(
   }
   const order = [...SYSTEM_ORDER, 'Multi system', 'Broken state accounts'];
   for (const h of order) {
-    const rows = groups.get(h);
+    const rows = groups
+      .get(h)
+      ?.sort((a, b) => a.email.localeCompare(b.email, 'en', { numeric: true }));
     if (!rows) continue;
     lines.push(h);
     const width = Math.max(...rows.map((p) => p.email.length));
