@@ -62,10 +62,16 @@ describe('seedClients', () => {
       system: 'VRMS',
       grants: ['authorization_code', 'refresh_token', 'client_credentials'],
       userAudiences: ['VRMS'],
-      serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+      serviceScopes: { AUTH: ['directory.read'] },
       allowedRoles: {},
       webAddress: 'http://localhost:8001',
       redirectUris: ['http://localhost:3000/vrms/session/callback'],
+    });
+    expect(calls.vmms.update).toMatchObject({
+      serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+    });
+    expect(calls.bms.update).toMatchObject({
+      serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
     });
     expect(calls['vmms-analytics'].update).toMatchObject({
       kind: 'SERVICE',

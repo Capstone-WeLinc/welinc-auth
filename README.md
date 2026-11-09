@@ -65,6 +65,10 @@ $ npm run test:db
 $ npm run test:cov
 ```
 
+## User directory for systems
+
+System backends read people (names, emails, roles, active or not) through `/auth/directory/*` with their own service token, never through the auth database. Postgres triggers write a change feed for every change to a person, and each system polls it from its last cursor. How it works, and what to watch when you change users or roles: [src/auth/directory/README.md](src/auth/directory/README.md).
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
