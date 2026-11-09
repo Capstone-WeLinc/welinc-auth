@@ -27,7 +27,7 @@ The shared auth service for the WeLinc suite: NestJS 11 with Prisma 7 on Postgre
 | `src/auth/dto/` | Request DTOs validated with `class-validator` |
 | `src/shared/` | `PrismaService`, `MailService` (logs instead of sending when SMTP is blank, in development only; in production it throws), `SharedModule` |
 | `prisma/schema.prisma`, `prisma/migrations/` | `User`, `UserRoleAssignment` (role plus system), `PasswordResetToken`, `UserChange`, `OAuthClient` (the client registry), `ClientAssertionJti` (replay guard), and spec 0003's `Session`, `RefreshToken` (one row per issued token, chained by `parentId`), `LoginRequest`, `AuthorizationCode`, and spec 0005's `DirectoryFeed` and `DirectoryChange`. The deferred triggers that write `directory_changes` live only in the migration SQL (`20261111000000_directory_feed`), as do two partial indexes: one unused refresh token per (session, client), and live sessions by idle cutoff |
-| `prisma/seed.ts`, `prisma/seeds/` | Seed users; `seeds/clients.seed.ts` is the client registry `seed:clients` applies, with each system's callback from `API_PUBLIC_URL` and its web address from `CLIENT_<ID>_WEB_ADDRESS` (the portal's from `PORTAL_URL`) |
+| `prisma/seed.ts`, `prisma/seeds/` | Seed people from one manifest (spec 0006): `seeds/people.json` is the only list of the 145 seed people (fixed ids), checked by `manifest.ts` (`checkManifest`, `seedGuard`: refuses production unless `SEED_ALLOW=staging`, `--reset` local only) and applied by `users.seed.ts` as an upsert that never touches other users; `seed:check <path>` tells whether a system's copy of `people.json` matches; the guide is `docs/integration/seed-accounts.md`; `seeds/clients.seed.ts` is the client registry `seed:clients` applies, with each system's callback from `API_PUBLIC_URL` and its web address from `CLIENT_<ID>_WEB_ADDRESS` (the portal's from `PORTAL_URL`) |
 | `nginx.conf` | The gateway on port 3000, routing `/auth`, `/vrms`, `/repairs`. It answers CORS itself from an exact origin `map` (the four local web ports), with `always`, and hides upstream CORS headers |
 
 ## Commands
@@ -39,7 +39,8 @@ npm run build
 npm run test         # Jest unit tests
 npm run test:e2e
 npm run test:db      # migration tests on a throwaway database; locally: docker exec welinc_auth_service npm run test:db
-npm run seed
+npm run seed         # upserts the people.json roster, then the clients; --reset (local only) removes every user first
+npm run seed:check -- <path>  # does a system's copy of people.json match the manifest
 npm run studio       # Prisma Studio on 5555
 npm run keys:dev     # local signing key plus the VRMS client key pair, written into both .env files
 npm run db:deploy    # prisma migrate deploy, then catalog:sync; use it instead of a bare migrate deploy
