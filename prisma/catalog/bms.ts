@@ -5,6 +5,7 @@ import type { SystemDefinition } from '../../src/auth/roles/catalog.types';
 export const bms: SystemDefinition = {
   system: 'BMS',
   name: 'Booking Management System',
+  description: 'Bookings, dispatch and trips',
   maxRolesPerUser: 1,
   roles: [
     {

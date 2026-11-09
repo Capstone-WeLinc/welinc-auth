@@ -53,6 +53,7 @@ export class SystemsController {
     const views: SystemView[] = systems.map((s) => ({
       code: s.code,
       name: s.name,
+      description: s.description,
       // The system's active confidential client; the lowest id when there are several
       webAddress: clients.find((c) => c.system === s.code)?.webAddress ?? null,
       maxRolesPerUser: s.maxRolesPerUser,

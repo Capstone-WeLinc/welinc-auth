@@ -32,7 +32,12 @@ async function main(): Promise<CatalogPlan> {
 
         const [systems, roles, holdings] = await Promise.all([
           tx.system.findMany({
-            select: { code: true, name: true, maxRolesPerUser: true },
+            select: {
+              code: true,
+              name: true,
+              description: true,
+              maxRolesPerUser: true,
+            },
           }),
           tx.systemRole.findMany({
             select: {
@@ -76,6 +81,7 @@ async function main(): Promise<CatalogPlan> {
               create: s.systemRow,
               update: {
                 name: s.systemRow.name,
+                description: s.systemRow.description,
                 maxRolesPerUser: s.systemRow.maxRolesPerUser,
               },
             });

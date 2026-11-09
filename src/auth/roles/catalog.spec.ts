@@ -12,7 +12,9 @@ import {
   type Holding,
 } from './catalog-plan';
 import type { SystemDefinition } from './catalog.types';
-import { etagOf, matchesEtag } from './systems.controller';
+import { SystemsController, etagOf, matchesEtag } from './systems.controller';
+import type { CatalogService } from './catalog.service';
+import type { PrismaService } from '../../shared/prisma.service';
 import { roleLimitMessage } from './catalog.service';
 
 // Spec 0004: the catalog files, the sync's plan and refusals (AC-1 to AC-4, AC-6), and the
@@ -29,6 +31,7 @@ function synced(definitions: SystemDefinition[] = CATALOG): {
     systems: definitions.map((d) => ({
       code: d.system,
       name: d.name,
+      description: d.description,
       maxRolesPerUser: d.maxRolesPerUser,
     })),
     roles: definitions.flatMap((d) =>
@@ -90,7 +93,8 @@ describe('catalog files', () => {
   });
 
   // covers: AC-6
-  it('matches the starting catalog the migration inserts, so the first sync changes nothing', () => {
+  // covers: spec 0007 AC-5, AC-7 (the description migration leaves '' until the sync writes it)
+  it('matches the starting catalog the migrations insert, so the first sync writes only the descriptions', () => {
     const sql = readFileSync(
       join(
         __dirname,
@@ -103,6 +107,7 @@ describe('catalog files', () => {
     ].map((m) => ({
       code: m[1] as SystemType,
       name: m[2],
+      description: '',
       maxRolesPerUser: m[3] === 'NULL' ? null : Number(m[3]),
     }));
     const roles = [
@@ -121,7 +126,15 @@ describe('catalog files', () => {
     const plan = planCatalogSync(CATALOG, ALL, { systems, roles }, []);
 
     expect(plan.errors).toEqual([]);
-    expect(plan.systems.filter(hasChanges)).toEqual([]);
+    const changed = plan.systems.filter(hasChanges);
+    expect(changed.map((p) => p.system)).toEqual(['VRMS', 'VMMS', 'BMS']);
+    for (const p of changed) {
+      expect(p.inserts).toEqual([]);
+      expect(p.updates).toEqual([]);
+      expect(p.deletes).toEqual([]);
+      const before = systems.find((x) => x.code === p.system)!;
+      expect({ ...p.systemRow, description: '' }).toEqual(before);
+    }
     expect(roles).toHaveLength(12);
   });
 });
@@ -147,6 +160,7 @@ describe('planCatalogSync', () => {
     expect(vrms.systemRow).toEqual({
       code: 'VRMS',
       name: 'Vehicle Repair Management System',
+      description: 'Repair tickets, mechanics and workshop work',
       maxRolesPerUser: 1,
     });
     expect(vrms.inserts.map((r) => [r.code, r.sortOrder])).toEqual([
@@ -290,6 +304,36 @@ describe('planCatalogSync', () => {
       );
     });
 
+    // covers: spec 0007 AC-5
+    it('refuses an empty or too long system description, listing every problem', () => {
+      const files = CATALOG.map((d) =>
+        d.system === SystemType.VRMS
+          ? { ...d, description: '  ' }
+          : d.system === SystemType.BMS
+            ? { ...d, description: 'x'.repeat(201) }
+            : d,
+      );
+      const errors = errorsFor(files).filter((e) =>
+        e.includes('system description'),
+      );
+      expect(errors).toEqual([
+        'VRMS: the system description must be 1 to 200 characters.',
+        'BMS: the system description must be 1 to 200 characters.',
+      ]);
+    });
+
+    it('updates a reworded system description and nothing else', () => {
+      const files = edit(SystemType.VMMS, (d) => ({
+        ...d,
+        description: 'Fleet upkeep',
+      }));
+      const plan = planCatalogSync(files, ALL, synced(), []);
+      expect(plan.errors).toEqual([]);
+      expect(plan.systems.filter(hasChanges).map(describePlan)).toEqual([
+        'VMMS: 4 roles, system details updated',
+      ]);
+    });
+
     it('refuses a limit below 1', () => {
       const files = edit(SystemType.VRMS, (d) => ({
         ...d,
@@ -364,6 +408,79 @@ describe('/auth/systems cache headers', () => {
     expect(matchesEtag('*', tag)).toBe(true);
     expect(matchesEtag('"other"', tag)).toBe(false);
     expect(matchesEtag(undefined, tag)).toBe(false);
+  });
+});
+
+describe('GET /auth/systems carries the description', () => {
+  // covers: spec 0007 AC-5 (`description` in each system, and the ETag moves with it)
+  async function answer(description: string, ifNoneMatch?: string) {
+    const catalog = {
+      systems: () =>
+        Promise.resolve([
+          {
+            code: SystemType.BMS,
+            name: 'Booking Management System',
+            description,
+            maxRolesPerUser: 1,
+            roles: [],
+          },
+        ]),
+    };
+    const prisma = {
+      oAuthClient: {
+        findMany: () =>
+          Promise.resolve([
+            { system: SystemType.BMS, webAddress: 'http://localhost:8003' },
+          ]),
+      },
+    };
+    const controller = new SystemsController(
+      catalog as unknown as CatalogService,
+      prisma as unknown as PrismaService,
+    );
+    const headers: Record<string, string> = {};
+    let status = 0;
+    let body = '';
+    const res = {
+      setHeader: (k: string, v: string) => (headers[k] = v),
+      status(code: number) {
+        status = code;
+        return res;
+      },
+      type: () => res,
+      send(b: string) {
+        body = b;
+      },
+      end: () => undefined,
+    };
+    await controller.systems(
+      { headers: { 'if-none-match': ifNoneMatch } } as never,
+      res as never,
+    );
+    return { headers, status, body };
+  }
+
+  it('puts the description in each system and a strong tag on the answer', async () => {
+    const a = await answer('Bookings, dispatch and trips');
+    expect(a.status).toBe(200);
+    expect(
+      (JSON.parse(a.body) as { systems: { description: string }[] }).systems[0]
+        .description,
+    ).toBe('Bookings, dispatch and trips');
+    expect(a.headers.ETag).toBe(etagOf(a.body));
+  });
+
+  it('changes the ETag when only a description changes, and answers 304 for the current tag', async () => {
+    const before = await answer('Bookings, dispatch and trips');
+    const after = await answer('Bookings and dispatch');
+    expect(after.headers.ETag).not.toBe(before.headers.ETag);
+    expect(
+      (await answer('Bookings, dispatch and trips', before.headers.ETag))
+        .status,
+    ).toBe(304);
+    expect(
+      (await answer('Bookings and dispatch', before.headers.ETag)).status,
+    ).toBe(200);
   });
 });
 

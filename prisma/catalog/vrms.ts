@@ -5,6 +5,7 @@ import type { SystemDefinition } from '../../src/auth/roles/catalog.types';
 export const vrms: SystemDefinition = {
   system: 'VRMS',
   name: 'Vehicle Repair Management System',
+  description: 'Repair tickets, mechanics and workshop work',
   maxRolesPerUser: 1,
   roles: [
     {

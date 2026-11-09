@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -23,8 +22,6 @@ import {
 import { PrismaService } from '../shared/prisma.service';
 import { CatalogService, holdsAdmin } from './roles/catalog.service';
 import type { RoleAssignment } from './roles/catalog.types';
-import { coded } from './errors';
-import { pickLoginSystem } from './tokens/login-system';
 import { TokenService } from './tokens/token.service';
 import { SessionService } from './sessions/session.service';
 import { MailService } from '../shared/mail.service';
@@ -214,9 +211,18 @@ export class AuthService {
    * Checks a password login: lockout (5 failures), deactivation, then the system pick (spec 0002,
    * AC-5). Answers the user and the system; the caller creates the session (spec 0003, AC-11).
    */
-  async checkCredentials(dto: LoginDto): Promise<{
-    system: SystemType;
-    user: { id: string; name: string; email: string };
+  /**
+   * The password check shared by the portal and the mobile login: lockout, inactive accounts,
+   * the failure counter. Which systems the person may enter is decided by the caller (the
+   * launcher answer, spec 0007; the mobile grant, spec 0004).
+   */
+  async checkCredentials(dto: Pick<LoginDto, 'email' | 'password'>): Promise<{
+    user: {
+      id: string;
+      name: string;
+      email: string;
+      profilePicture: string | null;
+    };
   }> {
     // TODO: Transparent migration — if passwordHash starts with '$2b$' (bcrypt),
     // verify with bcrypt first, re-hash with argon2, then save. Requires bcrypt as
@@ -300,21 +306,13 @@ export class AuthService {
       data: { failedLoginAttempts: 0 },
     });
 
-    // Spec 0002, AC-5: the token is for one system, picked here until S4's launcher
-    const system = pickLoginSystem(user.roles, dto.system);
-    if (!system) {
-      throw coded(
-        HttpStatus.FORBIDDEN,
-        'NO_SYSTEM_ACCESS',
-        dto.system
-          ? `This account has no access to ${dto.system}`
-          : 'This account has no access to any system',
-      );
-    }
-
     return {
-      system,
-      user: { id: user.id, name: user.name, email: user.email },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        profilePicture: user.profilePicture,
+      },
     };
   }
 

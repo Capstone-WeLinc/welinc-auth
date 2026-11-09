@@ -17,6 +17,7 @@ export class FakeCatalogService extends CatalogService {
     this.entries = definitions.map((d) => ({
       code: d.system,
       name: d.name,
+      description: d.description,
       maxRolesPerUser: d.maxRolesPerUser,
       roles: d.roles.map((r) => ({
         code: r.code,

@@ -5,6 +5,7 @@ import type { SystemDefinition } from '../../src/auth/roles/catalog.types';
 export const vmms: SystemDefinition = {
   system: 'VMMS',
   name: 'Vehicle Maintenance Management System',
+  description: 'Vehicles, maintenance and fleet upkeep',
   maxRolesPerUser: 1,
   roles: [
     {

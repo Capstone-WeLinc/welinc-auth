@@ -128,3 +128,32 @@ describe('spec 0004 allowed roles on user grants', () => {
     ]);
   });
 });
+
+// covers: spec 0007 AC-6 (user.systems in every user grant answer, never in the token)
+describe('spec 0007 user.systems on user grants', () => {
+  it('lists every held system in the order BMS, VMMS, VRMS, and keeps the token to aud', async () => {
+    const { service, db, tokens } = build([]);
+    db.userRoleAssignment.findMany.mockResolvedValue([
+      { role: 'MECHANIC', system: SystemType.VRMS },
+      { role: 'MECHANIC', system: SystemType.VMMS },
+      { role: 'OPERATIONS', system: SystemType.BMS },
+    ]);
+    const answer = await login(service);
+    expect(answer.user.systems).toEqual([
+      SystemType.BMS,
+      SystemType.VMMS,
+      SystemType.VRMS,
+    ]);
+    expect(answer.user.roles).toEqual([
+      { role: 'MECHANIC', system: SystemType.VMMS },
+    ]);
+    const signed = tokens.signUserToken.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(signed).not.toHaveProperty('systems');
+    expect(signed.roles).toEqual([
+      { role: 'MECHANIC', system: SystemType.VMMS },
+    ]);
+  });
+});

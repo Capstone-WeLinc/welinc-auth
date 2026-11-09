@@ -30,6 +30,7 @@ import {
   cutoffReason,
   sessionExpiresAt,
 } from './session.service';
+import { launcherOrder } from './launcher';
 
 /** The user grants answer (spec 0001 section 5), plus the absolute end a web cookie lives to. */
 export type UserTokenAnswer = {
@@ -42,7 +43,14 @@ export type UserTokenAnswer = {
   session_expires_at: string;
   /** Web sessions only: login + WEB_SESSION_MAX_HOURS, for the refresh cookie's max age. */
   session_absolute_expires_at?: string;
-  user: { id: string; name: string; email: string; roles: TokenRole[] };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    roles: TokenRole[];
+    /** Every system the user holds a role in, launcher order (spec 0007, AC-6). Never in a JWT. */
+    systems: SystemType[];
+  };
 };
 
 type Tx = Prisma.TransactionClient;
@@ -55,6 +63,7 @@ type Outcome =
       refreshToken: string;
       user: { id: string; name: string; email: string };
       roles: TokenRole[];
+      systems: SystemType[];
       aud: SystemType;
     }
   | { kind: 'invalid'; reason: string }
@@ -63,7 +72,7 @@ type Outcome =
 
 /** What `rolesFor` found: the roles held in the audience, then the ones this client allows. */
 type GrantRoles =
-  | { kind: 'ok'; roles: TokenRole[] }
+  | { kind: 'ok'; roles: TokenRole[]; systems: SystemType[] }
   | { kind: 'no_access'; aud: SystemType }
   | { kind: 'not_allowed'; message: string };
 
@@ -153,7 +162,7 @@ export class UserGrantsService {
           client,
         );
         if (granted.kind !== 'ok') return granted;
-        const roles = granted.roles;
+        const { roles, systems } = granted;
 
         await tx.authorizationCode.update({
           where: { codeHash: hashOpaque(input.code) },
@@ -192,6 +201,7 @@ export class UserGrantsService {
           refreshToken,
           user: live.user,
           roles,
+          systems,
           aud,
         };
       },
@@ -255,7 +265,7 @@ export class UserGrantsService {
           client,
         );
         if (granted.kind !== 'ok') return granted;
-        const roles = granted.roles;
+        const { roles, systems } = granted;
 
         let refreshToken: string;
         if (inGrace) {
@@ -310,6 +320,7 @@ export class UserGrantsService {
           refreshToken,
           user: live.user,
           roles,
+          systems,
           aud,
         };
       },
@@ -342,7 +353,7 @@ export class UserGrantsService {
     if (granted.kind !== 'ok') {
       return this.finish(client.id, 'mobile_login', granted);
     }
-    const roles = granted.roles;
+    const { roles, systems } = granted;
     const { session, refreshToken } = await this.sessions.createMobile({
       userId: input.user.id,
       clientId: client.id,
@@ -356,6 +367,7 @@ export class UserGrantsService {
       refreshToken,
       user: input.user,
       roles,
+      systems,
       aud,
     });
   }
@@ -416,16 +428,20 @@ export class UserGrantsService {
     aud: SystemType,
     client: Pick<OAuthClient, 'allowedRoles'>,
   ): Promise<GrantRoles> {
+    // Every system's rows: the audience's roles, and `user.systems` read fresh (spec 0007, AC-6)
     const rows = await tx.userRoleAssignment.findMany({
-      where: { userId, system: aud },
+      where: { userId },
       select: { role: true, system: true },
     });
-    const held = rows.map((r) => ({ role: r.role, system: r.system }));
+    const held = rows
+      .filter((r) => r.system === aud)
+      .map((r) => ({ role: r.role, system: r.system }));
     if (held.length === 0) return { kind: 'no_access', aud };
 
     const allowed = allowedCodes(client.allowedRoles, aud);
     const roles = filterAllowed(held, allowed);
-    if (roles.length > 0) return { kind: 'ok', roles };
+    if (roles.length > 0)
+      return { kind: 'ok', roles, systems: launcherOrder(rows) };
 
     // Names in the client's list order, from the catalog
     const named = await tx.systemRole.findMany({
@@ -462,7 +478,7 @@ export class UserGrantsService {
       );
       throw coded(HttpStatus.FORBIDDEN, 'APP_NOT_ALLOWED', outcome.message);
     }
-    const { session, user, roles, aud } = outcome;
+    const { session, user, roles, systems, aud } = outcome;
     const accessToken = await this.tokens.signUserToken({
       sub: user.id,
       email: user.email,
@@ -488,7 +504,7 @@ export class UserGrantsService {
               session.absoluteExpiresAt.toISOString(),
           }
         : {}),
-      user: { ...user, roles },
+      user: { ...user, roles, systems },
     };
   }
 

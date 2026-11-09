@@ -77,6 +77,8 @@ model User {
 model System {
   code            SystemType   @id
   name            String       @db.VarChar(100)
+  // One line for the portal launcher card, written only by catalog:sync (spec 0007)
+  description     String       @db.VarChar(200)
   // Null means no limit; at least 1 when set (checked by the sync)
   maxRolesPerUser Int?         @map("max_roles_per_user")
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)

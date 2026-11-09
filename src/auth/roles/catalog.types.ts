@@ -22,6 +22,8 @@ export type RoleDefinition = {
 export type SystemDefinition = {
   system: SystemType;
   name: string;
+  /** One line for the portal launcher card, 1 to 200 characters (spec 0007, AC-5). */
+  description: string;
   /** A whole number of at least 1, or null for no limit (AC-1). */
   maxRolesPerUser: number | null;
   /** Display order and power order: the first is the most powerful (AC-1). */

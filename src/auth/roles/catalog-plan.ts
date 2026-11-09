@@ -22,6 +22,7 @@ const SYSTEM_NAME_MAX = 100;
 export type CurrentSystem = {
   code: SystemType;
   name: string;
+  description: string;
   maxRolesPerUser: number | null;
 };
 
@@ -124,6 +125,15 @@ function fileErrors(
     if (!def.name.trim() || def.name.length > SYSTEM_NAME_MAX) {
       errors.push(
         `${at}: the system name must be 1 to ${SYSTEM_NAME_MAX} characters.`,
+      );
+    }
+    if (
+      typeof def.description !== 'string' ||
+      !def.description.trim() ||
+      def.description.length > DESCRIPTION_MAX
+    ) {
+      errors.push(
+        `${at}: the system description must be 1 to ${DESCRIPTION_MAX} characters.`,
       );
     }
     if (
@@ -263,10 +273,12 @@ export function planCatalogSync(
     const systemRow =
       !now ||
       now.name !== def.name ||
+      now.description !== def.description ||
       now.maxRolesPerUser !== def.maxRolesPerUser
         ? {
             code: def.system,
             name: def.name,
+            description: def.description,
             maxRolesPerUser: def.maxRolesPerUser,
           }
         : null;
