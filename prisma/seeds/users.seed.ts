@@ -44,19 +44,24 @@ export class SeedConflictError extends Error {
   }
 }
 
+export type UserBefore = {
+  id: string;
+  email: string;
+  lockedAt: Date | null;
+  deletedAt: Date | null;
+};
+
 /**
- * AC-7: upserts each manifest person by id and sets exactly their listed roles, inside the
- * caller's transaction. Refuses (throws, so the transaction rolls back) when a manifest email is
- * held by another id. `now` is the run's one clock (AC-5).
+ * AC-7: the database as it was before the run, for the manifest's ids and emails. Read before a
+ * --reset wipe too, so a recreated locked or deleted person keeps their old time and the
+ * directory feed sees no change (AC-8).
  */
-export async function seedPeople(
+export async function readUsersBefore(
   tx: Prisma.TransactionClient,
   people: ManifestPerson[],
-  hashes: Map<string, string>,
-  now: Date,
-) {
+): Promise<UserBefore[]> {
   const ids = people.map((p) => p.id);
-  const before = await tx.user.findMany({
+  return tx.user.findMany({
     where: {
       OR: [
         { id: { in: ids } },
@@ -70,8 +75,26 @@ export async function seedPeople(
     },
     select: { id: true, email: true, lockedAt: true, deletedAt: true },
   });
-  const conflicts = emailConflicts(people, before);
-  if (conflicts.length > 0) throw new SeedConflictError(conflicts);
+}
+
+/**
+ * AC-7: upserts each manifest person by id and sets exactly their listed roles, inside the
+ * caller's transaction. Refuses (throws, so the transaction rolls back) when a manifest email is
+ * held by another id; after a --reset wipe nobody holds one, so pass `checkConflicts: false`.
+ * `now` is the run's one clock (AC-5).
+ */
+export async function seedPeople(
+  tx: Prisma.TransactionClient,
+  people: ManifestPerson[],
+  hashes: Map<string, string>,
+  now: Date,
+  before: UserBefore[],
+  checkConflicts: boolean,
+) {
+  if (checkConflicts) {
+    const conflicts = emailConflicts(people, before);
+    if (conflicts.length > 0) throw new SeedConflictError(conflicts);
+  }
 
   const existing = new Map(before.map((u) => [u.id, u]));
   for (const person of people) {

@@ -11,6 +11,7 @@ import {
 } from './seeds/manifest';
 import {
   hashSeedPasswords,
+  readUsersBefore,
   resetUsers,
   SeedConflictError,
   seedPeople,
@@ -80,8 +81,9 @@ async function main() {
     // Spec 0005, AC-3: one transaction, so the directory feed sees one change per person
     await prisma.$transaction(
       async (tx) => {
+        const before = await readUsersBefore(tx, people);
         if (mode.reset) await resetUsers(tx);
-        await seedPeople(tx, people, hashes, now);
+        await seedPeople(tx, people, hashes, now, before, !mode.reset);
       },
       { timeout: 120_000, maxWait: 10_000 },
     );
