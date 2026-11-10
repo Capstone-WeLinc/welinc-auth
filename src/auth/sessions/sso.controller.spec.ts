@@ -3,6 +3,7 @@ import { HttpException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { PrismaService } from '../../shared/prisma.service';
 import type { AuthService } from '../auth.service';
+import type { SignInStepService } from '../codes/sign-in-step.service';
 import type { TokenService } from '../tokens/token.service';
 import type { AuthorizeService } from './authorize.service';
 import type { LauncherService } from './launcher';
@@ -10,7 +11,8 @@ import type { SessionSettings } from './session-config';
 import type { SessionService } from './session.service';
 import { LOGIN_LIMIT, SSO_LIMIT, SsoController } from './sso.controller';
 
-// covers: spec 0007 AC-1 (401, no-store, no activity), AC-3 (no session without a system), AC-4
+// covers: spec 0007 AC-1 (401, no-store, no activity), AC-3 (no session without a system), AC-4;
+// suite spec 0009 AC-6, AC-7, AC-9 (the sign in step on the portal routes)
 
 type Fn = jest.Mock<(...args: any[]) => any>;
 const fn = (): Fn => jest.fn<(...args: any[]) => any>();
@@ -24,10 +26,31 @@ const USER = {
   name: 'Mara',
   email: 'm@welinc.com',
   profilePicture: null,
+  emailVerified: true,
+};
+const STEP = {
+  status: 'EMAIL_VERIFICATION_REQUIRED',
+  challengeId: 'c'.repeat(43),
+  email: 'm@welinc.com',
+  resendAfter: 60,
 };
 
 function build(hits = 1) {
-  const auth = { checkCredentials: fn().mockResolvedValue({ user: USER }) };
+  const auth = {
+    checkCredentials: fn().mockResolvedValue({ user: USER }),
+    assertCanSignIn: fn().mockResolvedValue(USER),
+  };
+  const signInStep = {
+    start: fn().mockResolvedValue(STEP),
+    // Runs the precheck the way the real service does, then answers the user id
+    verify: fn().mockImplementation(
+      async (_c: string, _code: string, pre: (id: string) => Promise<void>) => {
+        await pre('u1');
+        return 'u1';
+      },
+    ),
+    resend: fn().mockResolvedValue({ resendAfter: 60 }),
+  };
   const sessions = {
     liveBySsoHandle: fn().mockResolvedValue({ id: 'sid', user: USER }),
     createWeb: fn().mockResolvedValue({
@@ -47,6 +70,7 @@ function build(hits = 1) {
     {} as TokenService,
     {} as PrismaService,
     launcher as unknown as LauncherService,
+    signInStep as unknown as SignInStepService,
     { ssoCookieSecure: false } as SessionSettings,
     storage,
   );
@@ -66,6 +90,7 @@ function build(hits = 1) {
     auth,
     sessions,
     launcher,
+    signInStep,
     storage,
     res,
     req,
@@ -236,5 +261,133 @@ describe('POST /auth/login', () => {
     ).toEqual([403, 'NO_SYSTEM_ACCESS']);
     expect(t.sessions.createWeb).not.toHaveBeenCalled();
     expect(t.cookie).not.toHaveBeenCalled();
+  });
+});
+
+describe('the sign in step (suite spec 0009)', () => {
+  const login = (t: ReturnType<typeof build>) =>
+    t.controller.login({ email: 'm@welinc.com', password: 'x' }, t.req, t.res);
+
+  // covers: AC-7
+  it('answers the step body for an unverified email, with no session and no cookie', async () => {
+    const t = build();
+    t.auth.checkCredentials.mockResolvedValue({
+      user: { ...USER, emailVerified: false },
+    });
+    expect(await login(t)).toBe(STEP);
+    expect(t.headers['Cache-Control']).toBe('no-store');
+    expect(t.signInStep.start).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'u1', email: 'm@welinc.com' }),
+    );
+    expect(t.sessions.createWeb).not.toHaveBeenCalled();
+    expect(t.cookie).not.toHaveBeenCalled();
+  });
+
+  // covers: AC-7 (the step comes after NO_SYSTEM_ACCESS: no code to someone without a system)
+  it('sends no code to someone with no system', async () => {
+    const t = build();
+    t.auth.checkCredentials.mockResolvedValue({
+      user: { ...USER, emailVerified: false },
+    });
+    t.launcher.answerFor.mockRejectedValue(
+      new HttpException({ code: 'NO_SYSTEM_ACCESS' }, 403),
+    );
+    expect(await refusal(login(t))).toEqual([403, 'NO_SYSTEM_ACCESS']);
+    expect(t.signInStep.start).not.toHaveBeenCalled();
+  });
+
+  it('never starts the step for a verified email', async () => {
+    const t = build();
+    await login(t);
+    expect(t.signInStep.start).not.toHaveBeenCalled();
+  });
+
+  // covers: AC-9 (step 2 then step 5: account and systems checked again, login finished the same way)
+  it('finishes a right code exactly as a login does', async () => {
+    const t = build();
+    const answer = await t.controller.verifyEmail(
+      { challengeId: STEP.challengeId, code: '123456' },
+      t.req,
+      t.res,
+    );
+    expect(answer).toBe(ANSWER);
+    expect(t.auth.assertCanSignIn).toHaveBeenCalledWith('u1');
+    expect(t.launcher.answerFor).toHaveBeenCalledWith(USER);
+    expect(t.sessions.createWeb).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'u1', previousHandle: 'h' }),
+    );
+    expect(t.cookie).toHaveBeenCalled();
+    expect(t.headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('creates no session when the account check refuses', async () => {
+    const t = build();
+    t.auth.assertCanSignIn.mockRejectedValue(
+      new HttpException({ code: 'ACCOUNT_LOCKED' }, 403),
+    );
+    expect(
+      await refusal(
+        t.controller.verifyEmail(
+          { challengeId: STEP.challengeId, code: '123456' },
+          t.req,
+          t.res,
+        ),
+      ),
+    ).toEqual([403, 'ACCOUNT_LOCKED']);
+    expect(t.sessions.createWeb).not.toHaveBeenCalled();
+  });
+
+  // covers: AC-6
+  it.each([
+    [
+      'verify',
+      (t: ReturnType<typeof build>) =>
+        t.controller.verifyEmail(
+          { challengeId: STEP.challengeId, code: '123456' },
+          t.req,
+          t.res,
+        ),
+    ],
+    [
+      'resend',
+      (t: ReturnType<typeof build>) =>
+        t.controller.resendEmailCode(
+          { challengeId: STEP.challengeId },
+          t.req,
+          t.res,
+        ),
+    ],
+  ])(
+    'counts %s per address as code-signin and refuses the 11th call',
+    async (_l, call) => {
+      const allowed = build(10);
+      await call(allowed);
+      expect(allowed.storage.increment).toHaveBeenCalledWith(
+        'code-signin:10.0.0.1',
+        60_000,
+        10,
+        0,
+        'code-signin',
+      );
+
+      const refused = build(11);
+      expect(await refusal(call(refused))).toEqual([429, 'RATE_LIMITED']);
+      expect(refused.headers['Retry-After']).toBe('42');
+      expect(refused.signInStep.verify).not.toHaveBeenCalled();
+      expect(refused.signInStep.resend).not.toHaveBeenCalled();
+    },
+  );
+
+  // covers: AC-10
+  it('resends on the same ticket', async () => {
+    const t = build();
+    expect(
+      await t.controller.resendEmailCode(
+        { challengeId: STEP.challengeId },
+        t.req,
+        t.res,
+      ),
+    ).toEqual({ resendAfter: 60 });
+    expect(t.signInStep.resend).toHaveBeenCalledWith(STEP.challengeId);
   });
 });

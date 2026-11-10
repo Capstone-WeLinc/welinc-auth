@@ -17,7 +17,16 @@ import {
 } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../shared/prisma.service';
-import { AuthService } from '../auth.service';
+import { AuthService, type SignInUser } from '../auth.service';
+import { countCodeCall } from '../codes/address-limit';
+import {
+  SignInStepService,
+  type EmailVerificationStep,
+} from '../codes/sign-in-step.service';
+import {
+  ResendSignInDto,
+  VerifySignInDto,
+} from '../dto/email-verification.dto';
 import { LoginDto } from '../dto/login.dto';
 import { coded } from '../errors';
 import { bearerToken } from '../guards/request-authenticator';
@@ -62,6 +71,7 @@ export class SsoController {
     private readonly tokens: TokenService,
     private readonly prisma: PrismaService,
     private readonly launcher: LauncherService,
+    private readonly signInStep: SignInStepService,
     @Inject(SESSION_SETTINGS) private readonly settings: SessionSettings,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
@@ -70,7 +80,8 @@ export class SsoController {
    * The portal login (spec 0003, AC-11; spec 0007, AC-3): checks the password, builds the
    * launcher answer, then creates a web session and sets `welinc_sso`. Never answers a token.
    * No usable system means 403 and no session. A browser that already holds an SSO session
-   * loses it first.
+   * loses it first. An unverified email gets the code step instead, last of all, so nobody
+   * without a system is sent a code (spec 0009, AC-7).
    */
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -79,7 +90,7 @@ export class SsoController {
     @Body() dto: LoginDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<LauncherAnswer> {
+  ): Promise<LauncherAnswer | EmailVerificationStep> {
     res.setHeader('Cache-Control', 'no-store');
     // Counted before the password check, so guessing passwords costs the same as a bad request
     const hit = await this.storage.increment(
@@ -102,6 +113,55 @@ export class SsoController {
     }
     const { user } = await this.auth.checkCredentials(dto);
     const answer = await this.launcher.answerFor(user);
+    if (!user.emailVerified) return this.signInStep.start(user);
+    return this.finishLogin(user, answer, req, res);
+  }
+
+  /**
+   * Spec 0009, AC-9: the sign in step's code. The ticket's row, then the account and its systems
+   * again (no try counted), then the code; a right one confirms the email and finishes the login
+   * exactly as `/auth/login` does. 10 calls a minute per address (AC-6).
+   */
+  @Post('login/verify-email')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PortalCsrfGuard)
+  async verifyEmail(
+    @Body() dto: VerifySignInDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<LauncherAnswer> {
+    res.setHeader('Cache-Control', 'no-store');
+    await countCodeCall(this.storage, 'code-signin', req, res);
+    let found: { user: SignInUser; answer: LauncherAnswer } | null = null;
+    await this.signInStep.verify(dto.challengeId, dto.code, async (userId) => {
+      const user = await this.auth.assertCanSignIn(userId);
+      found = { user, answer: await this.launcher.answerFor(user) };
+    });
+    const { user, answer } = found!;
+    return this.finishLogin(user, answer, req, res);
+  }
+
+  /** Spec 0009, AC-10: a new code on the same ticket. */
+  @Post('login/verify-email/resend')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PortalCsrfGuard)
+  async resendEmailCode(
+    @Body() dto: ResendSignInDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ resendAfter: number }> {
+    res.setHeader('Cache-Control', 'no-store');
+    await countCodeCall(this.storage, 'code-signin', req, res);
+    return this.signInStep.resend(dto.challengeId);
+  }
+
+  /** The one way a portal login ends (AC-9 step 5): a web session and the `welinc_sso` cookie. */
+  private async finishLogin(
+    user: SignInUser,
+    answer: LauncherAnswer,
+    req: Request,
+    res: Response,
+  ): Promise<LauncherAnswer> {
     const { session, handle } = await this.sessions.createWeb({
       userId: user.id,
       userAgent: req.headers['user-agent'] ?? null,

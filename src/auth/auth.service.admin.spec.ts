@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument -- the faked database is untyped on purpose */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument -- the faked database is untyped on purpose */
 import {
   describe,
   it,
@@ -15,7 +15,13 @@ import {
 } from '@nestjs/common';
 import { fakeConfig } from '../config/fake-config.setup';
 import type { TokenService } from './tokens/token.service';
-import { SystemType, UserChangeAction } from '@prisma/client';
+import {
+  SystemType,
+  UserChangeAction,
+  VerificationPurpose,
+} from '@prisma/client';
+import type { CodeService } from './codes/code.service';
+import { CodeSendLimitError, MailFailedError } from './codes/code-errors';
 import { FakeCatalogService } from './testing/catalog.fake';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
@@ -23,9 +29,10 @@ import { AuthService } from './auth.service';
 import { SessionService } from './sessions/session.service';
 import { encodeChangeCursor } from './user-changes';
 
-// Spec 0009: admin safety guards (AC-19), the change record (AC-20, AC-21),
-// reset and setup hardening (AC-16, AC-17, AC-18). The database, the mail
-// server and the config are the only things faked.
+// VRMS spec 0009: admin safety guards (AC-19), the change record (AC-20, AC-21).
+// Suite spec 0009: setup and reset codes through the code service (AC-12 to AC-15), and an
+// admin changing someone's email (AC-21). The database, the mail server, the config and the
+// code service are faked; the code service's own rules are in codes/code.service.spec.ts.
 
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -47,6 +54,7 @@ function managedRow(overrides: Record<string, unknown> = {}) {
     name: 'Pedro',
     email: 'pedro@welinc.com',
     emailVerified: true,
+    passwordSet: true,
     contact: null,
     profilePicture: null,
     isActive: true,
@@ -69,12 +77,6 @@ function build(env: Record<string, string | undefined> = {}) {
       count: fn(),
     },
     userChange: { create: fn(), createMany: fn(), findMany: fn() },
-    passwordResetToken: {
-      create: fn(),
-      updateMany: fn(),
-      findFirst: fn(),
-      update: fn(),
-    },
     $queryRaw: fn(),
     $transaction: fn(),
   };
@@ -88,9 +90,49 @@ function build(env: Record<string, string | undefined> = {}) {
   const sendMail = fn();
   sendMail.mockResolvedValue(undefined);
   const config = fakeConfig(env);
-  const sessions = {
-    endAllForUser: jest.fn(() => Promise.resolve(0)),
-  } as unknown as SessionService;
+  const endAllForUser = jest.fn<
+    (tx: unknown, userId: string, reason: string) => Promise<number>
+  >(() => Promise.resolve(0));
+  const sessions = { endAllForUser } as unknown as SessionService;
+  // The code service, faked: issue mails through sendMail (code 123456) like the real one, and
+  // throws MailFailedError when the mail fails; check answers a right code and runs onRight
+  const codes = {
+    issue: fn(),
+    check: fn(),
+    retireAll: fn(),
+    retire: fn(),
+    liveCode: fn(),
+  };
+  codes.issue.mockImplementation(
+    async (input: {
+      mail: { to: string; build: (code: string) => object };
+    }) => {
+      try {
+        await sendMail({ to: input.mail.to, ...input.mail.build('123456') });
+      } catch {
+        throw new MailFailedError();
+      }
+      return {
+        kind: 'sent',
+        id: 'code-1',
+        expiresAt: new Date(NOW.getTime() + 600_000),
+        resendAfter: 60,
+      };
+    },
+  );
+  const codeRow = {
+    id: 'code-1',
+    userId: USER_ID,
+    newEmail: null as string | null,
+  };
+  codes.check.mockImplementation(
+    async (input: { onRight?: (tx: unknown, row: unknown) => unknown }) => ({
+      kind: 'right',
+      row: codeRow,
+      value: await input.onRight?.(db, codeRow),
+    }),
+  );
+  codes.liveCode.mockResolvedValue(null);
   const service = new AuthService(
     db as unknown as PrismaService,
     {} as TokenService,
@@ -98,8 +140,9 @@ function build(env: Record<string, string | undefined> = {}) {
     config,
     sessions,
     new FakeCatalogService(),
+    codes as unknown as CodeService,
   );
-  return { service, db, sendMail, sessions };
+  return { service, db, sendMail, sessions, endAllForUser, codes, codeRow };
 }
 
 /**
@@ -357,6 +400,7 @@ describe('AuthService admin writes', () => {
       id: USER_ID,
       name: 'Pedro',
       email: 'pedro@welinc.com',
+      passwordSet: true,
       isActive: true,
       deletedAt: null,
       roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
@@ -613,20 +657,124 @@ describe('AuthService admin writes', () => {
       expect(db.userChange.create).not.toHaveBeenCalled();
     });
 
-    // covers: AC-20 (no password, hash or code is ever stored)
-    it('never copies a new password or its hash into a change row', async () => {
-      const { service, db } = arrange();
+    // Suite spec 0009, AC-21: an admin changing someone else's email
+    describe('email change', () => {
+      const NEW = 'pedro.new@welinc.com';
 
-      await service.updateUser(
-        USER_ID,
-        { name: 'Renamed', password: 'Sup3r-secret-pw!' },
-        actor,
-      );
+      it('refuses your own email with 409 SELF_EMAIL', async () => {
+        const { service, db } = arrange(existing({ id: ADMIN_ID }));
 
-      const stored = JSON.stringify(changesWritten(db));
-      expect(stored).not.toContain('Sup3r-secret-pw!');
-      expect(stored).not.toMatch(/argon2/i);
-      expect(stored.toLowerCase()).not.toContain('password');
+        await expect(
+          service.updateUser(ADMIN_ID, { email: NEW }, actor),
+        ).rejects.toMatchObject({ response: { code: 'SELF_EMAIL' } });
+        expect(db.user.update).not.toHaveBeenCalled();
+      });
+
+      it('answers 409 EMAIL_TAKEN when another account holds the address', async () => {
+        const { service, db } = arrange();
+        db.user.findFirst.mockResolvedValue({ id: 'someone-else' });
+
+        await expect(
+          service.updateUser(USER_ID, { email: NEW }, actor),
+        ).rejects.toMatchObject({ response: { code: 'EMAIL_TAKEN' } });
+        expect(db.user.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              email: { equals: NEW, mode: 'insensitive' },
+              id: { not: USER_ID },
+            },
+          }),
+        );
+        expect(db.user.update).not.toHaveBeenCalled();
+      });
+
+      it('answers 409 EMAIL_TAKEN from the unique index when a race wins', async () => {
+        const { service, db } = arrange();
+        db.user.update.mockRejectedValue({ code: 'P2002' });
+
+        await expect(
+          service.updateUser(USER_ID, { email: NEW }, actor),
+        ).rejects.toMatchObject({ response: { code: 'EMAIL_TAKEN' } });
+      });
+
+      it('sets emailVerified false and retires every live code in the same transaction', async () => {
+        const { service, db, codes } = arrange();
+
+        await service.updateUser(USER_ID, { email: NEW }, actor);
+
+        expect(db.user.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ email: NEW, emailVerified: false }),
+          }),
+        );
+        expect(codes.retireAll).toHaveBeenCalledWith(db, USER_ID);
+      });
+
+      it('tells the old address after the commit, naming the new one, and sends no code there', async () => {
+        const { service, db, sendMail, codes } = arrange();
+        db.user.update.mockResolvedValue(managedRow({ email: NEW }));
+
+        const result = await service.updateUser(USER_ID, { email: NEW }, actor);
+
+        expect(sendMail).toHaveBeenCalledTimes(1);
+        expect(sendMail.mock.calls[0][0]).toMatchObject({
+          to: 'pedro@welinc.com',
+          subject: expect.stringContaining('admin changed your email'),
+        });
+        expect(sendMail.mock.calls[0][0].text).toContain(NEW);
+        expect(codes.issue).not.toHaveBeenCalled();
+        expect(result).not.toHaveProperty('setupEmailSent');
+      });
+
+      it('sends a new setup code to the new address while setup is pending', async () => {
+        const { service, db, codes } = arrange(
+          existing({ passwordSet: false }),
+        );
+        db.user.update.mockResolvedValue(
+          managedRow({ email: NEW, passwordSet: false }),
+        );
+
+        const result = await service.updateUser(USER_ID, { email: NEW }, actor);
+
+        expect(codes.issue).toHaveBeenCalledWith(
+          expect.objectContaining({
+            userId: USER_ID,
+            purpose: VerificationPurpose.PASSWORD_SETUP,
+            mail: expect.objectContaining({ to: NEW }),
+          }),
+        );
+        expect(result).toMatchObject({ setupEmailSent: true });
+      });
+
+      it('answers setupEmailSent false when that send fails, and a failed notice is only logged', async () => {
+        const { service, db, sendMail } = arrange(
+          existing({ passwordSet: false }),
+        );
+        db.user.update.mockResolvedValue(
+          managedRow({ email: NEW, passwordSet: false }),
+        );
+        sendMail.mockRejectedValue(new Error('SMTP down'));
+        const logged = jest
+          .spyOn(Logger.prototype, 'error')
+          .mockImplementation(() => {});
+
+        const result = await service.updateUser(USER_ID, { email: NEW }, actor);
+
+        expect(result).toMatchObject({ setupEmailSent: false });
+        expect(JSON.stringify(logged.mock.calls)).not.toContain('pedro');
+        logged.mockRestore();
+      });
+
+      it('ignores a change of letter case only', async () => {
+        const { service, db, codes } = arrange();
+
+        await service.updateUser(USER_ID, { email: 'PEDRO@WELINC.COM' }, actor);
+
+        expect(db.user.update.mock.calls[0][0].data).not.toHaveProperty(
+          'email',
+        );
+        expect(codes.retireAll).not.toHaveBeenCalled();
+      });
     });
 
     it('answers 404 for a soft deleted user', async () => {
@@ -651,16 +799,24 @@ describe('AuthService admin writes', () => {
       return ctx;
     }
 
-    afterEach(() => jest.restoreAllMocks());
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
 
-    // covers: AC-18, AC-20
-    it('saves the user, records CREATED and reports the setup email as sent', async () => {
-      const { service, db, sendMail } = arrange();
+    // covers: VRMS AC-18, AC-20; suite AC-15
+    it('saves the user, records CREATED and sends a setup code', async () => {
+      const { service, db, codes } = arrange();
 
       const result = await service.createUser(dto, actor);
 
       expect(result).toMatchObject({ id: USER_ID, setupEmailSent: true });
-      expect(sendMail).toHaveBeenCalledTimes(1);
+      expect(codes.issue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: USER_ID,
+          purpose: VerificationPurpose.PASSWORD_SETUP,
+          mail: expect.objectContaining({ to: 'pedro@welinc.com' }),
+        }),
+      );
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
           userId: USER_ID,
@@ -668,6 +824,18 @@ describe('AuthService admin writes', () => {
           field: null,
         }),
       ]);
+    });
+
+    // Suite AC-15: nobody knows the password; both flags start false
+    it('starts with passwordSet and emailVerified false', async () => {
+      const { service, db } = arrange();
+
+      await service.createUser(dto, actor);
+
+      expect(db.user.create.mock.calls[0][0].data).toMatchObject({
+        passwordSet: false,
+        emailVerified: false,
+      });
     });
 
     it('trims the name and lowercases the email before saving', async () => {
@@ -685,43 +853,32 @@ describe('AuthService admin writes', () => {
       );
     });
 
-    // covers: AC-18
+    // covers: VRMS AC-18
     it('still answers with the saved user, setupEmailSent false, when the mail fails', async () => {
       const { service, sendMail } = arrange();
       sendMail.mockRejectedValue(new Error('SMTP down'));
-      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
 
       const result = await service.createUser(dto, actor);
 
       expect(result).toMatchObject({ id: USER_ID, setupEmailSent: false });
     });
 
-    // covers: AC-16, AC-18
-    it('logs a mail failure without the setup code', async () => {
-      const { service, sendMail } = arrange();
-      sendMail.mockRejectedValue(new Error('SMTP down'));
-      const logged = jest
-        .spyOn(Logger.prototype, 'error')
-        .mockImplementation(() => {});
+    // Suite AC-5: a send the limits refuse is not an error here
+    it('answers setupEmailSent false when the send limits refuse it', async () => {
+      const { service, codes } = arrange();
+      codes.issue.mockResolvedValue({ kind: 'limited', retryAfter: 30 });
 
-      await service.createUser(dto, actor);
+      const result = await service.createUser(dto, actor);
 
-      const mailed = sendMail.mock.calls[0][0].text as string;
-      const code = /Setup Code: (\d{6})/.exec(mailed)![1];
-      expect(logged).toHaveBeenCalledTimes(1);
-      expect(JSON.stringify(logged.mock.calls)).not.toContain(code);
+      expect(result).toMatchObject({ setupEmailSent: false });
     });
 
-    it('does not report a sent email when an admin set the password directly', async () => {
-      const { service, sendMail } = arrange();
+    it('creates an inactive user with a setup code too', async () => {
+      const { service, codes } = arrange();
 
-      const result = await service.createUser(
-        { ...dto, password: 'Str0ng-pass-phrase!' },
-        actor,
-      );
+      await service.createUser({ ...dto, isActive: false }, actor);
 
-      expect(sendMail).not.toHaveBeenCalled();
-      expect(result.setupEmailSent).toBe(false);
+      expect(codes.issue).toHaveBeenCalledTimes(1);
     });
 
     it('answers 409 when the email already exists', async () => {
@@ -752,6 +909,7 @@ describe('AuthService password links and reset', () => {
       id: USER_ID,
       name: 'Pedro',
       email: 'pedro@welinc.com',
+      passwordSet: true,
       isActive: true,
       deletedAt: null,
       roles: [{ system: SystemType.VRMS }],
@@ -784,12 +942,14 @@ describe('AuthService password links and reset', () => {
     // PORTAL_URL being required (no localhost fallback) is the boot check's job: env.spec.ts
   });
 
+  // Suite spec 0009, AC-13
   describe('forgotPassword', () => {
     const MESSAGE = 'If that email is registered, an OTP has been sent.';
     const target = (overrides: Record<string, unknown> = {}) => ({
       id: USER_ID,
       name: 'Pedro',
       email: 'pedro@welinc.com',
+      passwordSet: true,
       isActive: true,
       deletedAt: null,
       roles: [{ system: SystemType.VRMS }],
@@ -801,9 +961,6 @@ describe('AuthService password links and reset', () => {
       roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
     };
 
-    afterEach(() => jest.restoreAllMocks());
-
-    // covers: AC-17
     it.each([
       ['an unknown email', null],
       ['an inactive user', target({ isActive: false })],
@@ -811,87 +968,56 @@ describe('AuthService password links and reset', () => {
     ])(
       'sends nothing and gives the same generic answer for %s',
       async (_l, row) => {
-        const { service, db, sendMail } = build();
+        const { service, db, codes } = build();
         db.user.findUnique.mockResolvedValue(row);
 
         const result = await service.forgotPassword('pedro@welinc.com');
 
         expect(result).toEqual({ message: MESSAGE });
-        expect(sendMail).not.toHaveBeenCalled();
-        expect(db.passwordResetToken.create).not.toHaveBeenCalled();
+        expect(codes.issue).not.toHaveBeenCalled();
       },
     );
 
-    it('answers an active user with the very same message', async () => {
+    it('looks the address up lowercased', async () => {
       const { service, db } = build();
+      db.user.findUnique.mockResolvedValue(null);
+
+      await service.forgotPassword(' Pedro@WeLinc.com ');
+
+      expect(db.user.findUnique.mock.calls[0][0].where).toEqual({
+        email: 'pedro@welinc.com',
+      });
+    });
+
+    it('answers an active user with the very same message and a reset code', async () => {
+      const { service, db, codes } = build();
       db.user.findUnique.mockResolvedValue(target());
 
       const result = await service.forgotPassword('pedro@welinc.com');
 
       expect(result).toEqual({ message: MESSAGE });
+      expect(codes.issue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: USER_ID,
+          purpose: VerificationPurpose.PASSWORD_RESET,
+        }),
+      );
     });
 
-    // covers: AC-17
-    it('retires the older unused codes before it issues the new one', async () => {
-      const { service, db } = build();
-      db.user.findUnique.mockResolvedValue(target());
-      const order: string[] = [];
-      db.passwordResetToken.updateMany.mockImplementation(() => {
-        order.push('retire');
-        return Promise.resolve({ count: 1 });
-      });
-      db.passwordResetToken.create.mockImplementation(() => {
-        order.push('create');
-        return Promise.resolve({});
-      });
+    it('sends a setup code, with setup wording, while setup is pending', async () => {
+      const { service, db, codes, sendMail } = build();
+      db.user.findUnique.mockResolvedValue(target({ passwordSet: false }));
 
       await service.forgotPassword('pedro@welinc.com');
 
-      expect(db.passwordResetToken.updateMany).toHaveBeenCalledWith({
-        where: { userId: USER_ID, usedAt: null },
-        data: { usedAt: expect.any(Date) },
+      expect(codes.issue.mock.calls[0][0]).toMatchObject({
+        purpose: VerificationPurpose.PASSWORD_SETUP,
       });
-      expect(order).toEqual(['retire', 'create']);
+      expect(sendMail.mock.calls[0][0].subject).toContain('Account Setup');
+      expect(sendMail.mock.calls[0][0].text).toContain('1 hour');
     });
 
-    it('issues a six digit code that expires in about ten minutes', async () => {
-      const { service, db } = build();
-      db.user.findUnique.mockResolvedValue(target());
-      jest.useFakeTimers().setSystemTime(NOW);
-
-      await service.forgotPassword('pedro@welinc.com');
-      jest.useRealTimers();
-
-      const { data } = db.passwordResetToken.create.mock.calls[0][0];
-      expect(data.otp).toMatch(/^\d{6}$/);
-      expect(data.expiresAt.getTime() - NOW.getTime()).toBe(10 * 60 * 1000);
-    });
-
-    // covers: AC-16
-    it('never writes the code to the console or the logger', async () => {
-      const { service, db, sendMail } = build();
-      db.user.findUnique.mockResolvedValue(target());
-      const log = jest.spyOn(console, 'log').mockImplementation(() => {});
-      const info = jest.spyOn(console, 'info').mockImplementation(() => {});
-      const loggerLog = jest
-        .spyOn(Logger.prototype, 'log')
-        .mockImplementation(() => {});
-
-      await service.forgotPassword('pedro@welinc.com');
-
-      const code = /Reset Code: (\d{6})/.exec(
-        sendMail.mock.calls[0][0].text as string,
-      )![1];
-      const everything = JSON.stringify([
-        log.mock.calls,
-        info.mock.calls,
-        loggerLog.mock.calls,
-      ]);
-      expect(everything).not.toContain(code);
-    });
-
-    // covers: AC-20
-    it("records RESET_SENT when an admin of the user's system asked for it", async () => {
+    it("records RESET_SENT after a successful send by an admin of the user's system", async () => {
       const { service, db } = build();
       db.user.findUnique.mockResolvedValue(target());
 
@@ -932,55 +1058,95 @@ describe('AuthService password links and reset', () => {
       expect(changesWritten(db)).toEqual([]);
     });
 
-    it('does not fail the request when the mail cannot be sent', async () => {
-      const { service, db, sendMail } = build();
+    it('gives the public the generic answer inside the wait', async () => {
+      const { service, db, codes } = build();
       db.user.findUnique.mockResolvedValue(target());
-      sendMail.mockRejectedValue(new Error('SMTP down'));
-      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      codes.issue.mockResolvedValue({ kind: 'limited', retryAfter: 42 });
 
       await expect(service.forgotPassword('pedro@welinc.com')).resolves.toEqual(
         { message: MESSAGE },
       );
     });
-  });
 
-  describe('otpResetPassword', () => {
-    // covers: AC-17
-    it('clears the lock and the failed attempts when the code is completed', async () => {
-      const { service, db } = build();
-      db.user.findUnique.mockResolvedValue({ id: USER_ID });
-      db.passwordResetToken.findFirst.mockResolvedValue({
-        id: 'token-1',
-        otp: '123456',
-      });
+    it('answers an admin CODE_SEND_LIMIT inside the wait, and records nothing', async () => {
+      const { service, db, codes } = build();
+      db.user.findUnique.mockResolvedValue(target());
+      codes.issue.mockResolvedValue({ kind: 'limited', retryAfter: 42 });
 
-      await service.otpResetPassword(
-        'pedro@welinc.com',
-        '123456',
-        'N3w-password-here!',
-      );
-
-      expect(db.user.update).toHaveBeenCalledWith({
-        where: { id: USER_ID },
-        data: expect.objectContaining({
-          lockedAt: null,
-          failedLoginAttempts: 0,
-          emailVerified: true,
-        }),
-      });
-      expect(db.passwordResetToken.update).toHaveBeenCalledWith({
-        where: { id: 'token-1' },
-        data: { usedAt: expect.any(Date) },
-      });
+      await expect(
+        service.forgotPassword('pedro@welinc.com', vrmsAdmin),
+      ).rejects.toEqual(new CodeSendLimitError(42));
+      expect(changesWritten(db)).toEqual([]);
     });
 
-    it('rejects a wrong code and changes nothing', async () => {
-      const { service, db } = build();
-      db.user.findUnique.mockResolvedValue({ id: USER_ID });
-      db.passwordResetToken.findFirst.mockResolvedValue({
-        id: 'token-1',
-        otp: '123456',
+    it('does not fail a public request when the mail cannot be sent', async () => {
+      const { service, db, sendMail } = build();
+      db.user.findUnique.mockResolvedValue(target());
+      sendMail.mockRejectedValue(new Error('SMTP down'));
+
+      await expect(service.forgotPassword('pedro@welinc.com')).resolves.toEqual(
+        { message: MESSAGE },
+      );
+    });
+
+    it('tells an admin the mail failed, and records nothing', async () => {
+      const { service, db, sendMail } = build();
+      db.user.findUnique.mockResolvedValue(target());
+      sendMail.mockRejectedValue(new Error('SMTP down'));
+
+      await expect(
+        service.forgotPassword('pedro@welinc.com', vrmsAdmin),
+      ).rejects.toBeInstanceOf(MailFailedError);
+      expect(changesWritten(db)).toEqual([]);
+    });
+  });
+
+  // Suite spec 0009, AC-12, AC-14
+  describe('verifyOtp and otpResetPassword', () => {
+    it('checks the live setup or reset code without using it up', async () => {
+      const { service, db, codes } = build();
+      db.user.findFirst.mockResolvedValue({ id: USER_ID });
+
+      await expect(
+        service.verifyOtp('pedro@welinc.com', '123456'),
+      ).resolves.toEqual({ message: 'OTP is valid' });
+      expect(codes.check).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: {
+            userId: USER_ID,
+            purposes: [
+              VerificationPurpose.PASSWORD_SETUP,
+              VerificationPurpose.PASSWORD_RESET,
+            ],
+          },
+          code: '123456',
+          consume: false,
+        }),
+      );
+    });
+
+    it('acts only on an active, not deleted user', async () => {
+      const { service, db, codes } = build();
+      db.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.verifyOtp('pedro@welinc.com', '123456'),
+      ).rejects.toThrow('Invalid or expired OTP');
+      expect(db.user.findFirst.mock.calls[0][0].where).toEqual({
+        email: 'pedro@welinc.com',
+        isActive: true,
+        deletedAt: null,
       });
+      expect(codes.check).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a wrong code', { kind: 'wrong', attemptsLeft: 3 }],
+      ['a dead code', { kind: 'dead', reason: 'tries' }],
+    ])('keeps the old message for %s', async (_l, answer) => {
+      const { service, db, codes } = build();
+      db.user.findFirst.mockResolvedValue({ id: USER_ID });
+      codes.check.mockResolvedValue(answer);
 
       await expect(
         service.otpResetPassword('pedro@welinc.com', '000000', 'N3w-password!'),
@@ -988,22 +1154,32 @@ describe('AuthService password links and reset', () => {
       expect(db.user.update).not.toHaveBeenCalled();
     });
 
-    it('only looks at unused, unexpired codes, newest first', async () => {
-      const { service, db } = build();
-      db.user.findUnique.mockResolvedValue({ id: USER_ID });
-      db.passwordResetToken.findFirst.mockResolvedValue(null);
+    it('sets the password, confirms the email, marks it set, unlocks and ends every session', async () => {
+      const { service, db, codes, endAllForUser } = build();
+      db.user.findFirst.mockResolvedValue({ id: USER_ID });
 
-      await expect(
-        service.otpResetPassword('pedro@welinc.com', '123456', 'N3w-password!'),
-      ).rejects.toThrow('Invalid or expired OTP');
-      expect(db.passwordResetToken.findFirst).toHaveBeenCalledWith({
-        where: {
-          userId: USER_ID,
-          usedAt: null,
-          expiresAt: { gt: expect.any(Date) },
-        },
-        orderBy: { createdAt: 'desc' },
+      await service.otpResetPassword(
+        'pedro@welinc.com',
+        '123456',
+        'N3w-password-here!',
+      );
+
+      expect(codes.check.mock.calls[0][0]).toMatchObject({ consume: true });
+      expect(db.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: expect.objectContaining({
+          lockedAt: null,
+          failedLoginAttempts: 0,
+          emailVerified: true,
+          passwordSet: true,
+          passwordHash: expect.stringMatching(/^\$argon2/),
+        }),
       });
+      expect(endAllForUser).toHaveBeenCalledWith(
+        expect.anything(),
+        USER_ID,
+        'PASSWORD_CHANGED',
+      );
     });
   });
 });

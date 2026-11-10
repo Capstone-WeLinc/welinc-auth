@@ -10,18 +10,23 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  InjectThrottlerStorage,
+  type ThrottlerStorage,
+} from '@nestjs/throttler';
 import { SystemType } from '@prisma/client';
+import type { Request, Response } from 'express';
 import { AuthService, type OptionalCaller } from './auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
 import { LookupUsersQueryDto } from './dto/lookup-users.query.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SetUserStatusDto } from './dto/set-user-status.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -30,6 +35,11 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ListChangesQueryDto } from './dto/list-changes.query.dto';
+import {
+  StartEmailChangeDto,
+  VerifyEmailChangeDto,
+} from './dto/email-verification.dto';
+import { countCodeCall } from './codes/address-limit';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { SystemAdmin } from './decorators/system-admin.decorator';
@@ -50,28 +60,44 @@ const actorOf = (req: AdminRequest) => ({
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
+  ) {}
 
-  // Public; an admin's token, when sent, records the reset as theirs (spec 0009, AC-20)
+  // Public; an admin's token, when sent, records the reset as theirs and sees the send limits
+  // (spec 0009, AC-13). 10 calls a minute per address on all three code routes (AC-6).
   @UseGuards(OptionalJwtAuthGuard)
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   async forgotPassword(
     @Body() dto: ForgotPasswordDto,
-    @Req() req: { user?: OptionalCaller },
+    @Req() req: Request & { user?: OptionalCaller },
+    @Res({ passthrough: true }) res: Response,
   ) {
+    await countCodeCall(this.storage, 'code-public', req, res);
     return this.authService.forgotPassword(dto.email, req.user ?? null);
   }
 
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
-  async verifyOtp(@Body() dto: VerifyOtpDto) {
+  async verifyOtp(
+    @Body() dto: VerifyOtpDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await countCodeCall(this.storage, 'code-public', req, res);
     return this.authService.verifyOtp(dto.email, dto.otp);
   }
 
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
-  async resetPasswordOtp(@Body() dto: OtpResetPasswordDto) {
+  async resetPasswordOtp(
+    @Body() dto: OtpResetPasswordDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await countCodeCall(this.storage, 'code-public', req, res);
     return this.authService.otpResetPassword(
       dto.email,
       dto.otp,
@@ -143,16 +169,6 @@ export class AuthController {
   }
 
   @SystemAdmin()
-  @Patch('users/:id/password')
-  resetPassword(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: ResetPasswordDto,
-    @Req() req: AdminRequest,
-  ) {
-    return this.authService.resetPassword(id, dto, actorOf(req));
-  }
-
-  @SystemAdmin()
   @Patch('users/:id/unlock')
   unlockUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
     return this.authService.unlockUser(id, actorOf(req));
@@ -165,6 +181,34 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.authService.updateOwnProfile(req.user.sub, dto);
+  }
+
+  // Spec 0009, AC-17 to AC-19: your own email changes only after the new address is confirmed
+  @UseGuards(JwtAuthGuard)
+  @Post('profile/email')
+  @HttpCode(HttpStatus.OK)
+  startEmailChange(
+    @Req() req: { user: { sub: string } },
+    @Body() dto: StartEmailChangeDto,
+  ) {
+    return this.authService.startEmailChange(req.user.sub, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('profile/email/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyEmailChange(
+    @Req() req: { user: { sub: string } },
+    @Body() dto: VerifyEmailChangeDto,
+  ) {
+    return this.authService.verifyEmailChange(req.user.sub, dto.code);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('profile/email')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  cancelEmailChange(@Req() req: { user: { sub: string } }) {
+    return this.authService.cancelEmailChange(req.user.sub);
   }
 
   @UseGuards(JwtAuthGuard)

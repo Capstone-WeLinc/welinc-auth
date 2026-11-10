@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -19,6 +20,7 @@ import {
   SessionEndReason,
   SystemType,
   UserChangeAction,
+  VerificationPurpose,
 } from '@prisma/client';
 import { PrismaService } from '../shared/prisma.service';
 import { CatalogService, holdsAdmin } from './roles/catalog.service';
@@ -29,13 +31,29 @@ import { MailService } from '../shared/mail.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
 import { LoginDto } from './dto/login.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SetUserStatusDto } from './dto/set-user-status.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { RoleAssignmentDto } from './dto/role-assignment.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ListChangesQueryDto } from './dto/list-changes.query.dto';
+import { StartEmailChangeDto } from './dto/email-verification.dto';
+import { coded } from './errors';
+import { CodeService, type CheckResult } from './codes/code.service';
+import {
+  CodeSendLimitError,
+  MailFailedError,
+  codeExpired,
+  invalidCode,
+} from './codes/code-errors';
+import {
+  adminChangedEmailEmail,
+  emailChangeCodeEmail,
+  emailChangeStartedEmail,
+  emailChangedEmail,
+  passwordCodeEmail,
+  type Email,
+} from './codes/code-emails';
 import {
   SELF_DEACTIVATE,
   SELF_DELETE,
@@ -60,10 +78,36 @@ import {
   replaceSystemRoles,
 } from './user-scope';
 
-/** A 6 digit setup or reset code from a secure random source (never `Math.random`). */
-export function newOtp(): string {
-  return crypto.randomInt(100_000, 1_000_000).toString();
-}
+export { newOtp } from './codes/code.service';
+
+/** The password family: setup and reset codes (spec 0009, AC-2). */
+const PASSWORD_CODES = [
+  VerificationPurpose.PASSWORD_SETUP,
+  VerificationPurpose.PASSWORD_RESET,
+] as const;
+const EMAIL_CHANGE = [VerificationPurpose.EMAIL_CHANGE] as const;
+
+/** AC-17, AC-21: an address another account holds (deleted accounts included). */
+const emailTaken = () =>
+  coded(
+    HttpStatus.CONFLICT,
+    'EMAIL_TAKEN',
+    'Another account already uses this email',
+  );
+
+const isUniqueViolation = (error: unknown) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  (error as { code?: string }).code === 'P2002';
+
+const accountLocked = () =>
+  new ForbiddenException({
+    code: 'ACCOUNT_LOCKED',
+    message: 'Account is locked. Contact your Admin to unlock.',
+    remainingAttempts: 0,
+    isLocked: true,
+  });
 
 /** Domains a development machine accepts without a DNS lookup. */
 export const DEV_EMAIL_DOMAINS = [
@@ -120,6 +164,7 @@ const MANAGED_USER_SELECT = {
   name: true,
   email: true,
   emailVerified: true,
+  passwordSet: true,
   contact: true,
   profilePicture: true,
   isActive: true,
@@ -141,6 +186,7 @@ type ManagedUserRecord = {
   name: string;
   email: string;
   emailVerified: boolean;
+  passwordSet: boolean;
   contact: string | null;
   profilePicture: string | null;
   isActive: boolean;
@@ -148,6 +194,14 @@ type ManagedUserRecord = {
   createdAt: Date;
   updatedAt: Date;
   roles: RoleAssignment[];
+};
+
+/** The person a login finishes for (the launcher answer and the session). */
+export type SignInUser = {
+  id: string;
+  name: string;
+  email: string;
+  profilePicture: string | null;
 };
 
 export type AuthUserResponse = {
@@ -164,6 +218,8 @@ export type ManagedUserResponse = {
   name: string;
   email: string;
   emailVerified: boolean;
+  /** Spec 0009, AC-22: false while setup is pending. */
+  passwordSet: boolean;
   contact: string | null;
   profilePicture: string | null;
   isActive: boolean;
@@ -202,6 +258,7 @@ export class AuthService {
     config: ConfigService<Env, true>,
     private readonly sessions: SessionService,
     private readonly catalog: CatalogService,
+    private readonly codes: CodeService,
   ) {
     // PORTAL_URL is required and checked at boot (spec 0010)
     const portalUrl = config.get('PORTAL_URL', { infer: true });
@@ -215,12 +272,7 @@ export class AuthService {
    * launcher answer, spec 0007; the mobile grant, spec 0004).
    */
   async checkCredentials(dto: Pick<LoginDto, 'email' | 'password'>): Promise<{
-    user: {
-      id: string;
-      name: string;
-      email: string;
-      profilePicture: string | null;
-    };
+    user: SignInUser & { emailVerified: boolean };
   }> {
     // TODO: Transparent migration — if passwordHash starts with '$2b$' (bcrypt),
     // verify with bcrypt first, re-hash with argon2, then save. Requires bcrypt as
@@ -234,6 +286,7 @@ export class AuthService {
         email: true,
         contact: true,
         profilePicture: true,
+        emailVerified: true,
         passwordHash: true,
         isActive: true,
         failedLoginAttempts: true,
@@ -254,12 +307,7 @@ export class AuthService {
 
     // Locked account check — must happen before password validation
     if (user.lockedAt !== null) {
-      throw new ForbiddenException({
-        code: 'ACCOUNT_LOCKED',
-        message: 'Account is locked. Contact your Admin to unlock.',
-        remainingAttempts: 0,
-        isLocked: true,
-      });
+      throw accountLocked();
     }
 
     // Deactivated account
@@ -285,12 +333,7 @@ export class AuthService {
       });
 
       if (shouldLock) {
-        throw new ForbiddenException({
-          code: 'ACCOUNT_LOCKED',
-          message: 'Account is locked. Contact your Admin to unlock.',
-          remainingAttempts: 0,
-          isLocked: true,
-        });
+        throw accountLocked();
       }
 
       throw new UnauthorizedException({
@@ -312,7 +355,35 @@ export class AuthService {
         name: user.name,
         email: user.email,
         profilePicture: user.profilePicture,
+        emailVerified: user.emailVerified,
       },
+    };
+  }
+
+  /**
+   * Spec 0009, AC-9 step (2): the account checks `/auth/login` makes, without a password and
+   * without counting anything. Locked: 403 `ACCOUNT_LOCKED`; deactivated or deleted: 401.
+   */
+  async assertCanSignIn(userId: string): Promise<SignInUser> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        profilePicture: true,
+        isActive: true,
+        lockedAt: true,
+      },
+    });
+    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (user.lockedAt !== null) throw accountLocked();
+    if (!user.isActive) throw new UnauthorizedException('Invalid credentials');
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      profilePicture: user.profilePicture,
     };
   }
 
@@ -461,16 +532,10 @@ export class AuthService {
 
     await validateEmailDomain(dto.email, this.production);
 
-    let passwordHash: string;
-    let setupOtp: string | null = null;
-
-    if (dto.password) {
-      passwordHash = await argon2.hash(dto.password);
-    } else {
-      const tempPassword = crypto.randomBytes(32).toString('hex');
-      passwordHash = await argon2.hash(tempPassword);
-      setupOtp = newOtp();
-    }
+    // Nobody knows this password: the setup code is the only way in (spec 0009, AC-15)
+    const passwordHash = await argon2.hash(
+      crypto.randomBytes(32).toString('hex'),
+    );
 
     let user: Prisma.UserGetPayload<{ select: typeof MANAGED_USER_SELECT }>;
     try {
@@ -480,6 +545,9 @@ export class AuthService {
             name: dto.name.trim(),
             email: dto.email.trim().toLowerCase(),
             passwordHash,
+            // AC-15: both start false; using the setup code turns them true (AC-12)
+            passwordSet: false,
+            emailVerified: false,
             isActive: dto.isActive ?? true,
             roles: {
               create: roleAssignments,
@@ -487,16 +555,6 @@ export class AuthService {
           },
           select: MANAGED_USER_SELECT,
         });
-
-        if (setupOtp) {
-          await tx.passwordResetToken.create({
-            data: {
-              userId: created.id,
-              otp: setupOtp,
-              expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000), // 1 hour
-            },
-          });
-        }
 
         await tx.userChange.create({
           data: change(created.id, actor, UserChangeAction.CREATED),
@@ -507,33 +565,75 @@ export class AuthService {
       this.handlePrismaError(error);
     }
 
-    // The user is saved: a mail failure only sets setupEmailSent to false (AC-18)
-    const setupEmailSent = setupOtp
-      ? await this.trySendMail('setup', {
-          to: user.email,
-          subject: 'WeLinc Logistics - Account Setup',
-          text: `Welcome to WeLinc Logistics, ${user.name}!
-
-Your account has been created by the administrator.
-To set up your password, please use the following one-time code:
-
-Setup Code: ${setupOtp}
-
-Please visit the link below to set up your password:
-${this.passwordLink}
-
-This code will expire in 1 hour.`,
-          html: `<p>Welcome to WeLinc Logistics, <strong>${user.name}</strong>!</p>
-<p>Your account has been created by the administrator.</p>
-<p>To set up your password, please use the following one-time code:</p>
-<h2 style="font-size: 24px; font-weight: bold; color: #1a1f6e; letter-spacing: 2px;">${setupOtp}</h2>
-<p>Please visit the link below to set up your password:</p>
-<p><a href="${this.passwordLink}" style="color: #1a1f6e; font-weight: bold; text-decoration: underline;">Set up your password</a></p>
-<p>This code will expire in 1 hour.</p>`,
-        })
-      : false;
+    // The user is saved: a failed or refused send only sets setupEmailSent to false. An inactive
+    // user's code works once an admin activates them, while it lives (AC-15).
+    const setupEmailSent = await this.trySendPasswordCode(
+      user,
+      VerificationPurpose.PASSWORD_SETUP,
+    );
 
     return { ...this.mapScopedUser(user, actor.system), setupEmailSent };
+  }
+
+  /**
+   * Issues a setup or reset code and emails it. True when sent; false when the limits refused it
+   * or the email failed (both already logged without the address).
+   */
+  private async trySendPasswordCode(
+    user: { id: string; name: string; email: string },
+    purpose:
+      | typeof VerificationPurpose.PASSWORD_SETUP
+      | typeof VerificationPurpose.PASSWORD_RESET,
+  ): Promise<boolean> {
+    try {
+      const result = await this.issuePasswordCode(user, purpose);
+      return result.kind === 'sent';
+    } catch (error) {
+      if (error instanceof MailFailedError) return false;
+      throw error;
+    }
+  }
+
+  private issuePasswordCode(
+    user: { id: string; name: string; email: string },
+    purpose:
+      | typeof VerificationPurpose.PASSWORD_SETUP
+      | typeof VerificationPurpose.PASSWORD_RESET,
+  ) {
+    return this.codes.issue({
+      userId: user.id,
+      purpose,
+      mail: {
+        to: user.email,
+        build: (code) =>
+          passwordCodeEmail({
+            purpose,
+            name: user.name,
+            code,
+            link: this.passwordLink,
+          }),
+      },
+    });
+  }
+
+  /** A notice email (AC-24). A failure is only logged, without the address. */
+  private async notify(
+    userId: string,
+    kind: string,
+    to: string,
+    email: Email,
+  ): Promise<void> {
+    try {
+      await this.mailService.sendMail({
+        to,
+        ...email,
+        tag: `user=${userId} purpose=${kind}`,
+      });
+    } catch (error) {
+      this.logger.error(
+        `notice email failed user=${userId} purpose=${kind}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
   }
 
   /** Active, not deleted, and not in `system` yet: the only accounts create may attach to. */
@@ -601,11 +701,12 @@ This code will expire in 1 hour.`,
     userId: string,
     dto: UpdateUserDto,
     actor: AdminCaller,
-  ): Promise<ScopedUserResponse> {
+  ): Promise<ScopedUserResponse & { setupEmailSent?: boolean }> {
     const userSelect = {
       id: true,
       name: true,
       email: true,
+      passwordSet: true,
       isActive: true,
       deletedAt: true,
       roles: {
@@ -616,7 +717,7 @@ This code will expire in 1 hour.`,
       },
     } satisfies Prisma.UserSelect;
 
-    // Outside the transaction: only the early 404 and the slow work (DNS and the password hash).
+    // Outside the transaction: only the early 404 and the slow work (the DNS lookup).
     // Every decision about what changes is made from a fresh read inside the transaction below.
     const current = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -637,16 +738,23 @@ This code will expire in 1 hour.`,
       await this.catalog.assertRoleRules(requestedRoles, actor.system);
     }
 
+    // A change of letter case only is no change (spec 0009, AC-21)
     const newEmail = dto.email?.trim().toLowerCase();
-    if (dto.email && newEmail && newEmail !== current.email.toLowerCase()) {
-      await validateEmailDomain(dto.email, this.production);
+    if (newEmail && newEmail !== current.email.toLowerCase()) {
+      // Your own email goes through /auth/profile/email, with a code (AC-21)
+      if (actor.id === userId) {
+        throw coded(
+          HttpStatus.CONFLICT,
+          'SELF_EMAIL',
+          'Change your own email from your profile',
+        );
+      }
+      await validateEmailDomain(newEmail, this.production);
+      await this.assertEmailFree(newEmail, userId);
     }
-    const passwordHash = dto.password
-      ? await argon2.hash(dto.password)
-      : undefined;
 
     try {
-      const user = await this.prisma.$transaction(async (tx) => {
+      const { user, oldEmail } = await this.prisma.$transaction(async (tx) => {
         // Spec 0004, AC-13: lock the account, then read its roles again
         await lockAccount(tx, userId);
         const existingUser = await tx.user.findUnique({
@@ -663,7 +771,7 @@ This code will expire in 1 hour.`,
         );
         const admins = await this.catalog.adminRoles(tx);
         // Another system's admin keeps their own sign in details (spec 0011, AC-28)
-        if (isEmailChanging || passwordHash) {
+        if (isEmailChanging) {
           assertNotAdminElsewhere(existingUser.roles, actor.system, admins);
         }
         const isNameChanging = !!newName && newName !== existingUser.name;
@@ -706,8 +814,10 @@ This code will expire in 1 hour.`,
           where: { id: userId },
           data: {
             ...(isNameChanging ? { name: newName } : {}),
-            ...(isEmailChanging ? { email: newEmail } : {}),
-            ...(passwordHash ? { passwordHash } : {}),
+            // Confirmed at their next sign in (spec 0009, AC-21)
+            ...(isEmailChanging
+              ? { email: newEmail, emailVerified: false }
+              : {}),
             ...(isActiveChanging ? { isActive: dto.isActive } : {}),
             ...(areRolesChanging
               ? {
@@ -763,13 +873,48 @@ This code will expire in 1 hour.`,
         if (changes.length > 0) {
           await tx.userChange.createMany({ data: changes });
         }
-        return updated;
+        if (isEmailChanging) {
+          // AC-2: every live code of the user dies with the old address
+          await this.codes.retireAll(tx, userId);
+        }
+        return {
+          user: updated,
+          oldEmail: isEmailChanging ? existingUser.email : null,
+        };
       });
 
-      return this.mapScopedUser(user, actor.system);
+      const answer = this.mapScopedUser(user, actor.system);
+      if (oldEmail === null) return answer;
+
+      // After the commit (AC-21): tell the old address; a pending setup gets a fresh code
+      await this.notify(
+        userId,
+        'ADMIN_EMAIL_CHANGED',
+        oldEmail,
+        adminChangedEmailEmail({ name: user.name, newEmail: user.email }),
+      );
+      if (user.passwordSet) return answer;
+      const setupEmailSent = await this.trySendPasswordCode(
+        user,
+        VerificationPurpose.PASSWORD_SETUP,
+      );
+      return { ...answer, setupEmailSent };
     } catch (error) {
+      if (isUniqueViolation(error)) throw emailTaken();
       this.handlePrismaError(error);
     }
+  }
+
+  /** 409 `EMAIL_TAKEN` when another account, deleted ones included, holds the address (AC-17, AC-21). */
+  private async assertEmailFree(email: string, userId: string): Promise<void> {
+    const holder = await this.prisma.user.findFirst({
+      where: {
+        email: { equals: email, mode: 'insensitive' },
+        id: { not: userId },
+      },
+      select: { id: true },
+    });
+    if (holder) throw emailTaken();
   }
 
   async updateUserStatus(
@@ -880,59 +1025,22 @@ This code will expire in 1 hour.`,
   }
 
   /**
-   * Admin-only: reset a user's password by userId.
-   */
-  async resetPassword(
-    userId: string,
-    dto: ResetPasswordDto,
-    actor: AdminCaller,
-  ): Promise<ScopedUserResponse> {
-    const existing = await this.prisma.user.findFirst({
-      where: { id: userId, deletedAt: null },
-      select: { roles: { select: { role: true, system: true } } },
-    });
-    assertInSystem(existing, actor.system);
-    assertNotAdminElsewhere(
-      existing.roles,
-      actor.system,
-      await this.catalog.adminRoles(),
-    );
-
-    const passwordHash = await argon2.hash(dto.password);
-    const user = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: userId },
-        data: { passwordHash, failedLoginAttempts: 0, lockedAt: null },
-        select: MANAGED_USER_SELECT,
-      });
-      // Spec 0003 AC-4: an admin password set ends every session of the user
-      await this.sessions.endAllForUser(
-        tx,
-        userId,
-        SessionEndReason.PASSWORD_CHANGED,
-        { endedById: actor.id },
-      );
-      return updated;
-    });
-
-    return this.mapScopedUser(user, actor.system);
-  }
-
-  /**
-   * Public. Sends nothing to an unknown, inactive or deleted user, with the same answer either way.
-   * A new code retires the user's older unused ones. Sent by an admin of one of the user's systems,
-   * it is recorded as RESET_SENT (spec 0009, AC-17, AC-20).
+   * Public (spec 0009, AC-13). Sends nothing to an unknown, inactive or deleted user, and answers
+   * the same message either way, also inside the wait or over the limit. An admin of one of the
+   * user's systems instead gets 429 `CODE_SEND_LIMIT` or 503 `MAIL_FAILED`, and the send is
+   * recorded as RESET_SENT once it succeeded. A setup code goes out while setup is pending.
    */
   async forgotPassword(
     email: string,
     caller: OptionalCaller = null,
   ): Promise<{ message: string }> {
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: email.trim().toLowerCase() },
       select: {
         id: true,
         name: true,
         email: true,
+        passwordSet: true,
         isActive: true,
         deletedAt: true,
         roles: { select: { system: true } },
@@ -944,8 +1052,6 @@ This code will expire in 1 hour.`,
       return { message: FORGOT_PASSWORD_MESSAGE };
     }
 
-    const otp = newOtp();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     const admins = caller ? await this.catalog.adminRoles() : null;
     const admin =
       caller &&
@@ -956,131 +1062,105 @@ This code will expire in 1 hour.`,
         ? { id: caller.sub, email: caller.email }
         : null;
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.passwordResetToken.updateMany({
-        where: { userId: user.id, usedAt: null },
-        data: { usedAt: new Date() },
-      });
-      await tx.passwordResetToken.create({
-        data: {
-          userId: user.id,
-          otp,
-          expiresAt,
-        },
-      });
-      if (admin) {
-        await tx.userChange.create({
-          data: change(user.id, admin, UserChangeAction.RESET_SENT),
-        });
+    const purpose = user.passwordSet
+      ? VerificationPurpose.PASSWORD_RESET
+      : VerificationPurpose.PASSWORD_SETUP;
+    let result: Awaited<ReturnType<AuthService['issuePasswordCode']>>;
+    try {
+      result = await this.issuePasswordCode(user, purpose);
+    } catch (error) {
+      if (error instanceof MailFailedError && !admin) {
+        return { message: FORGOT_PASSWORD_MESSAGE };
       }
-    });
-
-    await this.trySendMail('reset', {
-      to: user.email,
-      subject: 'WeLinc Logistics - Password Reset Request',
-      text: `Hello, ${user.name || 'User'}!
-
-You have requested to reset your password.
-Please use the following one-time code to complete the process:
-
-Reset Code: ${otp}
-
-Please visit the link below to verify and reset your password:
-${this.passwordLink}
-
-This code will expire in 10 minutes.`,
-      html: `<p>Hello, <strong>${user.name || 'User'}</strong>!</p>
-<p>You have requested to reset your password.</p>
-<p>Please use the following one-time code to complete the process:</p>
-<h2 style="font-size: 24px; font-weight: bold; color: #1a1f6e; letter-spacing: 2px;">${otp}</h2>
-<p>Please visit the link below to verify and reset your password:</p>
-<p><a href="${this.passwordLink}" style="color: #1a1f6e; font-weight: bold; text-decoration: underline;">Reset your password</a></p>
-<p>This code will expire in 10 minutes.</p>`,
-    });
-
+      throw error;
+    }
+    if (result.kind === 'limited') {
+      if (admin) throw new CodeSendLimitError(result.retryAfter);
+      return { message: FORGOT_PASSWORD_MESSAGE };
+    }
+    if (admin) {
+      await this.prisma.userChange.create({
+        data: change(user.id, admin, UserChangeAction.RESET_SENT),
+      });
+    }
     return { message: FORGOT_PASSWORD_MESSAGE };
   }
 
-  async verifyOtp(email: string, otp: string): Promise<{ message: string }> {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
+  /** The active, not deleted user a public code route acts on, or null (AC-14). */
+  private async codeUser(email: string): Promise<{ id: string } | null> {
+    return this.prisma.user.findFirst({
+      where: {
+        email: email.trim().toLowerCase(),
+        isActive: true,
+        deletedAt: null,
+      },
       select: { id: true },
     });
+  }
 
+  /**
+   * AC-14: checks the live setup or reset code without using it up. Wrong tries count (AC-4), and
+   * every refusal keeps the old message.
+   */
+  async verifyOtp(email: string, otp: string): Promise<{ message: string }> {
+    const user = await this.codeUser(email);
     if (!user) {
       throw new BadRequestException('Invalid or expired OTP');
     }
-
-    const token = await this.prisma.passwordResetToken.findFirst({
-      where: {
-        userId: user.id,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { createdAt: 'desc' },
+    const result = await this.codes.check({
+      target: { userId: user.id, purposes: PASSWORD_CODES },
+      code: otp,
+      consume: false,
     });
-
-    if (!token || token.otp !== otp) {
+    if (result.kind !== 'right') {
       throw new BadRequestException('Invalid or expired OTP');
     }
-
     return { message: 'OTP is valid' };
   }
 
   /**
-   * Public: verify OTP and set a new password.
+   * Public: a setup or reset code sets a new password (AC-12, AC-14). It also confirms the email,
+   * marks the password set, ends a lockout and ends every session, in one transaction.
    */
   async otpResetPassword(
     email: string,
     otp: string,
     newPassword: string,
   ): Promise<{ message: string }> {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      select: { id: true },
-    });
-
+    const user = await this.codeUser(email);
     if (!user) {
       throw new BadRequestException('Invalid or expired OTP');
     }
 
-    const token = await this.prisma.passwordResetToken.findFirst({
-      where: {
-        userId: user.id,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
+    // Slow work before the locks
+    const passwordHash = await argon2.hash(newPassword);
+    const result = await this.codes.check({
+      target: { userId: user.id, purposes: PASSWORD_CODES },
+      code: otp,
+      consume: true,
+      onRight: async (tx) => {
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            passwordHash,
+            emailVerified: true,
+            passwordSet: true,
+            // Completing a code also ends a lockout
+            lockedAt: null,
+            failedLoginAttempts: 0,
+          },
+        });
+        // Spec 0003 AC-4: a code reset ends every session of the user
+        await this.sessions.endAllForUser(
+          tx,
+          user.id,
+          SessionEndReason.PASSWORD_CHANGED,
+        );
       },
-      orderBy: { createdAt: 'desc' },
     });
-
-    if (!token || token.otp !== otp) {
+    if (result.kind !== 'right') {
       throw new BadRequestException('Invalid or expired OTP');
     }
-
-    // Mark token as used, update password, and set emailVerified to true atomically
-    const passwordHash = await argon2.hash(newPassword);
-    await this.prisma.$transaction(async (tx) => {
-      await tx.passwordResetToken.update({
-        where: { id: token.id },
-        data: { usedAt: new Date() },
-      });
-      await tx.user.update({
-        where: { id: user.id },
-        data: {
-          passwordHash,
-          emailVerified: true,
-          // Completing a code also ends a lockout (AC-17)
-          lockedAt: null,
-          failedLoginAttempts: 0,
-        },
-      });
-      // Spec 0003 AC-4: an OTP reset ends every session of the user
-      await this.sessions.endAllForUser(
-        tx,
-        user.id,
-        SessionEndReason.PASSWORD_CHANGED,
-      );
-    });
 
     return { message: 'Password has been reset successfully.' };
   }
@@ -1089,27 +1169,10 @@ This code will expire in 10 minutes.`,
   async getCurrentUser(
     userId: string,
     system: SystemType,
-  ): Promise<ManagedUserResponse> {
+  ): Promise<ManagedUserResponse & { pendingEmail: string | null }> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
-        },
-      },
+      select: MANAGED_USER_SELECT,
     });
 
     if (!user) {
@@ -1117,9 +1180,12 @@ This code will expire in 10 minutes.`,
     }
 
     const mapped = this.mapManagedUser(user);
+    // Spec 0009, AC-20: the address of a live email change, or null
+    const pending = await this.codes.liveCode(userId, EMAIL_CHANGE);
     return {
       ...mapped,
       roles: mapped.roles.filter((r) => r.system === system),
+      pendingEmail: pending?.newEmail ?? null,
     };
   }
 
@@ -1129,45 +1195,146 @@ This code will expire in 10 minutes.`,
   ): Promise<ManagedUserResponse> {
     await this.ensureUserExists(userId);
 
-    if (dto.email) {
-      const emailLower = dto.email.trim().toLowerCase();
-      const currentUser = await this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { email: true },
-      });
-      if (currentUser && currentUser.email.toLowerCase() !== emailLower) {
-        await validateEmailDomain(dto.email, this.production);
-      }
-    }
-
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
         ...(dto.name != null ? { name: dto.name.trim() } : {}),
-        ...(dto.email != null ? { email: dto.email.trim().toLowerCase() } : {}),
         ...(dto.contact != null ? { contact: dto.contact.trim() || null } : {}),
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
-        },
-      },
+      select: MANAGED_USER_SELECT,
     });
 
     return this.mapManagedUser(user);
+  }
+
+  /**
+   * Spec 0009, AC-17, AC-19: start changing your own email, or resend the pending change's code
+   * when `newEmail` is the pending address. `users.email` stays until the code is used. The old
+   * address is told when a change starts (not on a resend).
+   */
+  async startEmailChange(
+    userId: string,
+    dto: StartEmailChangeDto,
+  ): Promise<{ pendingEmail: string; expiresAt: string; resendAfter: number }> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true, name: true, email: true, passwordHash: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    if (!(await argon2.verify(user.passwordHash, dto.currentPassword))) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    const newEmail = dto.newEmail.trim().toLowerCase();
+    if (newEmail === user.email.toLowerCase()) {
+      throw coded(
+        HttpStatus.BAD_REQUEST,
+        'SAME_EMAIL',
+        'That is already your email',
+      );
+    }
+    await validateEmailDomain(newEmail, this.production);
+    await this.assertEmailFree(newEmail, userId);
+
+    const pending = await this.codes.liveCode(userId, EMAIL_CHANGE);
+    const isResend = pending?.newEmail === newEmail;
+    const result = await this.codes.issue({
+      userId,
+      purpose: VerificationPurpose.EMAIL_CHANGE,
+      newEmail,
+      mail: {
+        to: newEmail,
+        build: (code) => emailChangeCodeEmail({ name: user.name, code }),
+      },
+    });
+    if (result.kind === 'limited') {
+      throw new CodeSendLimitError(result.retryAfter);
+    }
+    if (!isResend) {
+      await this.notify(
+        userId,
+        'EMAIL_CHANGE_STARTED',
+        user.email,
+        emailChangeStartedEmail({ name: user.name, newEmail }),
+      );
+    }
+    return {
+      pendingEmail: newEmail,
+      expiresAt: result.expiresAt.toISOString(),
+      resendAfter: result.resendAfter,
+    };
+  }
+
+  /**
+   * Spec 0009, AC-18: the right code moves `users.email` to the pending address and confirms it,
+   * retires every other live code and records the change, all under the user row lock. Sessions
+   * stay. Taken by someone else meanwhile: 409 `EMAIL_TAKEN` and the pending change is retired.
+   */
+  async verifyEmailChange(
+    userId: string,
+    code: string,
+  ): Promise<ManagedUserResponse> {
+    let result: CheckResult<{ oldEmail: string; name: string }>;
+    try {
+      result = await this.codes.check({
+        target: { userId, purposes: EMAIL_CHANGE },
+        code,
+        consume: true,
+        onRight: async (tx, row) => {
+          // The old address, read inside the transaction before the update (Value sourcing)
+          const before = await tx.user.findUniqueOrThrow({
+            where: { id: userId },
+            select: { email: true, name: true },
+          });
+          await tx.user.update({
+            where: { id: userId },
+            data: { email: row.newEmail!, emailVerified: true },
+          });
+          await this.codes.retireAll(tx, userId);
+          await tx.userChange.create({
+            data: change(
+              userId,
+              { id: userId, email: before.email },
+              UserChangeAction.UPDATED,
+              {
+                field: 'email',
+                oldValue: before.email,
+                newValue: row.newEmail,
+              },
+            ),
+          });
+          return { oldEmail: before.email, name: before.name };
+        },
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      await this.prisma.$transaction((tx) =>
+        this.codes.retire(tx, userId, EMAIL_CHANGE),
+      );
+      throw emailTaken();
+    }
+    if (result.kind === 'wrong') throw invalidCode(result.attemptsLeft);
+    if (result.kind === 'dead') throw codeExpired();
+
+    const newEmail = result.row.newEmail!;
+    await this.notify(
+      userId,
+      'EMAIL_CHANGED',
+      result.value.oldEmail,
+      emailChangedEmail({ name: result.value.name, newEmail }),
+    );
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: MANAGED_USER_SELECT,
+    });
+    return this.mapManagedUser(user);
+  }
+
+  /** Spec 0009, AC-19: drop the pending change; 204 also when none exists. */
+  async cancelEmailChange(userId: string): Promise<void> {
+    await this.prisma.$transaction((tx) =>
+      this.codes.retire(tx, userId, EMAIL_CHANGE),
+    );
   }
 
   /** `currentSid` is the caller's own session, the one a password change keeps (spec 0003 AC-4). */
@@ -1215,24 +1382,7 @@ This code will expire in 10 minutes.`,
       return tx.user.update({
         where: { id: userId },
         data: { passwordHash },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          emailVerified: true,
-          contact: true,
-          profilePicture: true,
-          isActive: true,
-          lockedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          roles: {
-            select: {
-              role: true,
-              system: true,
-            },
-          },
-        },
+        select: MANAGED_USER_SELECT,
       });
     });
 
@@ -1264,24 +1414,7 @@ This code will expire in 10 minutes.`,
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { profilePicture },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerified: true,
-        contact: true,
-        profilePicture: true,
-        isActive: true,
-        lockedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: true,
-            system: true,
-          },
-        },
-      },
+      select: MANAGED_USER_SELECT,
     });
 
     return this.mapManagedUser(user);
@@ -1352,22 +1485,6 @@ This code will expire in 10 minutes.`,
     };
   }
 
-  /** True when sent. A failure is logged without the email's content, so no code reaches the logs. */
-  private async trySendMail(
-    kind: 'setup' | 'reset',
-    options: { to: string; subject: string; text: string; html: string },
-  ): Promise<boolean> {
-    try {
-      await this.mailService.sendMail(options);
-      return true;
-    } catch (error) {
-      this.logger.error(
-        `Could not send the ${kind} email to ${options.to}: ${error instanceof Error ? error.message : 'unknown error'}`,
-      );
-      return false;
-    }
-  }
-
   private normalizeRoleAssignments(
     roleAssignments: RoleAssignmentDto[],
     allowEmpty = false,
@@ -1413,6 +1530,7 @@ This code will expire in 10 minutes.`,
       name: user.name,
       email: user.email,
       emailVerified: user.emailVerified,
+      passwordSet: user.passwordSet,
       contact: user.contact,
       profilePicture: user.profilePicture,
       isActive: user.isActive,

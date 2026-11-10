@@ -30,7 +30,8 @@ export async function hashSeedPasswords(
 export async function resetUsers(tx: Prisma.TransactionClient) {
   await tx.session.deleteMany({});
   await tx.userChange.deleteMany({});
-  await tx.passwordResetToken.deleteMany({});
+  // Spec 0009, AC-16 (they also cascade with their users; cleared first to be explicit)
+  await tx.verificationCode.deleteMany({});
   await tx.userRoleAssignment.deleteMany({});
   await tx.user.deleteMany({});
 }

@@ -11,6 +11,7 @@ import { fakeConfig } from '../config/fake-config.setup';
 import type { TokenService } from './tokens/token.service';
 import { SystemType, UserChangeAction } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
+import { fakeCodes } from './testing/codes.fake';
 import type { RoleCode } from './roles/catalog.types';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
@@ -90,6 +91,7 @@ function build() {
     fakeConfig(),
     sessions,
     new FakeCatalogService(),
+    fakeCodes(),
   );
   return { service, db };
 }
@@ -155,12 +157,6 @@ describe('welinc-auth system scoping', () => {
         () => service.updateUserStatus(USER_ID, { isActive: false }, vrmsAdmin),
         () => service.unlockUser(USER_ID, vrmsAdmin),
         () => service.deleteUser(USER_ID, vrmsAdmin),
-        () =>
-          service.resetPassword(
-            USER_ID,
-            { password: 'Str0ng-pass-phrase!' },
-            vrmsAdmin,
-          ),
       ]) {
         await expect(call()).rejects.toBeInstanceOf(NotFoundException);
       }
@@ -266,7 +262,10 @@ describe('welinc-auth system scoping', () => {
         roles,
       };
       ctx.db.user.findUnique.mockResolvedValue(row);
-      ctx.db.user.findFirst.mockResolvedValue(row);
+      // The "is this address free" lookup (suite spec 0009, AC-21) finds nobody else
+      ctx.db.user.findFirst.mockImplementation((args: { where?: object }) =>
+        Promise.resolve(args.where && 'email' in args.where ? null : row),
+      );
       ctx.db.user.update.mockResolvedValue(managedRow(roles));
       return ctx;
     }
@@ -276,19 +275,6 @@ describe('welinc-auth system scoping', () => {
 
       await expect(
         service.updateUser(USER_ID, { email: 'new@welinc.com' }, vrmsAdmin),
-      ).rejects.toThrow(new ForbiddenException(blocked));
-      expect(db.user.update).not.toHaveBeenCalled();
-    });
-
-    it('blocks a password set through the edit and through set password', async () => {
-      const { service, db } = arrange();
-      const password = 'Str0ng-pass-phrase!';
-
-      await expect(
-        service.updateUser(USER_ID, { password }, vrmsAdmin),
-      ).rejects.toThrow(new ForbiddenException(blocked));
-      await expect(
-        service.resetPassword(USER_ID, { password }, vrmsAdmin),
       ).rejects.toThrow(new ForbiddenException(blocked));
       expect(db.user.update).not.toHaveBeenCalled();
     });
@@ -453,7 +439,7 @@ describe('welinc-auth system scoping', () => {
       );
 
       const result = await service.createUser(
-        { ...dto, password: 'Str0ng-pass-phrase!', attachExisting: true },
+        { ...dto, attachExisting: true },
         vrmsAdmin,
       );
 

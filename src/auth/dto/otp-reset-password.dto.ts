@@ -1,14 +1,16 @@
 import { IsString, IsEmail, Matches } from 'class-validator';
+import { SIX_DIGITS } from './email-verification.dto';
 
 /**
  * DTO for the public OTP-based password reset flow (POST /auth/reset-password).
- * Different from ResetPasswordDto which is the admin-only route.
+ * The only way to set a password: admins can't set one (spec 0009, AC-15).
  */
 export class OtpResetPasswordDto {
   @IsEmail()
   email!: string;
 
   @IsString()
+  @Matches(SIX_DIGITS, { message: 'otp must be 6 digits' })
   otp!: string;
 
   @IsString()

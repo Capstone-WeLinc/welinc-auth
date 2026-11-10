@@ -52,6 +52,8 @@ model User {
   name                String               @db.VarChar(100)
   email               String               @unique @map("email") @db.VarChar(255)
   emailVerified       Boolean              @default(false) @map("email_verified")
+  // Spec 0009, AC-16: true once a setup or reset code was used; never turns back to false
+  passwordSet         Boolean              @default(false) @map("password_set")
   passwordHash        String               @map("password_hash") @db.VarChar(255)
   contact             String?              @db.VarChar(100)
   profilePicture      String?              @map("profile_picture") @db.Text
@@ -62,8 +64,8 @@ model User {
   createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   roles               UserRoleAssignment[]
-  passwordResetTokens PasswordResetToken[]
-  sessions            Session[]            @relation("UserSessions")
+  verificationCodes   VerificationCode[]
+  sessions           Session[]            @relation("UserSessions")
   sessionsEnded       Session[]            @relation("SessionsEndedBy")
   changes             UserChange[]         @relation("UserChanges")
   changesMade         UserChange[]         @relation("UserChangesMade")
@@ -122,16 +124,36 @@ model UserRoleAssignment {
   @@map("user_roles")
 }
 
-model PasswordResetToken {
-  id        String    @id @default(cuid())
-  userId    String    @map("user_id") @db.Uuid
-  otp       String
-  expiresAt DateTime  @map("expires_at")
-  usedAt    DateTime? @map("used_at")
-  createdAt DateTime  @default(now()) @map("created_at")
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+// Spec 0009: every emailed code, one table for all kinds. Only hashes are stored. "Live" means
+// used_at is null and expires_at is after now. The migration also holds what Prisma can't say:
+// a check constraint (challenge_hash only on SIGN_IN rows, new_email only on EMAIL_CHANGE rows)
+// and a unique index on challenge_hash where it is not null.
+enum VerificationPurpose {
+  PASSWORD_SETUP
+  PASSWORD_RESET
+  SIGN_IN
+  EMAIL_CHANGE
+}
 
-  @@map("password_reset_tokens")
+model VerificationCode {
+  id            String              @id @default(uuid()) @db.Uuid
+  userId        String              @map("user_id") @db.Uuid
+  purpose       VerificationPurpose
+  // argon2 of the 6 digits
+  codeHash      String              @map("code_hash") @db.Text
+  // SHA-256 hex of the sign in ticket; SIGN_IN only
+  challengeHash String?             @map("challenge_hash") @db.Char(64)
+  // Lowercased; EMAIL_CHANGE only
+  newEmail      String?             @map("new_email") @db.VarChar(255)
+  attempts      Int                 @default(0)
+  expiresAt     DateTime            @map("expires_at") @db.Timestamptz(6)
+  // Used, or retired by a newer code, the 5th wrong try, or an email change
+  usedAt        DateTime?           @map("used_at") @db.Timestamptz(6)
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt(sort: Desc)])
+  @@map("verification_codes")
 }
 
 // Spec 0003: one row per login. "Expired" is never stored: a live row past a cutoff is ended
