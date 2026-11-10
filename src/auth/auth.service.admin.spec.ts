@@ -13,7 +13,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { ConfigService } from '@nestjs/config';
+import { fakeConfig } from '../config/fake-config.setup';
 import type { TokenService } from './tokens/token.service';
 import { SystemType, UserChangeAction } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
@@ -87,9 +87,7 @@ function build(env: Record<string, string | undefined> = {}) {
   db.user.count.mockResolvedValue(1);
   const sendMail = fn();
   sendMail.mockResolvedValue(undefined);
-  const config = {
-    get: (key: string) => env[key],
-  } as unknown as ConfigService;
+  const config = fakeConfig(env);
   const sessions = {
     endAllForUser: jest.fn(() => Promise.resolve(0)),
   } as unknown as SessionService;
@@ -783,26 +781,7 @@ describe('AuthService password links and reset', () => {
       expect(text).not.toContain('com//forgot');
     });
 
-    it('falls back to localhost:8000 outside production', async () => {
-      const text = await mailedText({});
-
-      expect(text).toContain('http://localhost:8000/forgot-password');
-    });
-
-    it('refuses to start in production without PORTAL_URL', () => {
-      expect(() => build({ NODE_ENV: 'production' })).toThrow(
-        'PORTAL_URL is required in production',
-      );
-    });
-
-    it('starts in production when PORTAL_URL is set', () => {
-      expect(() =>
-        build({
-          NODE_ENV: 'production',
-          PORTAL_URL: 'https://portal.welinc.com',
-        }),
-      ).not.toThrow();
-    });
+    // PORTAL_URL being required (no localhost fallback) is the boot check's job: env.spec.ts
   });
 
   describe('forgotPassword', () => {

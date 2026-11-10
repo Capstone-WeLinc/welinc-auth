@@ -8,6 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Env } from '../config/env';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -72,7 +73,10 @@ export const DEV_EMAIL_DOMAINS = [
   'example.com',
 ];
 
-export async function validateEmailDomain(email: string): Promise<void> {
+export async function validateEmailDomain(
+  email: string,
+  production: boolean,
+): Promise<void> {
   const domain = email.split('@')[1];
   if (!domain) {
     throw new BadRequestException('Invalid email format');
@@ -80,10 +84,7 @@ export async function validateEmailDomain(email: string): Promise<void> {
 
   // Made up test addresses skip the mail check on your own machine only; when hosted, every
   // address must be on a domain that can receive mail, or its setup and reset codes never arrive
-  if (
-    process.env.NODE_ENV !== 'production' &&
-    DEV_EMAIL_DOMAINS.includes(domain.toLowerCase())
-  ) {
+  if (!production && DEV_EMAIL_DOMAINS.includes(domain.toLowerCase())) {
     return;
   }
 
@@ -191,20 +192,21 @@ export class AuthService {
   private readonly lookupLimiter = new LookupLimiter();
   /** Where setup and reset emails send people (spec 0009, AC-16). */
   private readonly passwordLink: string;
+  /** Hosted: every email domain must receive mail (`validateEmailDomain`). */
+  private readonly production: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokens: TokenService,
     private readonly mailService: MailService,
-    config: ConfigService,
+    config: ConfigService<Env, true>,
     private readonly sessions: SessionService,
     private readonly catalog: CatalogService,
   ) {
-    const portalUrl = config.get<string>('PORTAL_URL');
-    if (!portalUrl && config.get<string>('NODE_ENV') === 'production') {
-      throw new Error('PORTAL_URL is required in production');
-    }
-    this.passwordLink = `${(portalUrl || 'http://localhost:8000').replace(/\/+$/, '')}/forgot-password`;
+    // PORTAL_URL is required and checked at boot (spec 0010)
+    const portalUrl = config.get('PORTAL_URL', { infer: true });
+    this.passwordLink = `${portalUrl.replace(/\/+$/, '')}/forgot-password`;
+    this.production = config.get('NODE_ENV', { infer: true }) === 'production';
   }
 
   /**
@@ -457,7 +459,7 @@ export class AuthService {
       return { ...attached, setupEmailSent: false };
     }
 
-    await validateEmailDomain(dto.email);
+    await validateEmailDomain(dto.email, this.production);
 
     let passwordHash: string;
     let setupOtp: string | null = null;
@@ -637,7 +639,7 @@ This code will expire in 1 hour.`,
 
     const newEmail = dto.email?.trim().toLowerCase();
     if (dto.email && newEmail && newEmail !== current.email.toLowerCase()) {
-      await validateEmailDomain(dto.email);
+      await validateEmailDomain(dto.email, this.production);
     }
     const passwordHash = dto.password
       ? await argon2.hash(dto.password)
@@ -1134,7 +1136,7 @@ This code will expire in 10 minutes.`,
         select: { email: true },
       });
       if (currentUser && currentUser.email.toLowerCase() !== emailLower) {
-        await validateEmailDomain(dto.email);
+        await validateEmailDomain(dto.email, this.production);
       }
     }
 

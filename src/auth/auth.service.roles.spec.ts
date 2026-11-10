@@ -4,7 +4,7 @@ import {
   ForbiddenException,
   HttpException,
 } from '@nestjs/common';
-import type { ConfigService } from '@nestjs/config';
+import { fakeConfig } from '../config/fake-config.setup';
 import { SystemType } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
 import type { MailService } from '../shared/mail.service';
@@ -92,7 +92,7 @@ function build() {
     db as unknown as PrismaService,
     {} as TokenService,
     { sendMail: fn() } as unknown as MailService,
-    { get: () => undefined } as unknown as ConfigService,
+    fakeConfig(),
     {
       endAllForUser: jest.fn(() => Promise.resolve(0)),
     } as unknown as SessionService,

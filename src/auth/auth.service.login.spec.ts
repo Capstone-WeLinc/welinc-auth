@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, jest } from '@jest/globals';
-import type { ConfigService } from '@nestjs/config';
+import { fakeConfig } from '../config/fake-config.setup';
 import type { ForbiddenException } from '@nestjs/common';
 import { SystemType } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
@@ -49,7 +49,7 @@ describe('AuthService.checkCredentials', () => {
       { user: { findFirst, update } } as unknown as PrismaService,
       tokens,
       {} as MailService,
-      { get: () => undefined } as unknown as ConfigService,
+      fakeConfig(),
       sessions,
       new FakeCatalogService(),
     );
