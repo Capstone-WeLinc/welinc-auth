@@ -152,6 +152,7 @@ describe('stateFields', () => {
     ).toEqual({
       isActive: true,
       emailVerified: true,
+      passwordSet: true,
       failedLoginAttempts: 0,
       lockedAt: null,
       deletedAt: null,
@@ -175,7 +176,9 @@ describe('stateFields', () => {
       emailVerified: true,
       lockedAt: null,
     });
+    // Spec 0009, AC-16: unverified keeps its password, so it meets the sign in step
     expect(stateFields('unverified', undefined, now)).toMatchObject({
+      passwordSet: true,
       isActive: true,
       emailVerified: false,
     });

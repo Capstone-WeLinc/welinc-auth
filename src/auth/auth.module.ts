@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -36,6 +37,9 @@ import { SessionSweeper } from './sessions/session-sweeper';
 import { DirectoryController } from './directory/directory.controller';
 import { DirectoryGuard } from './directory/directory.guard';
 import { DirectoryService } from './directory/directory.service';
+import { CodeService } from './codes/code.service';
+import { CodeErrorFilter } from './codes/code-errors';
+import { SignInStepService } from './codes/sign-in-step.service';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -66,6 +70,10 @@ import { DirectoryService } from './directory/directory.service';
     SessionSweeper,
     DirectoryService,
     DirectoryGuard,
+    // Spec 0009: the one code service, the sign in step, and 429/503 for their errors
+    CodeService,
+    SignInStepService,
+    { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
     AuthController,

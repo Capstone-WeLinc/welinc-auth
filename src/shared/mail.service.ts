@@ -34,15 +34,18 @@ export class MailService {
   }
 
   /**
-   * Sends the email, or throws when it can't be sent. Without SMTP it logs the email instead, in
-   * development only: in production that would put codes in the logs (spec 0009, AC-16). The boot
-   * check already requires SMTP in production; this throw is the second guard.
+   * Sends the email, or throws when it can't be sent. Without SMTP it prints the whole email
+   * instead, in development only, so codes can be read locally: the one log allowed to hold a code
+   * or an address (spec 0009, AC-1). The boot check already requires SMTP in production; this
+   * throw is the second guard.
    */
   async sendMail(options: {
     to: string;
     subject: string;
     text: string;
     html?: string;
+    /** What the log line names instead of the address: `user=<id> purpose=<kind>` (spec 0009, AC-1). */
+    tag: string;
   }): Promise<void> {
     if (!this.transporter) {
       if (this.production) {
@@ -59,7 +62,7 @@ export class MailService {
       text: options.text,
       html: options.html,
     });
-    this.logger.log(`Email successfully sent to ${options.to}`);
+    this.logger.log(`email sent ${options.tag}`);
   }
 
   private logFallback(options: { to: string; subject: string; text: string }) {

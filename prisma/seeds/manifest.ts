@@ -197,6 +197,8 @@ export function checkManifest(
 export type StateFields = {
   isActive: boolean;
   emailVerified: boolean;
+  /** Every seed person has a password (spec 0009, AC-16), `state.unverified@` included. */
+  passwordSet: boolean;
   failedLoginAttempts: number;
   lockedAt: Date | null;
   deletedAt: Date | null;
@@ -214,6 +216,7 @@ export function stateFields(
   const active: StateFields = {
     isActive: true,
     emailVerified: true,
+    passwordSet: true,
     failedLoginAttempts: 0,
     lockedAt: null,
     deletedAt: null,

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
+import { CODE_RETENTION_MS } from '../codes/code-config';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 
 /** Rows changed per statement, so no single statement holds a large lock (AC-37). */
@@ -20,6 +21,7 @@ export type SweepCounts = {
   sessionsDeleted: number;
   requestsDeleted: number;
   codesDeleted: number;
+  verificationCodesDeleted: number;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -91,13 +93,19 @@ export class SessionSweeper {
               DELETE FROM "authorization_codes" WHERE "code_hash" IN (SELECT "code_hash" FROM "authorization_codes"
                 WHERE "expires_at" < ${now} LIMIT ${limit})`,
           ),
+          // Spec 0009, AC-1: every emailed code row (and its new_email) goes after 24 hours
+          verificationCodesDeleted: await this.batches(
+            (limit) => tx.$executeRaw`
+              DELETE FROM "verification_codes" WHERE "id" IN (SELECT "id" FROM "verification_codes"
+                WHERE "created_at" < ${new Date(now.getTime() - CODE_RETENTION_MS)} LIMIT ${limit})`,
+          ),
         };
       },
       { timeout: 120_000, maxWait: 10_000 },
     );
     if (counts) {
       this.logger.log(
-        `session sweep ended=${counts.ended} graces=${counts.gracesCleared} tokens=${counts.tokensDeleted} sessions=${counts.sessionsDeleted} requests=${counts.requestsDeleted} codes=${counts.codesDeleted}`,
+        `session sweep ended=${counts.ended} graces=${counts.gracesCleared} tokens=${counts.tokensDeleted} sessions=${counts.sessionsDeleted} requests=${counts.requestsDeleted} codes=${counts.codesDeleted} verificationCodes=${counts.verificationCodesDeleted}`,
       );
     } else {
       this.logger.log('session sweep skipped: another replica holds the lock');

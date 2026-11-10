@@ -7,6 +7,7 @@ import {
 import { fakeConfig } from '../config/fake-config.setup';
 import { SystemType } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
+import { fakeCodes } from './testing/codes.fake';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import type { SessionService } from './sessions/session.service';
@@ -97,6 +98,7 @@ function build() {
       endAllForUser: jest.fn(() => Promise.resolve(0)),
     } as unknown as SessionService,
     new FakeCatalogService(),
+    fakeCodes(),
   );
   return { service, db, order };
 }

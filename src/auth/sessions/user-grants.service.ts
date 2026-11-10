@@ -70,6 +70,14 @@ type Outcome =
   | { kind: 'no_access'; aud: SystemType }
   | { kind: 'not_allowed'; message: string };
 
+/** A mobile login that passed `checkMobileGrant`: what `startMobile` signs for. */
+export type MobileGrant = {
+  client: OAuthClient;
+  aud: SystemType;
+  roles: TokenRole[];
+  systems: SystemType[];
+};
+
 /** What `rolesFor` found: the roles held in the audience, then the ones this client allows. */
 type GrantRoles =
   | { kind: 'ok'; roles: TokenRole[]; systems: SystemType[] }
@@ -329,31 +337,37 @@ export class UserGrantsService {
   }
 
   /**
-   * A native login (spec 0003, AC-28): the password is already checked. Creates the mobile
-   * session and its first refresh token, then signs an access token for the client's own
-   * system, answered like the user grants.
+   * The mobile grant checks alone (spec 0004, AC-19; suite spec 0009, AC-11): the client's own
+   * system, `NO_SYSTEM_ACCESS` and `APP_NOT_ALLOWED`. Starts nothing, so the login can run them
+   * before the email step and the step's verify route can run them again.
+   */
+  async checkMobileGrant(
+    client: OAuthClient,
+    userId: string,
+  ): Promise<MobileGrant> {
+    const aud = client.system;
+    if (!aud) return this.refuse(client.id, 'client_without_system');
+    const granted = await this.rolesFor(this.prisma, userId, aud, client);
+    if (granted.kind !== 'ok') {
+      return this.refuseGrant(client.id, 'mobile_login', granted);
+    }
+    return { client, aud, roles: granted.roles, systems: granted.systems };
+  }
+
+  /**
+   * A native login (spec 0003, AC-28): the password and `checkMobileGrant` already passed.
+   * Creates the mobile session and its first refresh token, then signs an access token for the
+   * client's own system, answered like the user grants.
    */
   async startMobile(
-    client: OAuthClient,
+    grant: MobileGrant,
     input: {
       user: { id: string; name: string; email: string };
       deviceName: string | null;
       ip: string | null;
     },
   ): Promise<UserTokenAnswer> {
-    const aud = client.system;
-    if (!aud) return this.refuse(client.id, 'client_without_system');
-    // Before the session is created (spec 0004, AC-19)
-    const granted = await this.rolesFor(
-      this.prisma,
-      input.user.id,
-      aud,
-      client,
-    );
-    if (granted.kind !== 'ok') {
-      return this.finish(client.id, 'mobile_login', granted);
-    }
-    const { roles, systems } = granted;
+    const { client, aud, roles, systems } = grant;
     const { session, refreshToken } = await this.sessions.createMobile({
       userId: input.user.id,
       clientId: client.id,
@@ -462,21 +476,8 @@ export class UserGrantsService {
   ): Promise<UserTokenAnswer> {
     if (outcome.kind === 'invalid')
       return this.refuse(clientId, outcome.reason);
-    if (outcome.kind === 'no_access') {
-      this.logger.warn(
-        `refused grant client=${clientId} grant=${grant} reason=no_system_access`,
-      );
-      throw coded(
-        HttpStatus.FORBIDDEN,
-        'NO_SYSTEM_ACCESS',
-        `This account has no access to ${outcome.aud}`,
-      );
-    }
-    if (outcome.kind === 'not_allowed') {
-      this.logger.warn(
-        `refused grant client=${clientId} grant=${grant} reason=app_not_allowed`,
-      );
-      throw coded(HttpStatus.FORBIDDEN, 'APP_NOT_ALLOWED', outcome.message);
+    if (outcome.kind === 'no_access' || outcome.kind === 'not_allowed') {
+      return this.refuseGrant(clientId, grant, outcome);
     }
     const { session, user, roles, systems, aud } = outcome;
     const accessToken = await this.tokens.signUserToken({
@@ -506,6 +507,28 @@ export class UserGrantsService {
         : {}),
       user: { ...user, roles, systems },
     };
+  }
+
+  /** 403 `NO_SYSTEM_ACCESS` or `APP_NOT_ALLOWED`, logged without the user. */
+  private refuseGrant(
+    clientId: string,
+    grant: string,
+    outcome: Exclude<GrantRoles, { kind: 'ok' }>,
+  ): never {
+    if (outcome.kind === 'no_access') {
+      this.logger.warn(
+        `refused grant client=${clientId} grant=${grant} reason=no_system_access`,
+      );
+      throw coded(
+        HttpStatus.FORBIDDEN,
+        'NO_SYSTEM_ACCESS',
+        `This account has no access to ${outcome.aud}`,
+      );
+    }
+    this.logger.warn(
+      `refused grant client=${clientId} grant=${grant} reason=app_not_allowed`,
+    );
+    throw coded(HttpStatus.FORBIDDEN, 'APP_NOT_ALLOWED', outcome.message);
   }
 
   private refuse(clientId: string, reason: string): never {

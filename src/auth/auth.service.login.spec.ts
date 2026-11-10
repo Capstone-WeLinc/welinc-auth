@@ -3,6 +3,7 @@ import { fakeConfig } from '../config/fake-config.setup';
 import type { ForbiddenException } from '@nestjs/common';
 import { SystemType } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
+import { fakeCodes } from './testing/codes.fake';
 import type { RoleCode } from './roles/catalog.types';
 import * as argon2 from 'argon2';
 import type { PrismaService } from '../shared/prisma.service';
@@ -52,6 +53,7 @@ describe('AuthService.checkCredentials', () => {
       fakeConfig(),
       sessions,
       new FakeCatalogService(),
+      fakeCodes(),
     );
   }
 
