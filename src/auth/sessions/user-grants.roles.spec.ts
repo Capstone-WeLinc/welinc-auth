@@ -63,8 +63,13 @@ function build(held: string[]) {
   return { service, db, sessions, tokens };
 }
 
-const login = (service: UserGrantsService, client = vmmsMobile) =>
-  service.startMobile(client, { user: USER, deviceName: null, ip: null });
+// The mobile login's two steps (suite spec 0009, AC-11): the checks, then the session
+const login = async (service: UserGrantsService, client = vmmsMobile) =>
+  service.startMobile(await service.checkMobileGrant(client, USER.id), {
+    user: USER,
+    deviceName: null,
+    ip: null,
+  });
 
 async function refusal(promise: Promise<unknown>) {
   const error = await promise.then(
