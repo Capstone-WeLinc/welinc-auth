@@ -1,6 +1,7 @@
 import { Logger, type Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SigningKeyRing } from '../keys/signing-keys';
+import type { Env } from '../../config/env';
 
 /** Systems a user token may name as its `aud` (spec 0002, AC-8). */
 export const USER_AUDIENCES = ['VRMS', 'VMMS', 'BMS'] as const;
@@ -25,27 +26,14 @@ export type TokenSettings = {
 export const TOKEN_SETTINGS = Symbol('TOKEN_SETTINGS');
 export const SIGNING_KEY_RING = Symbol('SIGNING_KEY_RING');
 
-function minutes(config: ConfigService, name: string, fallback: number) {
-  const raw = config.get<string>(name);
-  if (raw === undefined || raw === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`${name} must be a whole number of minutes, at least 1`);
-  }
-  return value;
-}
-
-export function readTokenSettings(config: ConfigService): TokenSettings {
-  const issuer = config.get<string>('AUTH_ISSUER')?.trim();
-  if (!issuer) {
-    throw new Error(
-      'AUTH_ISSUER is missing. Set it to the issuer of spec 0001 section 1 (http://localhost:3000/auth locally).',
-    );
-  }
+/** Values arrive checked, trimmed and defaulted by the boot check (spec 0010). */
+export function readTokenSettings(
+  config: ConfigService<Env, true>,
+): TokenSettings {
   return {
-    issuer,
-    accessTokenMinutes: minutes(config, 'ACCESS_TOKEN_MINUTES', 15),
-    serviceTokenMinutes: minutes(config, 'SERVICE_TOKEN_MINUTES', 5),
+    issuer: config.get('AUTH_ISSUER', { infer: true }),
+    accessTokenMinutes: config.get('ACCESS_TOKEN_MINUTES', { infer: true }),
+    serviceTokenMinutes: config.get('SERVICE_TOKEN_MINUTES', { infer: true }),
   };
 }
 
@@ -59,9 +47,9 @@ export const tokenSettingsProvider: Provider = {
 export const signingKeyRingProvider: Provider = {
   provide: SIGNING_KEY_RING,
   inject: [ConfigService],
-  useFactory: async (config: ConfigService) => {
+  useFactory: async (config: ConfigService<Env, true>) => {
     const ring = await SigningKeyRing.load(
-      config.get<string>('AUTH_SIGNING_KEYS'),
+      config.get('AUTH_SIGNING_KEYS', { infer: true }),
     );
     const logger = new Logger('SigningKeys');
     for (const key of ring.keys) {

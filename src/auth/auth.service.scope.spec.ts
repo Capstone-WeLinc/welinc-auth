@@ -7,7 +7,7 @@ import {
   HttpStatus,
   NotFoundException,
 } from '@nestjs/common';
-import type { ConfigService } from '@nestjs/config';
+import { fakeConfig } from '../config/fake-config.setup';
 import type { TokenService } from './tokens/token.service';
 import { SystemType, UserChangeAction } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
@@ -87,7 +87,7 @@ function build() {
     db as unknown as PrismaService,
     {} as TokenService,
     { sendMail } as unknown as MailService,
-    { get: () => undefined } as unknown as ConfigService,
+    fakeConfig(),
     sessions,
     new FakeCatalogService(),
   );

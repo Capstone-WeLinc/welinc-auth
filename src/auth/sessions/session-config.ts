@@ -1,5 +1,6 @@
 import type { Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Env } from '../../config/env';
 
 /** Session limits and cookie settings (spec 0003, Configuration required). */
 export type SessionSettings = {
@@ -23,40 +24,21 @@ export const SESSION_SETTINGS = Symbol('SESSION_SETTINGS');
 export const LOGIN_REQUEST_SECONDS = 10 * 60;
 export const LOGIN_CODE_SECONDS = 60;
 
-function whole(
-  config: ConfigService,
-  name: string,
-  fallback: number,
-  min = 1,
-): number {
-  const raw = config.get<string>(name);
-  if (raw === undefined || raw === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < min) {
-    throw new Error(`${name} must be a whole number, at least ${min}`);
-  }
-  return value;
-}
-
-function flag(config: ConfigService, name: string): boolean {
-  const raw = config.get<string>(name)?.trim().toLowerCase();
-  return raw === 'true' || raw === '1';
-}
-
-export function readSessionSettings(config: ConfigService): SessionSettings {
-  const rawPortal = config.get<string>('PORTAL_URL')?.trim();
-  if (!rawPortal && config.get<string>('NODE_ENV') === 'production') {
-    throw new Error('PORTAL_URL is required in production');
-  }
-  const portalUrl = (rawPortal || 'http://localhost:8000').replace(/\/+$/, '');
+/** Values arrive checked and defaulted by the boot check (spec 0010). */
+export function readSessionSettings(
+  config: ConfigService<Env, true>,
+): SessionSettings {
+  const portalUrl = config
+    .get('PORTAL_URL', { infer: true })
+    .replace(/\/+$/, '');
   return {
-    webIdleMinutes: whole(config, 'WEB_SESSION_IDLE_MINUTES', 30),
-    webMaxHours: whole(config, 'WEB_SESSION_MAX_HOURS', 12),
-    mobileIdleDays: whole(config, 'MOBILE_SESSION_IDLE_DAYS', 7),
-    graceSeconds: whole(config, 'REFRESH_REUSE_GRACE_SECONDS', 10),
-    maxSessionsPerUser: whole(config, 'MAX_SESSIONS_PER_USER', 10),
-    retentionDays: whole(config, 'SESSION_RETENTION_DAYS', 90),
-    ssoCookieSecure: flag(config, 'SSO_COOKIE_SECURE'),
+    webIdleMinutes: config.get('WEB_SESSION_IDLE_MINUTES', { infer: true }),
+    webMaxHours: config.get('WEB_SESSION_MAX_HOURS', { infer: true }),
+    mobileIdleDays: config.get('MOBILE_SESSION_IDLE_DAYS', { infer: true }),
+    graceSeconds: config.get('REFRESH_REUSE_GRACE_SECONDS', { infer: true }),
+    maxSessionsPerUser: config.get('MAX_SESSIONS_PER_USER', { infer: true }),
+    retentionDays: config.get('SESSION_RETENTION_DAYS', { infer: true }),
+    ssoCookieSecure: config.get('SSO_COOKIE_SECURE', { infer: true }),
     portalOrigin: new URL(portalUrl).origin,
     portalUrl,
   };
