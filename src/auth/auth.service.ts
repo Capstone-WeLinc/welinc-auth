@@ -208,10 +208,6 @@ export class AuthService {
   }
 
   /**
-   * Checks a password login: lockout (5 failures), deactivation, then the system pick (spec 0002,
-   * AC-5). Answers the user and the system; the caller creates the session (spec 0003, AC-11).
-   */
-  /**
    * The password check shared by the portal and the mobile login: lockout, inactive accounts,
    * the failure counter. Which systems the person may enter is decided by the caller (the
    * launcher answer, spec 0007; the mobile grant, spec 0004).
