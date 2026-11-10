@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
+import type { ForbiddenException } from '@nestjs/common';
 import { SystemType } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
 import type { RoleCode } from './roles/catalog.types';
@@ -21,7 +22,10 @@ describe('AuthService.checkCredentials', () => {
     passwordHash = await argon2.hash('secret123');
   });
 
-  function build(roles: { role: RoleCode; system: SystemType }[]) {
+  function build(
+    roles: { role: RoleCode; system: SystemType }[],
+    row: Record<string, unknown> = {},
+  ) {
     const findFirst = jest.fn<(args: unknown) => Promise<unknown>>();
     findFirst.mockResolvedValue({
       id: 'user-1',
@@ -34,6 +38,7 @@ describe('AuthService.checkCredentials', () => {
       failedLoginAttempts: 0,
       lockedAt: null,
       roles,
+      ...row,
     });
     const update = jest.fn<(args: unknown) => Promise<unknown>>();
     update.mockResolvedValue({});
@@ -85,5 +90,29 @@ describe('AuthService.checkCredentials', () => {
         password: 'wrong',
       }),
     ).rejects.toThrow('Invalid credentials');
+  });
+
+  // covers: contract 0001 section 12 (403 ACCOUNT_LOCKED, isLocked kept for the portal)
+  it('answers 403 ACCOUNT_LOCKED for an account already locked', async () => {
+    const error = await build(both, { lockedAt: new Date() })
+      .checkCredentials({ email: 'pedro@welinc.com', password: 'secret123' })
+      .catch((e: unknown) => e);
+    expect((error as ForbiddenException).getStatus()).toBe(403);
+    expect((error as ForbiddenException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_LOCKED',
+      isLocked: true,
+      remainingAttempts: 0,
+    });
+  });
+
+  it('answers 403 ACCOUNT_LOCKED on the fifth wrong password', async () => {
+    const error = await build(both, { failedLoginAttempts: 4 })
+      .checkCredentials({ email: 'pedro@welinc.com', password: 'wrong' })
+      .catch((e: unknown) => e);
+    expect((error as ForbiddenException).getStatus()).toBe(403);
+    expect((error as ForbiddenException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_LOCKED',
+      isLocked: true,
+    });
   });
 });

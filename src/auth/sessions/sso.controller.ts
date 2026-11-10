@@ -40,6 +40,9 @@ import { readSsoCookie, setSsoCookie } from './sso-cookie';
 /** `/auth/authorize` allows 30 a minute per address (spec 0003, AC-13, AC-38). */
 export const AUTHORIZE_LIMIT = { limit: 30, ttlMs: 60_000 };
 
+/** `/auth/login` allows 10 a minute per address (contract 0001 section 12). */
+export const LOGIN_LIMIT = { limit: 10, ttlMs: 60_000 };
+
 /** `/auth/sso` allows 60 a minute per address (spec 0007, AC-4). */
 export const SSO_LIMIT = { limit: 60, ttlMs: 60_000 };
 
@@ -78,6 +81,25 @@ export class SsoController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<LauncherAnswer> {
     res.setHeader('Cache-Control', 'no-store');
+    // Counted before the password check, so guessing passwords costs the same as a bad request
+    const hit = await this.storage.increment(
+      `login:${req.ip ?? 'unknown'}`,
+      LOGIN_LIMIT.ttlMs,
+      LOGIN_LIMIT.limit,
+      0,
+      'login',
+    );
+    if (hit.totalHits > LOGIN_LIMIT.limit) {
+      res.setHeader(
+        'Retry-After',
+        String(Math.max(1, Math.ceil(hit.timeToExpire))),
+      );
+      throw coded(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'RATE_LIMITED',
+        'Too many sign in attempts from this address. Wait a minute and try again.',
+      );
+    }
     const { user } = await this.auth.checkCredentials(dto);
     const answer = await this.launcher.answerFor(user);
     const { session, handle } = await this.sessions.createWeb({

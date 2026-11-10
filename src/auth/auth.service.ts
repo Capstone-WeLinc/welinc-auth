@@ -253,6 +253,7 @@ export class AuthService {
     // Locked account check — must happen before password validation
     if (user.lockedAt !== null) {
       throw new ForbiddenException({
+        code: 'ACCOUNT_LOCKED',
         message: 'Account is locked. Contact your Admin to unlock.',
         remainingAttempts: 0,
         isLocked: true,
@@ -283,6 +284,7 @@ export class AuthService {
 
       if (shouldLock) {
         throw new ForbiddenException({
+          code: 'ACCOUNT_LOCKED',
           message: 'Account is locked. Contact your Admin to unlock.',
           remainingAttempts: 0,
           isLocked: true,

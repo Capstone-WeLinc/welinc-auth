@@ -8,7 +8,7 @@ import type { AuthorizeService } from './authorize.service';
 import type { LauncherService } from './launcher';
 import type { SessionSettings } from './session-config';
 import type { SessionService } from './session.service';
-import { SSO_LIMIT, SsoController } from './sso.controller';
+import { LOGIN_LIMIT, SSO_LIMIT, SsoController } from './sso.controller';
 
 // covers: spec 0007 AC-1 (401, no-store, no activity), AC-3 (no session without a system), AC-4
 
@@ -146,6 +146,32 @@ describe('GET /auth/sso', () => {
 });
 
 describe('POST /auth/login', () => {
+  // covers: contract 0001 section 12 (10 a minute per address, 429 RATE_LIMITED with Retry-After)
+  it('answers 429 RATE_LIMITED with Retry-After on the 11th call, before any password check', async () => {
+    const t = build(LOGIN_LIMIT.limit + 1);
+    expect(
+      await refusal(
+        t.controller.login(
+          { email: 'm@welinc.com', password: 'x' },
+          t.req,
+          t.res,
+        ),
+      ),
+    ).toEqual([429, 'RATE_LIMITED']);
+    expect(t.headers['Retry-After']).toBe('42');
+    expect(t.auth.checkCredentials).not.toHaveBeenCalled();
+  });
+
+  it('counts the 10th call as allowed', async () => {
+    const t = build(LOGIN_LIMIT.limit);
+    await t.controller.login(
+      { email: 'm@welinc.com', password: 'x' },
+      t.req,
+      t.res,
+    );
+    expect(t.auth.checkCredentials).toHaveBeenCalled();
+  });
+
   it('answers the launcher body and sets the SSO cookie', async () => {
     const t = build();
     const answer = await t.controller.login(
