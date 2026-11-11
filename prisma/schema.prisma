@@ -49,6 +49,15 @@ enum AccountEventType {
   SESSIONS_ENDED
   PASSWORD_CHANGED
   PICTURE_CHANGED
+  // Spec 0012: SIGN_IN
+  PASSWORD_CONFIRMED
+  PASSWORD_CONFIRM_FAILED
+  // Spec 0012: ACCOUNT
+  DELETION_REQUESTED
+  DELETION_CANCELLED
+  DELETION_REJECTED
+  RESTORED
+  ERASED
 }
 
 // Spec 0003: a login is a session that welinc-auth tracks on the server.
@@ -72,27 +81,33 @@ enum SessionEndReason {
 }
 
 model User {
-  id                  String               @id @default(uuid()) @db.Uuid
-  name                String               @db.VarChar(100)
-  email               String               @unique @map("email") @db.VarChar(255)
-  emailVerified       Boolean              @default(false) @map("email_verified")
+  id                  String                   @id @default(uuid()) @db.Uuid
+  name                String                   @db.VarChar(100)
+  email               String                   @unique @map("email") @db.VarChar(255)
+  emailVerified       Boolean                  @default(false) @map("email_verified")
   // Spec 0009, AC-16: true once a setup or reset code was used; never turns back to false
-  passwordSet         Boolean              @default(false) @map("password_set")
-  passwordHash        String               @map("password_hash") @db.VarChar(255)
-  contact             String?              @db.VarChar(100)
-  profilePicture      String?              @map("profile_picture") @db.Text
-  isActive            Boolean              @default(true) @map("is_active")
-  failedLoginAttempts Int                  @default(0) @map("failed_login_attempts")
-  lockedAt            DateTime?            @map("locked_at") @db.Timestamptz(6)
-  deletedAt           DateTime?            @map("deleted_at") @db.Timestamptz(6)
-  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  passwordSet         Boolean                  @default(false) @map("password_set")
+  passwordHash        String                   @map("password_hash") @db.VarChar(255)
+  contact             String?                  @db.VarChar(100)
+  profilePicture      String?                  @map("profile_picture") @db.Text
+  isActive            Boolean                  @default(true) @map("is_active")
+  failedLoginAttempts Int                      @default(0) @map("failed_login_attempts")
+  lockedAt            DateTime?                @map("locked_at") @db.Timestamptz(6)
+  deletedAt           DateTime?                @map("deleted_at") @db.Timestamptz(6)
+  // Spec 0012: personal data replaced by "Deleted user"; never cleared
+  erasedAt            DateTime?                @map("erased_at") @db.Timestamptz(6)
+  createdAt           DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   roles               UserRoleAssignment[]
   verificationCodes   VerificationCode[]
-  sessions           Session[]            @relation("UserSessions")
-  sessionsEnded       Session[]            @relation("SessionsEndedBy")
-  events              AccountEvent[]       @relation("AccountEvents")
-  eventsMade          AccountEvent[]       @relation("AccountEventsMade")
+  sessions            Session[]                @relation("UserSessions")
+  sessionsEnded       Session[]                @relation("SessionsEndedBy")
+  events              AccountEvent[]           @relation("AccountEvents")
+  eventsMade          AccountEvent[]           @relation("AccountEventsMade")
+  deletionRequests    AccountDeletionRequest[] @relation("DeletionRequests")
+  deletionsDecided    AccountDeletionRequest[] @relation("DeletionDecidedBy")
+  deletionsRestored   AccountDeletionRequest[] @relation("DeletionRestoredBy")
+  reauthTokens        ReauthToken[]
 
   @@index([deletedAt])
   @@map("users")
@@ -209,6 +224,7 @@ model Session {
   loginClient        OAuthClient         @relation("SessionLoginClient", fields: [loginClientId], references: [id])
   refreshTokens      RefreshToken[]
   authorizationCodes AuthorizationCode[]
+  reauthTokens       ReauthToken[]
 
   @@index([userId, endedAt])
   @@index([endedAt])
@@ -378,21 +394,84 @@ model DirectoryFeed {
 }
 
 model DirectoryChange {
-  seq       BigInt                 @id @default(autoincrement())
+  seq       BigInt              @id @default(autoincrement())
   // pg_current_xact_id() of the writing transaction; read order is (txid, seq)
-  txid      Unsupported("xid8")    @default(dbgenerated("pg_current_xact_id()"))
+  txid      Unsupported("xid8") @default(dbgenerated("pg_current_xact_id()"))
   // No relation: a hard delete must keep its `deleted` row
-  userId    String                 @map("user_id") @db.Uuid
+  userId    String              @map("user_id") @db.Uuid
   // created, updated, roles_changed, activated, deactivated, deleted (check constraint)
   type      String
   systems   SystemType[]
   // { id, name, email, contact, profilePicture, isActive, deletedAt, updatedAt, roles }
   snapshot  Json
-  createdAt DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([txid, userId])
   @@index([txid, seq])
   @@index([userId, txid, seq])
   @@index([systems], type: Gin)
   @@map("directory_changes")
+}
+
+// Spec 0012: a person's request to delete their own account. One PENDING per person (a partial
+// unique index in the migration). Every change locks the users row first, then this row, and
+// moves status only from the state it expects.
+enum DeletionRequestStatus {
+  PENDING
+  CANCELLED
+  REJECTED
+  APPROVED
+  RESTORED
+  ERASED
+}
+
+model AccountDeletionRequest {
+  id            String                @id @default(uuid()) @db.Uuid
+  userId        String                @map("user_id") @db.Uuid
+  status        DeletionRequestStatus @default(PENDING)
+  // Blanked at erasure
+  reason        String?               @db.VarChar(500)
+  requestedAt   DateTime              @default(now()) @map("requested_at") @db.Timestamptz(6)
+  decidedById   String?               @map("decided_by_id") @db.Uuid
+  decidedSystem SystemType?           @map("decided_system")
+  decidedAt     DateTime?             @map("decided_at") @db.Timestamptz(6)
+  // Required on reject, kept after erasure (blanked only by the erasure itself, AC-15)
+  decisionNote  String?               @map("decision_note") @db.VarChar(500)
+  cancelledAt   DateTime?             @map("cancelled_at") @db.Timestamptz(6)
+  restoredAt    DateTime?             @map("restored_at") @db.Timestamptz(6)
+  restoredById  String?               @map("restored_by_id") @db.Uuid
+  erasedAt      DateTime?             @map("erased_at") @db.Timestamptz(6)
+
+  user       User  @relation("DeletionRequests", fields: [userId], references: [id], onDelete: Restrict)
+  decidedBy  User? @relation("DeletionDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  restoredBy User? @relation("DeletionRestoredBy", fields: [restoredById], references: [id], onDelete: Restrict)
+
+  @@index([status, requestedAt])
+  @@index([userId])
+  @@map("account_deletion_requests")
+}
+
+// Spec 0012: what a reauth token may be used for.
+enum ReauthPurpose {
+  ACCOUNT_DELETION
+}
+
+// Spec 0012, AC-1, AC-3: a one use token from `POST /auth/profile/verify-password`, bound to the
+// user, the purpose and the session. Only its SHA-256 is stored. The hourly sweep deletes rows
+// older than 24 hours.
+model ReauthToken {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  sessionId String        @map("session_id") @db.Uuid
+  purpose   ReauthPurpose
+  tokenHash String        @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime      @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime?     @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@map("reauth_tokens")
 }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AccountEventCategory, AccountEventType } from '@prisma/client';
 import { EVENT_CATALOG, TYPE_CATEGORY } from './event-types';
 
-// covers: spec 0011 Data model (the map, the catalog, the enums and the CHECK agree), AC-15
+// covers: spec 0011 Data model, spec 0012 AC-20 (new types) (the map, the catalog, the enums and the CHECK agree), AC-15
 describe('event types', () => {
   const types = Object.values(AccountEventType).sort();
 
@@ -26,14 +26,29 @@ describe('event types', () => {
     expect(new Set(reasons).size).toBe(reasons.length);
   });
 
-  it('matches the CHECK constraint in the migration', () => {
-    const sql = readFileSync(
-      join(
-        __dirname,
-        '../../../prisma/migrations/20261114000000_account_events/migration.sql',
-      ),
-      'utf8',
-    );
+  it('matches the CHECK constraint in the latest migration that sets it', () => {
+    // Spec 0012 rebuilt the CHECK, so the newest migration that adds it wins
+    const dir = join(__dirname, '../../../prisma/migrations');
+    const sql = readdirSync(dir)
+      .filter((name) => /^\d{14}_/.test(name))
+      .sort()
+      .map((name) => {
+        try {
+          return readFileSync(join(dir, name, 'migration.sql'), 'utf8');
+        } catch {
+          return '';
+        }
+      })
+      .filter(
+        (text) =>
+          text.includes(
+            'ADD CONSTRAINT "account_events_type_category_check"',
+          ) ||
+          text.includes(
+            'CONSTRAINT "account_events_type_category_check" CHECK',
+          ),
+      )
+      .pop()!;
     for (const category of Object.values(AccountEventCategory)) {
       const match = new RegExp(
         `"category" = '${category}' AND "type" IN \\(([^)]*)\\)`,

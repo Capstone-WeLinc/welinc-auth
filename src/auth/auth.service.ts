@@ -18,13 +18,24 @@ import * as fs from 'fs/promises';
 import * as dns from 'dns';
 import {
   AccountEventType,
+  DeletionRequestStatus,
   Prisma,
   SessionEndReason,
   SystemType,
   VerificationPurpose,
 } from '@prisma/client';
 import { AccountEventsService } from './events/account-events.service';
-import { SignInFailReason } from './events/event-types';
+import {
+  DELETION_REQUEST_REASON,
+  PasswordCheckReason,
+  SignInFailReason,
+} from './events/event-types';
+import { PasswordCheckService } from './reauth/password-check.service';
+import {
+  closePendingOnAdminDelete,
+  markRestored,
+} from './deletion/deletion-steps';
+import { notRestorable } from './deletion/deletion.service';
 import { NO_META, type RequestMeta } from './events/request-meta';
 
 /** Who sent a code and from where (spec 0011, AC-5); the user themselves when left out. */
@@ -280,6 +291,7 @@ export class AuthService {
     private readonly catalog: CatalogService,
     private readonly codes: CodeService,
     private readonly events: AccountEventsService,
+    private readonly passwords: PasswordCheckService,
   ) {
     // PORTAL_URL is required and checked at boot (spec 0010)
     const portalUrl = config.get('PORTAL_URL', { infer: true });
@@ -554,7 +566,7 @@ export class AuthService {
   async listUsers(
     query: ListUsersQueryDto,
     caller: Pick<AdminCaller, 'system'>,
-  ): Promise<ScopedUserResponse[]> {
+  ): Promise<(ScopedUserResponse & { pendingDeletion: boolean })[]> {
     if (query.role !== undefined) {
       await this.catalog.assertKnownRole(caller.system, query.role);
     }
@@ -568,13 +580,24 @@ export class AuthService {
           },
         },
       },
-      select: MANAGED_USER_SELECT,
+      select: {
+        ...MANAGED_USER_SELECT,
+        // Spec 0012, AC-9: an EXISTS on a pending request
+        deletionRequests: {
+          where: { status: DeletionRequestStatus.PENDING },
+          select: { id: true },
+          take: 1,
+        },
+      },
       orderBy: {
         createdAt: 'desc',
       },
     });
 
-    return users.map((user) => this.mapScopedUser(user, caller.system));
+    return users.map(({ deletionRequests, ...user }) => ({
+      ...this.mapScopedUser(user, caller.system),
+      pendingDeletion: deletionRequests.length > 0,
+    }));
   }
 
   /** Spec 0011, AC-29: active accounts outside the caller's system, to attach a role to. */
@@ -1132,17 +1155,25 @@ export class AuthService {
           await assertAnotherAdmin(tx, userId, system);
         }
       }
+      const now = new Date();
       await tx.user.update({
         where: { id: userId },
         data: {
-          deletedAt: new Date(),
+          deletedAt: now,
           isActive: false,
           lockedAt: null,
         },
       });
+      // Spec 0012, AC-13: a pending request closes as APPROVED by this admin, one DELETED
+      const closed = await closePendingOnAdminDelete(tx, userId, actor, now);
       await this.events.record(
         tx,
-        change(userId, actor, AccountEventType.DELETED),
+        change(
+          userId,
+          actor,
+          AccountEventType.DELETED,
+          closed ? { reason: DELETION_REQUEST_REASON } : {},
+        ),
       );
       // Spec 0003 AC-4
       await this.sessions.endAllForUser(tx, userId, SessionEndReason.DELETED, {
@@ -1153,6 +1184,43 @@ export class AuthService {
     });
 
     return { id: userId };
+  }
+
+  /**
+   * Spec 0012, AC-14: brings back an account in its grace period. It stays inactive with its
+   * roles; an APPROVED request becomes RESTORED. Not deleted or already erased: 409.
+   */
+  async restoreUser(
+    userId: string,
+    actor: AdminCaller,
+  ): Promise<ScopedUserResponse> {
+    const user = await this.prisma.$transaction(async (tx) => {
+      await lockAccount(tx, userId);
+      const existing = await tx.user.findFirst({
+        where: { id: userId },
+        select: {
+          deletedAt: true,
+          erasedAt: true,
+          roles: { select: { role: true, system: true } },
+        },
+      });
+      assertInSystem(existing, actor.system);
+      if (existing.deletedAt === null || existing.erasedAt !== null) {
+        throw notRestorable();
+      }
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { deletedAt: null, isActive: false },
+        select: MANAGED_USER_SELECT,
+      });
+      await markRestored(tx, userId, actor, new Date());
+      await this.events.record(
+        tx,
+        change(userId, actor, AccountEventType.RESTORED),
+      );
+      return updated;
+    });
+    return this.mapScopedUser(user, actor.system);
   }
 
   /**
@@ -1345,16 +1413,16 @@ export class AuthService {
     const user = await this.prisma.$transaction(async (tx) => {
       const before = await tx.user.findUniqueOrThrow({
         where: { id: userId },
-        select: { name: true },
+        select: { name: true, contact: true },
       });
       const name = dto.name != null ? dto.name.trim() : undefined;
+      const contact =
+        dto.contact != null ? dto.contact.trim() || null : undefined;
       const updated = await tx.user.update({
         where: { id: userId },
         data: {
           ...(name !== undefined ? { name } : {}),
-          ...(dto.contact != null
-            ? { contact: dto.contact.trim() || null }
-            : {}),
+          ...(contact !== undefined ? { contact } : {}),
         },
         select: MANAGED_USER_SELECT,
       });
@@ -1367,6 +1435,18 @@ export class AuthService {
             { id: userId, email: updated.email, meta },
             AccountEventType.UPDATED,
             { field: 'name', oldValue: before.name, newValue: name },
+          ),
+        );
+      }
+      // Spec 0012, AC-20: the phone is a plain contact field, and its changes are logged
+      if (contact !== undefined && contact !== before.contact) {
+        await this.events.record(
+          tx,
+          change(
+            userId,
+            { id: userId, email: updated.email, meta },
+            AccountEventType.UPDATED,
+            { field: 'contact', oldValue: before.contact, newValue: contact },
           ),
         );
       }
@@ -1384,16 +1464,22 @@ export class AuthService {
   async startEmailChange(
     userId: string,
     dto: StartEmailChangeDto,
+    sid: string,
     meta: RequestMeta = NO_META,
   ): Promise<{ pendingEmail: string; expiresAt: string; resendAfter: number }> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
-      select: { id: true, name: true, email: true, passwordHash: true },
+      select: { id: true, name: true, email: true },
     });
     if (!user) throw new NotFoundException('User not found');
-    if (!(await argon2.verify(user.passwordHash, dto.currentPassword))) {
-      throw new BadRequestException('Current password is incorrect');
-    }
+    // Spec 0012, AC-2: the shared recheck and its lockout
+    await this.passwords.verifyOwnPassword({
+      userId,
+      password: dto.currentPassword,
+      reason: PasswordCheckReason.EMAIL_CHANGE,
+      sid,
+      meta,
+    });
 
     const newEmail = dto.newEmail.trim().toLowerCase();
     if (newEmail === user.email.toLowerCase()) {
@@ -1524,26 +1610,14 @@ export class AuthService {
       );
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: { id: userId, deletedAt: null },
-      select: {
-        id: true,
-        passwordHash: true,
-      },
+    // Spec 0012, AC-2: the shared recheck and its lockout
+    await this.passwords.verifyOwnPassword({
+      userId,
+      password: dto.currentPassword,
+      reason: PasswordCheckReason.PASSWORD_CHANGE,
+      sid: currentSid,
+      meta,
     });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    const isCurrentPasswordValid = await argon2.verify(
-      user.passwordHash,
-      dto.currentPassword,
-    );
-
-    if (!isCurrentPasswordValid) {
-      throw new BadRequestException('Current password is incorrect');
-    }
 
     const passwordHash = await argon2.hash(dto.newPassword);
     const updated = await this.prisma.$transaction(async (tx) => {

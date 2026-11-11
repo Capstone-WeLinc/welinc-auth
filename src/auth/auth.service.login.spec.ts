@@ -10,6 +10,7 @@ import type { PrismaService } from '../shared/prisma.service';
 import type { MailService } from '../shared/mail.service';
 import { AuthService, emailDomain } from './auth.service';
 import { AccountEventsService } from './events/account-events.service';
+import { PasswordCheckService } from './reauth/password-check.service';
 import { noGeo } from './testing/geo.fake';
 import type { RequestMeta } from './events/request-meta';
 import { SessionService } from './sessions/session.service';
@@ -96,6 +97,7 @@ describe('AuthService.checkCredentials', () => {
       new FakeCatalogService(),
       fakeCodes(),
       new AccountEventsService(prisma, noGeo),
+      new PasswordCheckService(prisma, new AccountEventsService(prisma, noGeo)),
     );
     return { service, events, account };
   }

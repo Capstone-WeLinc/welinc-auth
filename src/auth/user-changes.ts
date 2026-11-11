@@ -126,6 +126,13 @@ export async function assertAnotherAdmin(
     },
   });
   if (others === 0) {
-    throw new ConflictException(`This is the last ${system} admin.`);
+    // Spec 0012: coded LAST_ADMIN, same message, plus the system it names
+    throw new ConflictException({
+      statusCode: 409,
+      error: 'Conflict',
+      code: 'LAST_ADMIN',
+      message: `This is the last ${system} admin.`,
+      system,
+    });
   }
 }

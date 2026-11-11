@@ -95,6 +95,8 @@ export const envSchema = z.object({
 
   // Spec 0011: sign in, session and code events are kept this long; account changes forever
   ACCOUNT_EVENT_RETENTION_DAYS: whole(30, 3650, 365),
+  // Spec 0012: days between a soft delete and the erasure of the person's personal data
+  ACCOUNT_ERASURE_GRACE_DAYS: whole(1, 365, 30),
   // Spec 0011: the offline DB-IP Lite files (npm run geo:fetch). Missing files only leave places empty
   GEOIP_COUNTRY_FILE: z.preprocess(
     blank,
