@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   AccountEventCategory,
   AccountEventType,
@@ -198,6 +198,130 @@ export class AccountEventsService {
     });
     return pageOf(rows, filters.limit, ownView);
   }
+
+  /**
+   * `GET /auth/users/:id/activity` (AC-12): 404 unless the person holds a role in `aud` now; then
+   * their events tagged with `aud` or account wide (null). Never another system's.
+   */
+  async listForUser(
+    userId: string,
+    aud: SystemType,
+    filters: ActivityFilters,
+  ): Promise<EventPage> {
+    const member = await this.prisma.userRoleAssignment.findFirst({
+      where: { userId, system: aud, user: { deletedAt: null } },
+      select: { id: true },
+    });
+    if (!member) throw new NotFoundException('User not found');
+    const rows = await this.prisma.accountEvent.findMany({
+      where: {
+        userId,
+        OR: [{ system: aud }, { system: null }],
+        ...filterWhere(filters),
+      },
+      select: ADMIN_SELECT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: filters.limit + 1,
+    });
+    return pageOf(rows, filters.limit, (row) => adminView(row, aud));
+  }
+
+  /**
+   * `GET /auth/activity` (AC-13): events tagged with `aud` for anyone, current or former member,
+   * plus account wide events of people who hold a role in `aud` now. The two branches are read
+   * apart (each ordered and cut to `limit + 1`), then merged and cut, so each uses its index.
+   * A `userId` outside the scope simply finds nothing.
+   */
+  async feed(
+    aud: SystemType,
+    filters: ActivityFilters,
+  ): Promise<EventPage<EventView & { user: FeedUser }>> {
+    const shared = filterWhere(filters);
+    const person: Prisma.AccountEventWhereInput[] = [];
+    if (filters.userId) person.push({ userId: filters.userId });
+    if (filters.q) {
+      person.push({
+        user: {
+          OR: [
+            { name: { contains: filters.q, mode: 'insensitive' } },
+            { email: { contains: filters.q, mode: 'insensitive' } },
+          ],
+        },
+      });
+    }
+    if (filters.address) person.push({ ip: filters.address });
+    const branch = (scope: Prisma.AccountEventWhereInput) =>
+      this.prisma.accountEvent.findMany({
+        where: { AND: [scope, shared, ...person] },
+        select: FEED_SELECT,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: filters.limit + 1,
+      });
+    const [tagged, accountWide] = await Promise.all([
+      branch({ system: aud }),
+      branch({
+        system: null,
+        user: { deletedAt: null, roles: { some: { system: aud } } },
+      }),
+    ]);
+    const merged = [...tagged, ...accountWide].sort(newestFirst);
+    return pageOf(merged, filters.limit, (row) => ({
+      ...adminView(row, aud),
+      user: { id: row.user.id, name: row.user.name, email: row.user.email },
+    }));
+  }
+}
+
+export type FeedUser = { id: string; name: string; email: string };
+
+const ADMIN_SELECT = {
+  ...VIEW_SELECT,
+  actor: { select: { id: true, name: true } },
+} satisfies Prisma.AccountEventSelect;
+
+const FEED_SELECT = {
+  ...ADMIN_SELECT,
+  user: { select: { id: true, name: true, email: true } },
+} satisfies Prisma.AccountEventSelect;
+
+type AdminRow = Prisma.AccountEventGetPayload<{ select: typeof ADMIN_SELECT }>;
+
+/**
+ * An admin's view (Field visibility): the actor with id and name, the login client only on rows
+ * tagged with the admin's own system.
+ */
+export function adminView(row: AdminRow, aud: SystemType): EventView {
+  const view = ownView(row);
+  const kind = actorKind(row);
+  return {
+    ...view,
+    client: row.system === aud ? row.clientId : null,
+    actor:
+      kind === 'SYSTEM' || !row.actor
+        ? { kind }
+        : { kind, id: row.actor.id, name: row.actor.name },
+  };
+}
+
+/** Category, type and dates, plus the cursor: what every admin read filters on. */
+function filterWhere(filters: ActivityFilters): Prisma.AccountEventWhereInput {
+  return {
+    AND: [
+      filters.categories ? { category: { in: filters.categories } } : {},
+      filters.types ? { type: { in: filters.types } } : {},
+      keysetWhere(filters),
+    ],
+  };
+}
+
+/** `(created_at desc, id desc)`, the order every read pages in. */
+export function newestFirst(
+  a: { createdAt: Date; id: string },
+  b: { createdAt: Date; id: string },
+): number {
+  const byTime = b.createdAt.getTime() - a.createdAt.getTime();
+  if (byTime !== 0) return byTime;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
 /** `(created_at, id) < cursor`, and the date bounds, as a Prisma filter. */
