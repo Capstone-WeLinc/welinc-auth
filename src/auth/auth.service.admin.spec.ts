@@ -91,7 +91,12 @@ function build(env: Record<string, string | undefined> = {}) {
   sendMail.mockResolvedValue(undefined);
   const config = fakeConfig(env);
   const endAllForUser = jest.fn<
-    (tx: unknown, userId: string, reason: string) => Promise<number>
+    (
+      tx: unknown,
+      userId: string,
+      reason: string,
+      meta?: unknown,
+    ) => Promise<number>
   >(() => Promise.resolve(0));
   const sessions = { endAllForUser } as unknown as SessionService;
   // The code service, faked: issue mails through sendMail (code 123456) like the real one, and
