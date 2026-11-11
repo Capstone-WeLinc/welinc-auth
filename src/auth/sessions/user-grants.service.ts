@@ -203,7 +203,10 @@ export class UserGrantsService {
             ...(userAddress ? { lastSeenIp: userAddress } : {}),
           },
         });
-        await this.sessions.addAudience(tx, session.id, aud);
+        await this.sessions.addAudience(tx, session.id, aud, {
+          ip: userAddress,
+          clientId: client.id,
+        });
         return {
           kind: 'issue',
           session,
@@ -322,7 +325,10 @@ export class UserGrantsService {
             ...(userAddress ? { lastSeenIp: userAddress } : {}),
           },
         });
-        await this.sessions.addAudience(tx, session.id, aud);
+        await this.sessions.addAudience(tx, session.id, aud, {
+          ip: userAddress,
+          clientId: client.id,
+        });
         return {
           kind: 'issue',
           session,

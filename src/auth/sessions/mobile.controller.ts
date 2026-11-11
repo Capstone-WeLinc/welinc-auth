@@ -110,7 +110,7 @@ export class MobileController {
     );
     // NO_SYSTEM_ACCESS and APP_NOT_ALLOWED before the email step (suite spec 0009, AC-11)
     const grant = await this.checkGrant(client, user.id, meta);
-    if (!user.emailVerified) return this.signInStep.start(user);
+    if (!user.emailVerified) return this.signInStep.start(user, meta);
     return this.issue(grant, user, dto.deviceName, meta);
   }
 
@@ -133,14 +133,19 @@ export class MobileController {
       user: { id: string; name: string; email: string };
     } | null = null;
     const meta = mobileMeta(req, dto.deviceName);
-    await this.signInStep.verify(dto.challengeId, dto.code, async (userId) => {
-      const client = await this.mobileClient(dto.clientId);
-      const user = await this.auth.assertCanSignIn(userId, meta);
-      found = {
-        grant: await this.checkGrant(client, userId, meta),
-        user,
-      };
-    });
+    await this.signInStep.verify(
+      dto.challengeId,
+      dto.code,
+      async (userId) => {
+        const client = await this.mobileClient(dto.clientId);
+        const user = await this.auth.assertCanSignIn(userId, meta);
+        found = {
+          grant: await this.checkGrant(client, userId, meta),
+          user,
+        };
+      },
+      meta,
+    );
     const { grant, user } = found!;
     return this.issue(grant, user, dto.deviceName, meta);
   }
@@ -155,7 +160,7 @@ export class MobileController {
   ): Promise<{ resendAfter: number }> {
     res.setHeader('Cache-Control', 'no-store');
     await countCodeCall(this.storage, 'code-signin', req, res, 'mobile');
-    return this.signInStep.resend(dto.challengeId);
+    return this.signInStep.resend(dto.challengeId, requestMeta(req));
   }
 
   /** A public native client allowed the mobile login, else 400 `INVALID_CLIENT`. */

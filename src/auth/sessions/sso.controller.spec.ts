@@ -283,6 +283,7 @@ describe('the sign in step (suite spec 0009)', () => {
     expect(t.headers['Cache-Control']).toBe('no-store');
     expect(t.signInStep.start).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'u1', email: 'm@welinc.com' }),
+      expect.objectContaining({ ip: '10.0.0.1' }),
     );
     expect(t.sessions.createWeb).not.toHaveBeenCalled();
     expect(t.cookie).not.toHaveBeenCalled();
@@ -400,6 +401,9 @@ describe('the sign in step (suite spec 0009)', () => {
         t.res,
       ),
     ).toEqual({ resendAfter: 60 });
-    expect(t.signInStep.resend).toHaveBeenCalledWith(STEP.challengeId);
+    expect(t.signInStep.resend).toHaveBeenCalledWith(
+      STEP.challengeId,
+      expect.objectContaining({ ip: '10.0.0.1' }),
+    );
   });
 });

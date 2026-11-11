@@ -72,7 +72,9 @@ export class SessionsController {
     if (!row || row.userId !== req.user.sub) {
       throw new NotFoundException('Session not found');
     }
-    await this.sessions.endNow(sid, SessionEndReason.USER_ENDED);
+    await this.sessions.endNow(sid, SessionEndReason.USER_ENDED, {
+      ip: requestMeta(req).ip,
+    });
   }
 
   /** A user's live sessions, for an admin who can see them (AC-32). */
@@ -113,7 +115,11 @@ export class SessionsController {
         tx,
         id,
         SessionEndReason.ADMIN_ENDED,
-        { endedById: caller.sub },
+        {
+          endedById: caller.sub,
+          system: caller.system,
+          ip: requestMeta(req).ip,
+        },
       );
       await this.events.record(
         tx,

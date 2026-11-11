@@ -115,7 +115,7 @@ export class SsoController {
     const meta = requestMeta(req);
     const { user } = await this.auth.checkCredentials(dto, meta);
     const answer = await this.answerFor(user, meta);
-    if (!user.emailVerified) return this.signInStep.start(user);
+    if (!user.emailVerified) return this.signInStep.start(user, meta);
     return this.finishLogin(user, answer, meta, req, res);
   }
 
@@ -136,10 +136,15 @@ export class SsoController {
     await countCodeCall(this.storage, 'code-signin', req, res);
     const meta = requestMeta(req);
     let found: { user: SignInUser; answer: LauncherAnswer } | null = null;
-    await this.signInStep.verify(dto.challengeId, dto.code, async (userId) => {
-      const user = await this.auth.assertCanSignIn(userId, meta);
-      found = { user, answer: await this.answerFor(user, meta) };
-    });
+    await this.signInStep.verify(
+      dto.challengeId,
+      dto.code,
+      async (userId) => {
+        const user = await this.auth.assertCanSignIn(userId, meta);
+        found = { user, answer: await this.answerFor(user, meta) };
+      },
+      meta,
+    );
     const { user, answer } = found!;
     return this.finishLogin(user, answer, meta, req, res);
   }
@@ -155,7 +160,7 @@ export class SsoController {
   ): Promise<{ resendAfter: number }> {
     res.setHeader('Cache-Control', 'no-store');
     await countCodeCall(this.storage, 'code-signin', req, res);
-    return this.signInStep.resend(dto.challengeId);
+    return this.signInStep.resend(dto.challengeId, requestMeta(req));
   }
 
   /** The launcher answer at a sign in, a `NO_SYSTEM_ACCESS` recorded (spec 0011, AC-1). */

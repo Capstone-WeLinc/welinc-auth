@@ -25,7 +25,10 @@ import {
 } from '@prisma/client';
 import { AccountEventsService } from './events/account-events.service';
 import { SignInFailReason } from './events/event-types';
-import type { RequestMeta } from './events/request-meta';
+import { NO_META, type RequestMeta } from './events/request-meta';
+
+/** Who sent a code and from where (spec 0011, AC-5); the user themselves when left out. */
+type CodeSender = { actorId?: string; meta?: RequestMeta };
 import { PrismaService } from '../shared/prisma.service';
 import { CatalogService, holdsAdmin } from './roles/catalog.service';
 import type { RoleAssignment } from './roles/catalog.types';
@@ -694,6 +697,7 @@ export class AuthService {
     const setupEmailSent = await this.trySendPasswordCode(
       user,
       VerificationPurpose.PASSWORD_SETUP,
+      { actorId: actor.id, meta: actor.meta },
     );
 
     return { ...this.mapScopedUser(user, actor.system), setupEmailSent };
@@ -708,9 +712,10 @@ export class AuthService {
     purpose:
       | typeof VerificationPurpose.PASSWORD_SETUP
       | typeof VerificationPurpose.PASSWORD_RESET,
+    from: CodeSender = {},
   ): Promise<boolean> {
     try {
-      const result = await this.issuePasswordCode(user, purpose);
+      const result = await this.issuePasswordCode(user, purpose, from);
       return result.kind === 'sent';
     } catch (error) {
       if (error instanceof MailFailedError) return false;
@@ -723,10 +728,13 @@ export class AuthService {
     purpose:
       | typeof VerificationPurpose.PASSWORD_SETUP
       | typeof VerificationPurpose.PASSWORD_RESET,
+    from: CodeSender = {},
   ) {
     return this.codes.issue({
       userId: user.id,
       purpose,
+      actorId: from.actorId,
+      meta: from.meta,
       mail: {
         to: user.email,
         build: (code) =>
@@ -1015,6 +1023,7 @@ export class AuthService {
       const setupEmailSent = await this.trySendPasswordCode(
         user,
         VerificationPurpose.PASSWORD_SETUP,
+        { actorId: actor.id, meta: actor.meta },
       );
       return { ...answer, setupEmailSent };
     } catch (error) {
@@ -1090,7 +1099,7 @@ export class AuthService {
           tx,
           userId,
           SessionEndReason.DEACTIVATED,
-          { endedById: actor.id },
+          { endedById: actor.id, system: actor.system, ip: actor.meta?.ip },
         );
       }
       return updated;
@@ -1138,6 +1147,8 @@ export class AuthService {
       // Spec 0003 AC-4
       await this.sessions.endAllForUser(tx, userId, SessionEndReason.DELETED, {
         endedById: actor.id,
+        system: actor.system,
+        ip: actor.meta?.ip,
       });
     });
 
@@ -1153,6 +1164,7 @@ export class AuthService {
   async forgotPassword(
     email: string,
     caller: OptionalCaller = null,
+    meta: RequestMeta = NO_META,
   ): Promise<{ message: string }> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
@@ -1187,7 +1199,11 @@ export class AuthService {
       : VerificationPurpose.PASSWORD_SETUP;
     let result: Awaited<ReturnType<AuthService['issuePasswordCode']>>;
     try {
-      result = await this.issuePasswordCode(user, purpose);
+      // Spec 0011, AC-5: CODE_SENT (once RESET_SENT) names the admin who sent it
+      result = await this.issuePasswordCode(user, purpose, {
+        actorId: admin?.id,
+        meta,
+      });
     } catch (error) {
       if (error instanceof MailFailedError && !admin) {
         return { message: FORGOT_PASSWORD_MESSAGE };
@@ -1197,13 +1213,6 @@ export class AuthService {
     if (result.kind === 'limited') {
       if (admin) throw new CodeSendLimitError(result.retryAfter);
       return { message: FORGOT_PASSWORD_MESSAGE };
-    }
-    if (admin) {
-      // Spec 0011: RESET_SENT is now CODE_SENT with the purpose, the admin as actor
-      await this.events.record(
-        this.prisma,
-        change(user.id, admin, AccountEventType.CODE_SENT, { reason: purpose }),
-      );
     }
     return { message: FORGOT_PASSWORD_MESSAGE };
   }
@@ -1224,7 +1233,11 @@ export class AuthService {
    * AC-14: checks the live setup or reset code without using it up. Wrong tries count (AC-4), and
    * every refusal keeps the old message.
    */
-  async verifyOtp(email: string, otp: string): Promise<{ message: string }> {
+  async verifyOtp(
+    email: string,
+    otp: string,
+    meta: RequestMeta = NO_META,
+  ): Promise<{ message: string }> {
     const user = await this.codeUser(email);
     if (!user) {
       throw new BadRequestException('Invalid or expired OTP');
@@ -1233,6 +1246,7 @@ export class AuthService {
       target: { userId: user.id, purposes: PASSWORD_CODES },
       code: otp,
       consume: false,
+      meta,
     });
     if (result.kind !== 'right') {
       throw new BadRequestException('Invalid or expired OTP');
@@ -1248,6 +1262,7 @@ export class AuthService {
     email: string,
     otp: string,
     newPassword: string,
+    meta: RequestMeta = NO_META,
   ): Promise<{ message: string }> {
     const user = await this.codeUser(email);
     if (!user) {
@@ -1260,6 +1275,7 @@ export class AuthService {
       target: { userId: user.id, purposes: PASSWORD_CODES },
       code: otp,
       consume: true,
+      meta,
       onRight: async (tx) => {
         await tx.user.update({
           where: { id: user.id },
@@ -1272,11 +1288,19 @@ export class AuthService {
             failedLoginAttempts: 0,
           },
         });
+        // Spec 0011, AC-6: with the CODE_USED the check writes
+        await this.events.record(tx, {
+          userId: user.id,
+          actorId: user.id,
+          type: AccountEventType.PASSWORD_CHANGED,
+          meta,
+        });
         // Spec 0003 AC-4: a code reset ends every session of the user
         await this.sessions.endAllForUser(
           tx,
           user.id,
           SessionEndReason.PASSWORD_CHANGED,
+          { ip: meta.ip },
         );
       },
     });
@@ -1314,16 +1338,39 @@ export class AuthService {
   async updateOwnProfile(
     userId: string,
     dto: UpdateProfileDto,
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     await this.ensureUserExists(userId);
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(dto.name != null ? { name: dto.name.trim() } : {}),
-        ...(dto.contact != null ? { contact: dto.contact.trim() || null } : {}),
-      },
-      select: MANAGED_USER_SELECT,
+    const user = await this.prisma.$transaction(async (tx) => {
+      const before = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { name: true },
+      });
+      const name = dto.name != null ? dto.name.trim() : undefined;
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          ...(name !== undefined ? { name } : {}),
+          ...(dto.contact != null
+            ? { contact: dto.contact.trim() || null }
+            : {}),
+        },
+        select: MANAGED_USER_SELECT,
+      });
+      // Spec 0011, AC-6: your own rename, in the same transaction
+      if (name !== undefined && name !== before.name) {
+        await this.events.record(
+          tx,
+          change(
+            userId,
+            { id: userId, email: updated.email, meta },
+            AccountEventType.UPDATED,
+            { field: 'name', oldValue: before.name, newValue: name },
+          ),
+        );
+      }
+      return updated;
     });
 
     return this.mapManagedUser(user);
@@ -1337,6 +1384,7 @@ export class AuthService {
   async startEmailChange(
     userId: string,
     dto: StartEmailChangeDto,
+    meta: RequestMeta = NO_META,
   ): Promise<{ pendingEmail: string; expiresAt: string; resendAfter: number }> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
@@ -1364,6 +1412,7 @@ export class AuthService {
       userId,
       purpose: VerificationPurpose.EMAIL_CHANGE,
       newEmail,
+      meta,
       mail: {
         to: newEmail,
         build: (code) => emailChangeCodeEmail({ name: user.name, code }),
@@ -1395,6 +1444,7 @@ export class AuthService {
   async verifyEmailChange(
     userId: string,
     code: string,
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     let result: CheckResult<{ oldEmail: string; name: string }>;
     try {
@@ -1402,6 +1452,7 @@ export class AuthService {
         target: { userId, purposes: EMAIL_CHANGE },
         code,
         consume: true,
+        meta,
         onRight: async (tx, row) => {
           // The old address, read inside the transaction before the update (Value sourcing)
           const before = await tx.user.findUniqueOrThrow({
@@ -1417,7 +1468,7 @@ export class AuthService {
             tx,
             change(
               userId,
-              { id: userId, email: before.email },
+              { id: userId, email: before.email, meta },
               AccountEventType.UPDATED,
               {
                 field: 'email',
@@ -1465,6 +1516,7 @@ export class AuthService {
     userId: string,
     dto: ChangePasswordDto,
     currentSid: string,
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     if (dto.newPassword !== dto.confirmPassword) {
       throw new BadRequestException(
@@ -1500,8 +1552,16 @@ export class AuthService {
         tx,
         userId,
         SessionEndReason.PASSWORD_CHANGED,
-        { exceptSid: currentSid },
+        { exceptSid: currentSid, ip: meta.ip },
       );
+      // Spec 0011, AC-6
+      await this.events.record(tx, {
+        userId,
+        actorId: userId,
+        type: AccountEventType.PASSWORD_CHANGED,
+        sessionId: currentSid,
+        meta,
+      });
       return tx.user.update({
         where: { id: userId },
         data: { passwordHash },
@@ -1520,6 +1580,7 @@ export class AuthService {
       size: number;
       mimetype: string;
     },
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     await this.ensureUserExists(userId);
 
@@ -1534,10 +1595,20 @@ export class AuthService {
 
     const profilePicture = `/uploads/profiles/${filename}`;
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { profilePicture },
-      select: MANAGED_USER_SELECT,
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { profilePicture },
+        select: MANAGED_USER_SELECT,
+      });
+      // Spec 0011, AC-6
+      await this.events.record(tx, {
+        userId,
+        actorId: userId,
+        type: AccountEventType.PICTURE_CHANGED,
+        meta,
+      });
+      return updated;
     });
 
     return this.mapManagedUser(user);

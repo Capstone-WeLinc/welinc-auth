@@ -1026,21 +1026,19 @@ describe('AuthService password links and reset', () => {
       expect(sendMail.mock.calls[0][0].text).toContain('1 hour');
     });
 
-    it("records CODE_SENT after a successful send by an admin of the user's system", async () => {
-      const { service, db } = build();
+    // Spec 0011, AC-5: CODE_SENT (once RESET_SENT) is written by the code service, after the
+    // mail, with the admin as actor
+    it("sends the code as the admin of the user's system", async () => {
+      const { service, db, codes } = build();
       db.user.findUnique.mockResolvedValue(target());
 
       await service.forgotPassword('pedro@welinc.com', vrmsAdmin);
 
-      expect(changesWritten(db)).toEqual([
-        expect.objectContaining({
-          userId: USER_ID,
-          actorId: ADMIN_ID,
-          // Spec 0011: RESET_SENT became CODE_SENT with the code's purpose
-          type: AccountEventType.CODE_SENT,
-          category: 'CODE',
-        }),
-      ]);
+      expect(codes.issue.mock.calls[0][0]).toMatchObject({
+        userId: USER_ID,
+        actorId: ADMIN_ID,
+      });
+      expect(changesWritten(db)).toEqual([]);
     });
 
     it.each([
@@ -1189,7 +1187,16 @@ describe('AuthService password links and reset', () => {
         expect.anything(),
         USER_ID,
         'PASSWORD_CHANGED',
+        { ip: null },
       );
+      // Spec 0011, AC-6
+      expect(changesWritten(db)).toEqual([
+        expect.objectContaining({
+          userId: USER_ID,
+          actorId: USER_ID,
+          type: AccountEventType.PASSWORD_CHANGED,
+        }),
+      ]);
     });
   });
 });
