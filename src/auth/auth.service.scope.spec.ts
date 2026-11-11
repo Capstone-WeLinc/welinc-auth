@@ -17,6 +17,7 @@ import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
 import { AccountEventsService } from './events/account-events.service';
+import { noGeo } from './testing/geo.fake';
 import { SessionService } from './sessions/session.service';
 
 // Spec 0011, AC-26 to AC-30: welinc-auth's admin user endpoints act only inside the
@@ -93,7 +94,7 @@ function build() {
     sessions,
     new FakeCatalogService(),
     fakeCodes(),
-    new AccountEventsService(db as unknown as PrismaService),
+    new AccountEventsService(db as unknown as PrismaService, noGeo),
   );
   return { service, db };
 }

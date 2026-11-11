@@ -41,6 +41,7 @@ import { CodeService } from './codes/code.service';
 import { CodeErrorFilter } from './codes/code-errors';
 import { SignInStepService } from './codes/sign-in-step.service';
 import { AccountEventsService } from './events/account-events.service';
+import { GeoService } from './events/geo.service';
 import { ActivityController } from './events/activity.controller';
 
 @Module({
@@ -77,6 +78,7 @@ import { ActivityController } from './events/activity.controller';
     SignInStepService,
     // Spec 0011: the one writer of account_events
     AccountEventsService,
+    GeoService,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [

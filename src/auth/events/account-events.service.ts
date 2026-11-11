@@ -9,6 +9,8 @@ import { PrismaService } from '../../shared/prisma.service';
 import type { ActivityFilters } from './activity-query';
 import { encodeEventCursor } from './event-cursor';
 import { TYPE_CATEGORY } from './event-types';
+import { GeoService } from './geo.service';
+import { isLocalAddress } from './local-address';
 import { NO_META, type RequestMeta } from './request-meta';
 
 type Db = Prisma.TransactionClient | PrismaService;
@@ -60,28 +62,6 @@ export type EventPage<T = EventView> = {
   data: T[];
   nextCursor: string | null;
 };
-
-/**
- * Private, loopback, link local and shared addresses (AC-17): stored with no place, and read
- * back as `localNetwork: true`.
- */
-export function isLocalAddress(ip: string | null): boolean {
-  if (!ip) return false;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(ip);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    return (
-      a === 10 ||
-      a === 127 ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 169 && b === 254) ||
-      (a === 100 && b >= 64 && b <= 127)
-    );
-  }
-  const v6 = ip.toLowerCase();
-  return v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6);
-}
 
 export function actorKind(row: {
   userId: string;
@@ -149,7 +129,10 @@ export function ownView(row: EventRow): EventView {
  */
 @Injectable()
 export class AccountEventsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly geo: GeoService,
+  ) {}
 
   /** The row to insert for an input. */
   rowOf(input: EventInput): Prisma.AccountEventCreateManyInput {
@@ -170,6 +153,8 @@ export class AccountEventsService {
       ip: meta.ip,
       device: meta.device,
       userAgent: meta.userAgent,
+      // AC-17: looked up once, at write time
+      ...this.geo.lookup(meta.ip),
     };
   }
 

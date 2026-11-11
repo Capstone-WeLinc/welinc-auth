@@ -14,6 +14,7 @@ import type { SessionService } from './sessions/session.service';
 import type { TokenService } from './tokens/token.service';
 import { AuthService } from './auth.service';
 import { AccountEventsService } from './events/account-events.service';
+import { noGeo } from './testing/geo.fake';
 
 // Spec 0004: the role rules user admin enforces (AC-9 to AC-13, AC-17). Only the database is
 // faked; the catalog is the real files through FakeCatalogService.
@@ -100,7 +101,7 @@ function build() {
     } as unknown as SessionService,
     new FakeCatalogService(),
     fakeCodes(),
-    new AccountEventsService(db as unknown as PrismaService),
+    new AccountEventsService(db as unknown as PrismaService, noGeo),
   );
   return { service, db, order };
 }

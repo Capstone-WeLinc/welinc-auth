@@ -27,6 +27,7 @@ import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
 import { AccountEventsService } from './events/account-events.service';
+import { noGeo } from './testing/geo.fake';
 import { SessionService } from './sessions/session.service';
 
 // VRMS spec 0009: admin safety guards (AC-19), the change record (AC-20, AC-21).
@@ -146,7 +147,7 @@ function build(env: Record<string, string | undefined> = {}) {
     sessions,
     new FakeCatalogService(),
     codes as unknown as CodeService,
-    new AccountEventsService(db as unknown as PrismaService),
+    new AccountEventsService(db as unknown as PrismaService, noGeo),
   );
   return { service, db, sendMail, sessions, endAllForUser, codes, codeRow };
 }

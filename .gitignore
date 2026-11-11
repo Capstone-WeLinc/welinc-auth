@@ -43,3 +43,5 @@ api-tests.http
 
 # Dev/diagnostic scripts (not part of the application)
 scripts/verify-vrms-sprints.ts
+# Spec 0011: DB-IP Lite files from npm run geo:fetch
+/geo
