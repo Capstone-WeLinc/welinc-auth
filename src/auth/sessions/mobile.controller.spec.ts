@@ -46,6 +46,11 @@ function build(hits = 1) {
   const auth = {
     checkCredentials: fn().mockResolvedValue({ user: USER }),
     assertCanSignIn: fn().mockResolvedValue(USER),
+    // Runs the check as is; the real one also records a refusal (spec 0011)
+    withSignInCheck: fn().mockImplementation(
+      (_userId: string, _meta: unknown, check: () => Promise<unknown>) =>
+        check(),
+    ),
   };
   const endpoint = { publicClient: fn().mockResolvedValue(CLIENT) };
   const grants = {
@@ -124,7 +129,7 @@ describe('POST /auth/mobile/login', () => {
     expect(t.grants.startMobile).toHaveBeenCalledWith(GRANT, {
       user: { id: 'u1', name: 'Bong', email: 'b@welinc.com' },
       deviceName: 'Pixel 8',
-      ip: '10.0.0.2',
+      meta: { ip: '10.0.0.2', device: 'Pixel 8', userAgent: null },
     });
     expect(t.signInStep.start).not.toHaveBeenCalled();
   });
@@ -159,7 +164,10 @@ describe('POST /auth/mobile/login/verify-email and resend', () => {
     const answer = await t.controller.verifyEmail(VERIFY, t.req, t.res);
     expect(answer).toMatchObject({ accessToken: 'a' });
     expect(t.endpoint.publicClient).toHaveBeenCalledWith('vmms-mobile');
-    expect(t.auth.assertCanSignIn).toHaveBeenCalledWith('u1');
+    expect(t.auth.assertCanSignIn).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({ ip: '10.0.0.2' }),
+    );
     expect(t.grants.checkMobileGrant).toHaveBeenCalledWith(CLIENT, 'u1');
     expect(t.headers['Cache-Control']).toBe('no-store');
   });

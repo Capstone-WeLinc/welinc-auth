@@ -1,11 +1,15 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
-import { Prisma, SystemType, UserChangeAction } from '@prisma/client';
+import { ConflictException } from '@nestjs/common';
+import { AccountEventType, Prisma, SystemType } from '@prisma/client';
+import type { EventInput } from './events/account-events.service';
+import type { RequestMeta } from './events/request-meta';
 import type { AdminRoles } from './roles/catalog.service';
 import type { RoleAssignment } from './roles/catalog.types';
 
-// Spec 0009, AC-19 to AC-21: the admin change record and the admin safety guards.
+// Spec 0009, AC-19 to AC-21: the admin safety guards. Spec 0011: account changes are ACCOUNT
+// events in account_events, written in the change's transaction (AC-6, AC-7).
 
-export type Actor = { id: string; email: string };
+/** Who made a change, and from where (spec 0011, AC-3). The email is never stored. */
+export type Actor = { id: string; email: string; meta?: RequestMeta };
 
 export const SELF_DEACTIVATE = "You can't deactivate your own account.";
 export const SELF_ROLE = "You can't change your own role.";
@@ -46,26 +50,56 @@ export async function lockAccount(
   await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId}::uuid FOR UPDATE`;
 }
 
-/** One UserChange row for `userId`, made by `actor`. */
+/** One account change event for `userId`, made by `actor` (write it with AccountEventsService). */
 export function change(
   userId: string,
   actor: Actor,
-  action: UserChangeAction,
+  type: AccountEventType,
   values: {
     field?: string;
     oldValue?: string | null;
     newValue?: string | null;
+    reason?: string;
+    system?: SystemType;
   } = {},
-): Prisma.UserChangeCreateManyInput {
+): EventInput {
   return {
     userId,
     actorId: actor.id,
-    actorEmail: actor.email,
-    action,
+    type,
     field: values.field ?? null,
     oldValue: values.oldValue ?? null,
     newValue: values.newValue ?? null,
+    reason: values.reason ?? null,
+    system: values.system ?? null,
+    meta: actor.meta,
   };
+}
+
+/**
+ * AC-6: one `ROLE_CHANGED` per system whose roles changed, `system` set, each side holding only
+ * that system's roles in `rolesKey()` form (null for an empty side).
+ */
+export function roleChanges(
+  userId: string,
+  actor: Actor,
+  before: RoleAssignment[],
+  after: RoleAssignment[],
+): EventInput[] {
+  const systems = [...new Set([...before, ...after].map((r) => r.system))];
+  return systems.sort().flatMap((system) => {
+    const old = rolesKey(before.filter((r) => r.system === system)) || null;
+    const now = rolesKey(after.filter((r) => r.system === system)) || null;
+    if (old === now) return [];
+    return [
+      change(userId, actor, AccountEventType.ROLE_CHANGED, {
+        field: 'roles',
+        oldValue: old,
+        newValue: now,
+        system,
+      }),
+    ];
+  });
 }
 
 /**
@@ -94,25 +128,4 @@ export async function assertAnotherAdmin(
   if (others === 0) {
     throw new ConflictException(`This is the last ${system} admin.`);
   }
-}
-
-export type ChangeCursor = { createdAt: Date; id: string };
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function encodeChangeCursor(row: ChangeCursor): string {
-  return Buffer.from(
-    `${row.createdAt.toISOString()}|${row.id}`,
-    'utf8',
-  ).toString('base64url');
-}
-
-export function decodeChangeCursor(cursor: string): ChangeCursor {
-  const [at, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
-  const createdAt = new Date(at ?? '');
-  if (!id || !UUID_RE.test(id) || Number.isNaN(createdAt.getTime())) {
-    throw new BadRequestException('Invalid cursor');
-  }
-  return { createdAt, id };
 }

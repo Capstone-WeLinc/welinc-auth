@@ -29,7 +29,8 @@ export async function hashSeedPasswords(
  */
 export async function resetUsers(tx: Prisma.TransactionClient) {
   await tx.session.deleteMany({});
-  await tx.userChange.deleteMany({});
+  // Spec 0011, AC-8: append only, so a TRUNCATE (it skips the row trigger), before users
+  await tx.$executeRaw`TRUNCATE "account_events"`;
   // Spec 0009, AC-16 (they also cascade with their users; cleared first to be explicit)
   await tx.verificationCode.deleteMany({});
   await tx.userRoleAssignment.deleteMany({});

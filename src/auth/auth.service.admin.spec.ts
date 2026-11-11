@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument -- the faked database is untyped on purpose */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- the faked database is untyped on purpose */
 import {
   describe,
   it,
@@ -17,7 +17,7 @@ import { fakeConfig } from '../config/fake-config.setup';
 import type { TokenService } from './tokens/token.service';
 import {
   SystemType,
-  UserChangeAction,
+  AccountEventType,
   VerificationPurpose,
 } from '@prisma/client';
 import type { CodeService } from './codes/code.service';
@@ -26,8 +26,8 @@ import { FakeCatalogService } from './testing/catalog.fake';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
+import { AccountEventsService } from './events/account-events.service';
 import { SessionService } from './sessions/session.service';
-import { encodeChangeCursor } from './user-changes';
 
 // VRMS spec 0009: admin safety guards (AC-19), the change record (AC-20, AC-21).
 // Suite spec 0009: setup and reset codes through the code service (AC-12 to AC-15), and an
@@ -76,7 +76,7 @@ function build(env: Record<string, string | undefined> = {}) {
       create: fn(),
       count: fn(),
     },
-    userChange: { create: fn(), createMany: fn(), findMany: fn() },
+    accountEvent: { create: fn(), createMany: fn(), findMany: fn() },
     $queryRaw: fn(),
     $transaction: fn(),
   };
@@ -141,6 +141,7 @@ function build(env: Record<string, string | undefined> = {}) {
     sessions,
     new FakeCatalogService(),
     codes as unknown as CodeService,
+    new AccountEventsService(db as unknown as PrismaService),
   );
   return { service, db, sendMail, sessions, endAllForUser, codes, codeRow };
 }
@@ -158,8 +159,8 @@ function adminLocks(db: ReturnType<typeof build>['db']) {
 /** The UserChange rows written, from either create or createMany. */
 function changesWritten(db: ReturnType<typeof build>['db']) {
   return [
-    ...db.userChange.create.mock.calls.map((c) => c[0].data),
-    ...db.userChange.createMany.mock.calls.flatMap((c) => c[0].data),
+    ...db.accountEvent.create.mock.calls.map((c) => c[0].data),
+    ...db.accountEvent.createMany.mock.calls.flatMap((c) => c[0].data),
   ];
 }
 
@@ -235,8 +236,7 @@ describe('AuthService admin writes', () => {
         expect.objectContaining({
           userId: USER_ID,
           actorId: ADMIN_ID,
-          actorEmail: 'admin@welinc.com',
-          action: UserChangeAction.DEACTIVATED,
+          type: AccountEventType.DEACTIVATED,
           field: null,
         }),
       ]);
@@ -254,7 +254,7 @@ describe('AuthService admin writes', () => {
 
       expect(adminLocks(db)).toHaveLength(0);
       expect(changesWritten(db)[0]).toMatchObject({
-        action: UserChangeAction.ACTIVATED,
+        type: AccountEventType.ACTIVATED,
       });
     });
 
@@ -343,7 +343,7 @@ describe('AuthService admin writes', () => {
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
           userId: USER_ID,
-          action: UserChangeAction.DELETED,
+          type: AccountEventType.DELETED,
         }),
       ]);
     });
@@ -367,7 +367,7 @@ describe('AuthService admin writes', () => {
         }),
       );
       expect(changesWritten(db)[0]).toMatchObject({
-        action: UserChangeAction.UNLOCKED,
+        type: AccountEventType.UNLOCKED,
       });
     });
 
@@ -584,13 +584,13 @@ describe('AuthService admin writes', () => {
 
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
-          action: UserChangeAction.UPDATED,
+          type: AccountEventType.UPDATED,
           field: 'name',
           oldValue: 'Pedro',
           newValue: 'Pedro Cruz',
         }),
         expect.objectContaining({
-          action: UserChangeAction.UPDATED,
+          type: AccountEventType.UPDATED,
           field: 'email',
           oldValue: 'pedro@welinc.com',
           newValue: 'pedro.cruz@welinc.com',
@@ -620,10 +620,12 @@ describe('AuthService admin writes', () => {
 
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
-          action: UserChangeAction.ROLE_CHANGED,
+          type: AccountEventType.ROLE_CHANGED,
           field: 'roles',
-          oldValue: 'MECHANIC@VRMS,OPERATIONS@BMS',
-          newValue: 'CHIEF_MECHANIC@VRMS,OPERATIONS@BMS',
+          // Spec 0011, AC-6: only the system that changed
+          system: SystemType.VRMS,
+          oldValue: 'MECHANIC@VRMS',
+          newValue: 'CHIEF_MECHANIC@VRMS',
         }),
       ]);
     });
@@ -634,7 +636,7 @@ describe('AuthService admin writes', () => {
       await service.updateUser(USER_ID, { isActive: false }, actor);
 
       expect(changesWritten(db)).toEqual([
-        expect.objectContaining({ action: UserChangeAction.DEACTIVATED }),
+        expect.objectContaining({ type: AccountEventType.DEACTIVATED }),
       ]);
     });
 
@@ -653,8 +655,8 @@ describe('AuthService admin writes', () => {
         actor,
       );
 
-      expect(db.userChange.createMany).not.toHaveBeenCalled();
-      expect(db.userChange.create).not.toHaveBeenCalled();
+      expect(db.accountEvent.createMany).not.toHaveBeenCalled();
+      expect(db.accountEvent.create).not.toHaveBeenCalled();
     });
 
     // Suite spec 0009, AC-21: an admin changing someone else's email
@@ -820,8 +822,15 @@ describe('AuthService admin writes', () => {
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
           userId: USER_ID,
-          action: UserChangeAction.CREATED,
+          type: AccountEventType.CREATED,
           field: null,
+        }),
+        // Spec 0011, AC-6: one ROLE_CHANGED per system granted
+        expect.objectContaining({
+          type: AccountEventType.ROLE_CHANGED,
+          system: SystemType.VRMS,
+          oldValue: null,
+          newValue: 'MECHANIC@VRMS',
         }),
       ]);
     });
@@ -1017,7 +1026,7 @@ describe('AuthService password links and reset', () => {
       expect(sendMail.mock.calls[0][0].text).toContain('1 hour');
     });
 
-    it("records RESET_SENT after a successful send by an admin of the user's system", async () => {
+    it("records CODE_SENT after a successful send by an admin of the user's system", async () => {
       const { service, db } = build();
       db.user.findUnique.mockResolvedValue(target());
 
@@ -1027,8 +1036,9 @@ describe('AuthService password links and reset', () => {
         expect.objectContaining({
           userId: USER_ID,
           actorId: ADMIN_ID,
-          actorEmail: 'admin@welinc.com',
-          action: UserChangeAction.RESET_SENT,
+          // Spec 0011: RESET_SENT became CODE_SENT with the code's purpose
+          type: AccountEventType.CODE_SENT,
+          category: 'CODE',
         }),
       ]);
     });
@@ -1181,129 +1191,6 @@ describe('AuthService password links and reset', () => {
         'PASSWORD_CHANGED',
       );
     });
-  });
-});
-
-describe('AuthService.getUserChanges', () => {
-  const row = (n: number) => ({
-    id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
-    action: UserChangeAction.UPDATED,
-    field: 'name',
-    oldValue: 'a',
-    newValue: 'b',
-    actorId: ADMIN_ID,
-    actorEmail: 'admin@welinc.com',
-    createdAt: new Date(NOW.getTime() - n * 1000),
-  });
-
-  function arrange(rows: ReturnType<typeof row>[] = []) {
-    const ctx = build();
-    ctx.db.user.findUnique.mockResolvedValue({
-      id: USER_ID,
-      roles: [{ role: 'MECHANIC', system: SystemType.VRMS }],
-    });
-    ctx.db.userChange.findMany.mockResolvedValue(rows);
-    return ctx;
-  }
-
-  // covers: AC-21
-  it('answers 404 for an unknown user', async () => {
-    const { service, db } = arrange();
-    db.user.findUnique.mockResolvedValue(null);
-
-    await expect(
-      service.getUserChanges(USER_ID, {}, actor),
-    ).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('returns rows with an ISO createdAt and no cursor when everything fits', async () => {
-    const { service } = arrange([row(1), row(2)]);
-
-    const result = await service.getUserChanges(USER_ID, {}, actor);
-
-    expect(result.nextCursor).toBeNull();
-    expect(result.data).toHaveLength(2);
-    expect(result.data[0]).toEqual({
-      ...row(1),
-      createdAt: '2026-10-27T07:59:59.000Z',
-    });
-  });
-
-  it('asks for newest first, one extra row, and a default page of 50', async () => {
-    const { service, db } = arrange();
-
-    await service.getUserChanges(USER_ID, {}, actor);
-
-    expect(db.userChange.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: 51,
-        where: { userId: USER_ID },
-      }),
-    );
-  });
-
-  it('honours the limit and returns a cursor pointing at the last row on the page', async () => {
-    const { service } = arrange([row(1), row(2), row(3)]);
-
-    const result = await service.getUserChanges(USER_ID, { limit: 2 }, actor);
-
-    expect(result.data.map((r) => r.id)).toEqual([row(1).id, row(2).id]);
-    expect(result.nextCursor).toBe(
-      encodeChangeCursor({ createdAt: row(2).createdAt, id: row(2).id }),
-    );
-  });
-
-  it('pages on (createdAt, id) after the cursor', async () => {
-    const { service, db } = arrange();
-    const last = row(2);
-    const cursor = encodeChangeCursor({
-      createdAt: last.createdAt,
-      id: last.id,
-    });
-
-    await service.getUserChanges(USER_ID, { cursor, limit: 2 }, actor);
-
-    expect(db.userChange.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          userId: USER_ID,
-          OR: [
-            { createdAt: { lt: last.createdAt } },
-            { createdAt: last.createdAt, id: { lt: last.id } },
-          ],
-        },
-      }),
-    );
-  });
-
-  it('answers 400 for a cursor that was tampered with', async () => {
-    const { service, db } = arrange();
-
-    await expect(
-      service.getUserChanges(USER_ID, { cursor: 'garbage' }, actor),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(db.userChange.findMany).not.toHaveBeenCalled();
-  });
-
-  it('never selects anything beyond the documented fields', async () => {
-    const { service, db } = arrange();
-
-    await service.getUserChanges(USER_ID, {}, actor);
-
-    const { select } = db.userChange.findMany.mock.calls[0][0];
-    expect(Object.keys(select).sort()).toEqual(
-      [
-        'action',
-        'actorEmail',
-        'actorId',
-        'createdAt',
-        'field',
-        'id',
-        'newValue',
-        'oldValue',
-      ].sort(),
-    );
   });
 });
 

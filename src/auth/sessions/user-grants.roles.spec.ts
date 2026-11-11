@@ -68,7 +68,7 @@ const login = async (service: UserGrantsService, client = vmmsMobile) =>
   service.startMobile(await service.checkMobileGrant(client, USER.id), {
     user: USER,
     deviceName: null,
-    ip: null,
+    meta: { ip: null, device: null, userAgent: null },
   });
 
 async function refusal(promise: Promise<unknown>) {

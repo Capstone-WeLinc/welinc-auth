@@ -27,6 +27,7 @@ import {
 import { MobileLoginDto } from '../dto/mobile-login.dto';
 import { oauthError } from '../clients/oauth-error';
 import { coded } from '../errors';
+import { requestMeta, type RequestMeta } from '../events/request-meta';
 import {
   UserGrantsService,
   type MobileGrant,
@@ -50,6 +51,11 @@ export type MobileTokenBody = {
 export function deviceNameOf(raw: string): string | null {
   const trimmed = raw.trim().slice(0, 100);
   return trimmed === '' ? null : trimmed;
+}
+
+/** A mobile request's meta: the device name the app reported is the device (spec 0011, AC-3). */
+function mobileMeta(req: Request, deviceName: string): RequestMeta {
+  return requestMeta(req, { deviceName: deviceNameOf(deviceName) });
 }
 
 /**
@@ -97,14 +103,15 @@ export class MobileController {
     }
 
     const client = await this.mobileClient(dto.clientId);
-    const { user } = await this.auth.checkCredentials({
-      email: dto.email,
-      password: dto.password,
-    });
+    const meta = mobileMeta(req, dto.deviceName);
+    const { user } = await this.auth.checkCredentials(
+      { email: dto.email, password: dto.password },
+      meta,
+    );
     // NO_SYSTEM_ACCESS and APP_NOT_ALLOWED before the email step (suite spec 0009, AC-11)
-    const grant = await this.grants.checkMobileGrant(client, user.id);
+    const grant = await this.checkGrant(client, user.id, meta);
     if (!user.emailVerified) return this.signInStep.start(user);
-    return this.issue(grant, user, dto.deviceName, req);
+    return this.issue(grant, user, dto.deviceName, meta);
   }
 
   /**
@@ -125,16 +132,17 @@ export class MobileController {
       grant: MobileGrant;
       user: { id: string; name: string; email: string };
     } | null = null;
+    const meta = mobileMeta(req, dto.deviceName);
     await this.signInStep.verify(dto.challengeId, dto.code, async (userId) => {
       const client = await this.mobileClient(dto.clientId);
-      const user = await this.auth.assertCanSignIn(userId);
+      const user = await this.auth.assertCanSignIn(userId, meta);
       found = {
-        grant: await this.grants.checkMobileGrant(client, userId),
+        grant: await this.checkGrant(client, userId, meta),
         user,
       };
     });
     const { grant, user } = found!;
-    return this.issue(grant, user, dto.deviceName, req);
+    return this.issue(grant, user, dto.deviceName, meta);
   }
 
   /** Suite spec 0009, AC-11: a new code on the same ticket (AC-10). */
@@ -163,17 +171,31 @@ export class MobileController {
     return client;
   }
 
+  /** `checkMobileGrant`, with a refusal recorded as a failed sign in (spec 0011, AC-1). */
+  private checkGrant(
+    client: OAuthClient,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<MobileGrant> {
+    return this.auth.withSignInCheck(
+      userId,
+      meta,
+      () => this.grants.checkMobileGrant(client, userId),
+      { system: client.system ?? undefined, clientId: client.id },
+    );
+  }
+
   /** The one way a mobile login ends: a session and the token body, in camel case. */
   private async issue(
     grant: MobileGrant,
     user: { id: string; name: string; email: string },
     deviceName: string,
-    req: Request,
+    meta: RequestMeta,
   ): Promise<MobileTokenBody> {
     const answer: UserTokenAnswer = await this.grants.startMobile(grant, {
       user: { id: user.id, name: user.name, email: user.email },
       deviceName: deviceNameOf(deviceName),
-      ip: req.ip ?? null,
+      meta,
     });
     return {
       accessToken: answer.access_token,

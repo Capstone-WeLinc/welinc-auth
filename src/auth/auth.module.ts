@@ -40,6 +40,8 @@ import { DirectoryService } from './directory/directory.service';
 import { CodeService } from './codes/code.service';
 import { CodeErrorFilter } from './codes/code-errors';
 import { SignInStepService } from './codes/sign-in-step.service';
+import { AccountEventsService } from './events/account-events.service';
+import { ActivityController } from './events/activity.controller';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -73,6 +75,8 @@ import { SignInStepService } from './codes/sign-in-step.service';
     // Spec 0009: the one code service, the sign in step, and 429/503 for their errors
     CodeService,
     SignInStepService,
+    // Spec 0011: the one writer of account_events
+    AccountEventsService,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
@@ -85,6 +89,7 @@ import { SignInStepService } from './codes/sign-in-step.service';
     SystemsController,
     TokenController,
     DirectoryController,
+    ActivityController,
   ],
 })
 export default class AuthModule {}

@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  AccountEventType,
   Prisma,
   SessionEndReason,
   SessionKind,
@@ -10,6 +11,8 @@ import { PrismaService } from '../../shared/prisma.service';
 import { hashOpaque, isOpaqueShape, newOpaque } from './opaque';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 import { deviceLabel } from './device-label';
+import { AccountEventsService } from '../events/account-events.service';
+import type { RequestMeta } from '../events/request-meta';
 
 type Db = Prisma.TransactionClient | PrismaService;
 
@@ -86,6 +89,7 @@ export class SessionService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(SESSION_SETTINGS) readonly settings: SessionSettings,
+    private readonly events: AccountEventsService,
   ) {}
 
   /** `last_activity_at` + the idle limit for the session's kind. */
@@ -189,14 +193,15 @@ export class SessionService {
    * advisory lock on the user, so two logins at once can't both pass the cap; the browser's
    * previous SSO session ends (`LOGOUT`); sessions already past a cutoff are ended; an 11th live
    * session ends the one with the oldest `last_activity_at` (`MAX_SESSIONS`). The SSO handle and
-   * the session id are always new (session fixation).
+   * the session id are always new (session fixation). Spec 0011, AC-1: `SIGNED_IN` in the same
+   * transaction.
    */
   async createWeb(input: {
     userId: string;
-    userAgent: string | null;
-    ip: string | null;
+    meta: RequestMeta;
     previousHandle: unknown;
   }): Promise<{ session: Session; handle: string }> {
+    const { meta } = input;
     const handle = newOpaque();
     const now = new Date();
     const session = await this.prisma.$transaction(async (tx) => {
@@ -214,14 +219,14 @@ export class SessionService {
 
       await this.makeRoom(tx, input.userId, now);
 
-      return tx.session.create({
+      const created = await tx.session.create({
         data: {
           userId: input.userId,
           kind: SessionKind.WEB,
           loginClientId: 'portal',
-          userAgent: input.userAgent?.slice(0, 512) ?? null,
-          createdIp: input.ip,
-          lastSeenIp: input.ip,
+          userAgent: meta.userAgent,
+          createdIp: meta.ip,
+          lastSeenIp: meta.ip,
           ssoHandleHash: hashOpaque(handle),
           createdAt: now,
           lastActivityAt: now,
@@ -231,6 +236,15 @@ export class SessionService {
           ),
         },
       });
+      await this.events.record(tx, {
+        userId: input.userId,
+        actorId: input.userId,
+        type: AccountEventType.SIGNED_IN,
+        sessionId: created.id,
+        clientId: 'portal',
+        meta,
+      });
+      return created;
     });
     this.logger.log(
       `session created sid=${session.id} user=${input.userId} kind=WEB client=portal`,
@@ -242,7 +256,8 @@ export class SessionService {
    * Creates a mobile session at a native login (spec 0003, AC-28, AC-6), with its first refresh
    * token for `clientId`, in one transaction under the same per user lock and cap as a web
    * login. A mobile session has no SSO handle and no absolute limit; it rolls 7 days on each
-   * refresh (AC-2).
+   * refresh (AC-2). Spec 0011, AC-1, AC-4: `SIGNED_IN` and the first `SYSTEM_OPENED` in the same
+   * transaction.
    */
   async createMobile(input: {
     userId: string;
@@ -250,8 +265,9 @@ export class SessionService {
     /** The system the first access token is signed for (`sessions.audiences`). */
     audience: SystemType;
     deviceName: string | null;
-    ip: string | null;
+    meta: RequestMeta;
   }): Promise<{ session: Session; refreshToken: string }> {
+    const { meta } = input;
     const refreshToken = newOpaque();
     const now = new Date();
     const session = await this.prisma.$transaction(async (tx) => {
@@ -264,8 +280,9 @@ export class SessionService {
           loginClientId: input.clientId,
           deviceName: input.deviceName,
           audiences: [input.audience],
-          createdIp: input.ip,
-          lastSeenIp: input.ip,
+          userAgent: meta.userAgent,
+          createdIp: meta.ip,
+          lastSeenIp: meta.ip,
           createdAt: now,
           lastActivityAt: now,
           idleExpiresAt: this.idleCutoff(SessionKind.MOBILE, now),
@@ -279,6 +296,21 @@ export class SessionService {
           tokenHash: hashOpaque(refreshToken),
         },
       });
+      const opened = {
+        userId: input.userId,
+        actorId: input.userId,
+        sessionId: created.id,
+        clientId: input.clientId,
+        meta,
+      };
+      await this.events.recordMany(tx, [
+        { ...opened, type: AccountEventType.SIGNED_IN },
+        {
+          ...opened,
+          type: AccountEventType.SYSTEM_OPENED,
+          system: input.audience,
+        },
+      ]);
       return created;
     });
     this.logger.log(
