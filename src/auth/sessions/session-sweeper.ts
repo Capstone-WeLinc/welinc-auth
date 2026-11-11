@@ -1,7 +1,16 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import {
+  AccountEventType,
+  Prisma,
+  SessionEndReason,
+  SessionKind,
+} from '@prisma/client';
+import type { Env } from '../../config/env';
 import { PrismaService } from '../../shared/prisma.service';
+import { AccountEventsService } from '../events/account-events.service';
+import { deviceLabel } from './device-label';
 import { CODE_RETENTION_MS } from '../codes/code-config';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 
@@ -22,6 +31,8 @@ export type SweepCounts = {
   requestsDeleted: number;
   codesDeleted: number;
   verificationCodesDeleted: number;
+  /** Spec 0011, AC-9: sign in, session and code events past retention. */
+  eventsDeleted: number;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -29,8 +40,11 @@ type Tx = Prisma.TransactionClient;
 type EndedRow = {
   id: string;
   user_id: string;
-  end_reason: string;
+  end_reason: SessionEndReason;
   login_client_id: string;
+  kind: SessionKind;
+  device_name: string | null;
+  user_agent: string | null;
 };
 
 /**
@@ -45,6 +59,8 @@ export class SessionSweeper {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(SESSION_SETTINGS) private readonly settings: SessionSettings,
+    private readonly events: AccountEventsService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'session-sweep' })
@@ -104,13 +120,40 @@ export class SessionSweeper {
       { timeout: 120_000, maxWait: 10_000 },
     );
     if (counts) {
+      // Only the replica that held the lock; each batch its own transaction (AC-9)
+      const eventsDeleted = await this.sweepEvents(now);
       this.logger.log(
-        `session sweep ended=${counts.ended} graces=${counts.gracesCleared} tokens=${counts.tokensDeleted} sessions=${counts.sessionsDeleted} requests=${counts.requestsDeleted} codes=${counts.codesDeleted} verificationCodes=${counts.verificationCodesDeleted}`,
+        `session sweep ended=${counts.ended} graces=${counts.gracesCleared} tokens=${counts.tokensDeleted} sessions=${counts.sessionsDeleted} requests=${counts.requestsDeleted} codes=${counts.codesDeleted} verificationCodes=${counts.verificationCodesDeleted} events=${eventsDeleted}`,
       );
+      return { ...counts, eventsDeleted };
     } else {
       this.logger.log('session sweep skipped: another replica holds the lock');
     }
-    return counts;
+    return null;
+  }
+
+  /**
+   * Spec 0011, AC-9: deletes non ACCOUNT events older than ACCOUNT_EVENT_RETENTION_DAYS, 1,000 at
+   * a time. Each batch is its own transaction that first turns `welinc.event_sweep` on for that
+   * transaction only, the one way past the append only trigger. ACCOUNT rows are never deleted.
+   */
+  async sweepEvents(now = new Date()): Promise<number> {
+    const days = this.config.get('ACCOUNT_EVENT_RETENTION_DAYS', {
+      infer: true,
+    });
+    const before = new Date(now.getTime() - days * 86_400_000);
+    let total = 0;
+    for (;;) {
+      const deleted = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT set_config('welinc.event_sweep', 'on', true)`;
+        return tx.$executeRaw`
+          DELETE FROM "account_events" WHERE "id" IN (SELECT "id" FROM "account_events"
+            WHERE "category" <> 'ACCOUNT' AND "created_at" < ${before}
+            LIMIT ${SWEEP_BATCH})`;
+      });
+      total += deleted;
+      if (deleted < SWEEP_BATCH) return total;
+    }
   }
 
   /**
@@ -129,12 +172,32 @@ export class SessionSweeper {
         WHERE "id" IN (SELECT "id" FROM "sessions" WHERE "ended_at" IS NULL
           AND ("idle_expires_at" <= ${now} OR "absolute_expires_at" <= ${now})
           LIMIT ${SWEEP_BATCH})
-        RETURNING "id", "user_id", "end_reason", "login_client_id"`;
+        RETURNING "id", "user_id", "end_reason", "login_client_id", "kind", "device_name", "user_agent"`;
       if (rows.length === 0) break;
       const ids = rows.map((row) => row.id);
       await tx.$executeRaw`
         UPDATE "refresh_tokens" SET "used_at" = ${now}
         WHERE "session_id" = ANY(${ids}::uuid[]) AND "used_at" IS NULL`;
+      // Spec 0011, AC-4: one SESSION_ENDED each, nobody acting, no address, the session's device
+      await this.events.recordMany(
+        tx,
+        rows.map((row) => ({
+          userId: row.user_id,
+          type: AccountEventType.SESSION_ENDED,
+          reason: row.end_reason,
+          sessionId: row.id,
+          clientId: row.login_client_id,
+          meta: {
+            ip: null,
+            device: deviceLabel({
+              kind: row.kind,
+              userAgent: row.user_agent,
+              deviceName: row.device_name,
+            }),
+            userAgent: row.user_agent,
+          },
+        })),
+      );
       // AC-39: sid, user, reason and client only
       for (const row of rows) {
         this.logger.log(

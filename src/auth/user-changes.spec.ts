@@ -1,14 +1,14 @@
 import { describe, it, expect, jest } from '@jest/globals';
-import { BadRequestException, ConflictException } from '@nestjs/common';
-import { SystemType, UserChangeAction, type Prisma } from '@prisma/client';
+import { ConflictException, HttpException } from '@nestjs/common';
+import { AccountEventType, SystemType, type Prisma } from '@prisma/client';
 import {
   adminSystems,
   assertAnotherAdmin,
   change,
-  decodeChangeCursor,
-  encodeChangeCursor,
+  roleChanges,
   rolesKey,
 } from './user-changes';
+import { decodeEventCursor, encodeEventCursor } from './events/event-cursor';
 
 const ID = '3f2b8c1e-5a4d-4e6f-9a7b-1c2d3e4f5a6b';
 
@@ -119,22 +119,24 @@ describe('change', () => {
   const actor = { id: 'admin-1', email: 'admin@welinc.com' };
 
   // covers: AC-20
-  it('names the actor and defaults the field and values to null', () => {
-    const row = change('user-1', actor, UserChangeAction.CREATED);
+  it('names the actor, never stores the email, and defaults the rest to null', () => {
+    const row = change('user-1', actor, AccountEventType.CREATED);
 
     expect(row).toEqual({
       userId: 'user-1',
       actorId: 'admin-1',
-      actorEmail: 'admin@welinc.com',
-      action: UserChangeAction.CREATED,
+      type: AccountEventType.CREATED,
       field: null,
       oldValue: null,
       newValue: null,
+      reason: null,
+      system: null,
+      meta: undefined,
     });
   });
 
   it('keeps the field with its old and new value for an update', () => {
-    const row = change('user-1', actor, UserChangeAction.UPDATED, {
+    const row = change('user-1', actor, AccountEventType.UPDATED, {
       field: 'name',
       oldValue: 'Ana',
       newValue: 'Anna',
@@ -148,13 +150,63 @@ describe('change', () => {
   });
 
   it('stores a null old value as null, not as the string "null"', () => {
-    const row = change('user-1', actor, UserChangeAction.UPDATED, {
+    const row = change('user-1', actor, AccountEventType.UPDATED, {
       field: 'contact',
       oldValue: null,
       newValue: '0917',
     });
 
     expect(row.oldValue).toBeNull();
+  });
+});
+
+// covers: spec 0011 AC-6 (one ROLE_CHANGED per system that changed)
+describe('roleChanges', () => {
+  const actor = { id: 'admin-1', email: 'admin@welinc.com' };
+  const V = SystemType.VRMS;
+  const B = SystemType.BMS;
+  const M = SystemType.VMMS;
+
+  it('writes one row per system that changed, only that system on each side', () => {
+    const rows = roleChanges(
+      'user-1',
+      actor,
+      [
+        { role: 'MECHANIC', system: V },
+        { role: 'ADMIN', system: B },
+      ],
+      [
+        { role: 'CHIEF_MECHANIC', system: V },
+        { role: 'ADMIN', system: B },
+        { role: 'DRIVER', system: M },
+      ],
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        type: AccountEventType.ROLE_CHANGED,
+        system: M,
+        field: 'roles',
+        oldValue: null,
+        newValue: 'DRIVER@VMMS',
+      }),
+      expect.objectContaining({
+        system: V,
+        oldValue: 'MECHANIC@VRMS',
+        newValue: 'CHIEF_MECHANIC@VRMS',
+      }),
+    ]);
+  });
+
+  it('writes null for a system fully removed, and nothing when nothing changed', () => {
+    const roles = [{ role: 'ADMIN', system: B }];
+    expect(roleChanges('user-1', actor, roles, roles)).toEqual([]);
+    expect(roleChanges('user-1', actor, roles, [])).toEqual([
+      expect.objectContaining({
+        system: B,
+        oldValue: 'ADMIN@BMS',
+        newValue: null,
+      }),
+    ]);
   });
 });
 
@@ -227,19 +279,19 @@ describe('assertAnotherAdmin', () => {
   });
 });
 
-describe('change cursor', () => {
-  // covers: AC-21
+// covers: spec 0011 Query rules, AC-14 (INVALID_CURSOR)
+describe('event cursor', () => {
   it('round trips a createdAt and id', () => {
     const row = { createdAt: new Date('2026-10-27T08:30:00.123Z'), id: ID };
 
-    const decoded = decodeChangeCursor(encodeChangeCursor(row));
+    const decoded = decodeEventCursor(encodeEventCursor(row));
 
     expect(decoded.id).toBe(ID);
     expect(decoded.createdAt.toISOString()).toBe('2026-10-27T08:30:00.123Z');
   });
 
   it('is safe to put in a URL', () => {
-    const cursor = encodeChangeCursor({
+    const cursor = encodeEventCursor({
       createdAt: new Date('2026-10-27T08:30:00.123Z'),
       id: ID,
     });
@@ -265,7 +317,18 @@ describe('change cursor', () => {
       Buffer.from('2026-10-27T08:30:00.000Z', 'utf8').toString('base64url'),
     ],
   ])('rejects a tampered cursor: %s', (_label, cursor) => {
-    expect(() => decodeChangeCursor(cursor)).toThrow(BadRequestException);
-    expect(() => decodeChangeCursor(cursor)).toThrow('Invalid cursor');
+    const error = ((): unknown => {
+      try {
+        decodeEventCursor(cursor);
+        return null;
+      } catch (e: unknown) {
+        return e;
+      }
+    })();
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as HttpException).getResponse()).toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_CURSOR',
+    });
   });
 });

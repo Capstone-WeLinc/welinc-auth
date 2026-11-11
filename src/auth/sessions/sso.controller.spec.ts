@@ -39,6 +39,11 @@ function build(hits = 1) {
   const auth = {
     checkCredentials: fn().mockResolvedValue({ user: USER }),
     assertCanSignIn: fn().mockResolvedValue(USER),
+    // Runs the check as is; the real one also records a refusal (spec 0011)
+    withSignInCheck: fn().mockImplementation(
+      (_userId: string, _meta: unknown, check: () => Promise<unknown>) =>
+        check(),
+    ),
   };
   const signInStep = {
     start: fn().mockResolvedValue(STEP),
@@ -278,6 +283,7 @@ describe('the sign in step (suite spec 0009)', () => {
     expect(t.headers['Cache-Control']).toBe('no-store');
     expect(t.signInStep.start).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'u1', email: 'm@welinc.com' }),
+      expect.objectContaining({ ip: '10.0.0.1' }),
     );
     expect(t.sessions.createWeb).not.toHaveBeenCalled();
     expect(t.cookie).not.toHaveBeenCalled();
@@ -311,10 +317,17 @@ describe('the sign in step (suite spec 0009)', () => {
       t.res,
     );
     expect(answer).toBe(ANSWER);
-    expect(t.auth.assertCanSignIn).toHaveBeenCalledWith('u1');
+    expect(t.auth.assertCanSignIn).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({ ip: '10.0.0.1' }),
+    );
     expect(t.launcher.answerFor).toHaveBeenCalledWith(USER);
     expect(t.sessions.createWeb).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'u1', previousHandle: 'h' }),
+      expect.objectContaining({
+        userId: 'u1',
+        previousHandle: 'h',
+        meta: expect.objectContaining({ ip: '10.0.0.1' }),
+      }),
     );
     expect(t.cookie).toHaveBeenCalled();
     expect(t.headers['Cache-Control']).toBe('no-store');
@@ -388,6 +401,9 @@ describe('the sign in step (suite spec 0009)', () => {
         t.res,
       ),
     ).toEqual({ resendAfter: 60 });
-    expect(t.signInStep.resend).toHaveBeenCalledWith(STEP.challengeId);
+    expect(t.signInStep.resend).toHaveBeenCalledWith(
+      STEP.challengeId,
+      expect.objectContaining({ ip: '10.0.0.1' }),
+    );
   });
 });

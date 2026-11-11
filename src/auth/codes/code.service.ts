@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  AccountEventType,
   Prisma,
   VerificationPurpose,
   type VerificationCode,
@@ -9,6 +10,8 @@ import * as crypto from 'crypto';
 import { MailService } from '../../shared/mail.service';
 import { PrismaService } from '../../shared/prisma.service';
 import { lockAccount } from '../user-changes';
+import { AccountEventsService } from '../events/account-events.service';
+import { NO_META, type RequestMeta } from '../events/request-meta';
 import {
   CODE_LIFETIME_MS,
   HOUR_MS,
@@ -44,6 +47,10 @@ export type IssueInput = {
    * (AC-8 moves the new ticket onto it). Nothing is sent and the live code stays.
    */
   onLimited?: (tx: Tx, live: VerificationCode | null) => Promise<void>;
+  /** Spec 0011, AC-5: who asked for the code (an admin's send), the user when left out. */
+  actorId?: string;
+  /** Where the request came from. */
+  meta?: RequestMeta;
 };
 
 export type IssueResult =
@@ -83,7 +90,25 @@ export class CodeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly events: AccountEventsService,
   ) {}
+
+  /** One code event (spec 0011, AC-5): `reason` is the code's purpose. */
+  private codeEvent(
+    tx: Tx | PrismaService,
+    type: AccountEventType,
+    row: { userId: string; purpose: VerificationPurpose },
+    actorId: string | null,
+    meta: RequestMeta | undefined,
+  ) {
+    return this.events.record(tx, {
+      userId: row.userId,
+      actorId,
+      type,
+      reason: row.purpose,
+      meta: meta ?? NO_META,
+    });
+  }
 
   /**
    * AC-2, AC-5: issue a code. Under the user row lock: check the limits, retire the family's live
@@ -187,8 +212,24 @@ export class CodeService {
         `code email failed ${tag}: ${error instanceof Error ? error.message : 'unknown error'}`,
       );
       await this.undoIssue(step, input.challengeHash ?? null);
+      // Its own transaction after the undo (AC-5)
+      await this.codeEvent(
+        this.prisma,
+        AccountEventType.CODE_MAIL_FAILED,
+        input,
+        input.actorId ?? input.userId,
+        input.meta,
+      );
       throw new MailFailedError();
     }
+    // Its own transaction after the mail went out; a crash in between loses only this row
+    await this.codeEvent(
+      this.prisma,
+      AccountEventType.CODE_SENT,
+      input,
+      input.actorId ?? input.userId,
+      input.meta,
+    );
     return {
       kind: 'sent',
       id: step.row.id,
@@ -235,6 +276,8 @@ export class CodeService {
     consume: boolean;
     precheck?: (tx: Tx, row: VerificationCode) => Promise<void>;
     onRight?: (tx: Tx, row: VerificationCode) => Promise<T>;
+    /** Spec 0011: where the try came from, for `CODE_RETIRED` and `CODE_USED`. */
+    meta?: RequestMeta;
   }): Promise<CheckResult<T>> {
     const candidate = await this.prisma.verificationCode.findFirst({
       where:
@@ -273,6 +316,14 @@ export class CodeService {
           this.logger.log(
             `code retired after ${MAX_ATTEMPTS} wrong tries user=${row.userId} purpose=${row.purpose}`,
           );
+          // Commits with the tries update; the caller's 400 comes after (AC-5, AC-7)
+          await this.codeEvent(
+            tx,
+            AccountEventType.CODE_RETIRED,
+            row,
+            null,
+            input.meta,
+          );
           return { kind: 'dead', reason: 'tries' };
         }
         return { kind: 'wrong', attemptsLeft: attemptsLeft(attempts) };
@@ -283,6 +334,13 @@ export class CodeService {
           where: { id: row.id },
           data: { usedAt: now },
         });
+        await this.codeEvent(
+          tx,
+          AccountEventType.CODE_USED,
+          row,
+          row.userId,
+          input.meta,
+        );
       }
       const value = (await input.onRight?.(tx, row)) as T;
       return { kind: 'right', row, value };

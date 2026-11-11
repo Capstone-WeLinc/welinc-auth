@@ -15,16 +15,40 @@ enum SystemType {
   BMS
 }
 
-enum UserChangeAction {
+// Spec 0011: what an account event is about. Each type belongs to one category (the map in
+// src/auth/events/event-types.ts; the migration's CHECK constraint is written from it).
+enum AccountEventCategory {
+  SIGN_IN
+  SESSION
+  CODE
+  ACCOUNT
+}
+
+enum AccountEventType {
+  // SIGN_IN
+  SIGNED_IN
+  SIGN_IN_FAILED
+  LOCKED_OUT
+  // SESSION
+  SYSTEM_OPENED
+  SIGNED_OUT
+  SESSION_ENDED
+  // CODE
+  CODE_SENT
+  CODE_MAIL_FAILED
+  CODE_USED
+  CODE_RETIRED
+  // ACCOUNT
   CREATED
   UPDATED
   ROLE_CHANGED
   ACTIVATED
   DEACTIVATED
   UNLOCKED
-  RESET_SENT
   DELETED
   SESSIONS_ENDED
+  PASSWORD_CHANGED
+  PICTURE_CHANGED
 }
 
 // Spec 0003: a login is a session that welinc-auth tracks on the server.
@@ -67,8 +91,8 @@ model User {
   verificationCodes   VerificationCode[]
   sessions           Session[]            @relation("UserSessions")
   sessionsEnded       Session[]            @relation("SessionsEndedBy")
-  changes             UserChange[]         @relation("UserChanges")
-  changesMade         UserChange[]         @relation("UserChangesMade")
+  events              AccountEvent[]       @relation("AccountEvents")
+  eventsMade          AccountEvent[]       @relation("AccountEventsMade")
 
   @@index([deletedAt])
   @@map("users")
@@ -246,24 +270,47 @@ model AuthorizationCode {
   @@map("authorization_codes")
 }
 
-// Every admin write to a user, written in the same transaction as the change (spec 0009, AC-20).
-// Never holds a password, hash or code. Kept forever; users are soft deleted only.
-model UserChange {
-  id         String           @id @default(uuid()) @db.Uuid
-  userId     String           @map("user_id") @db.Uuid
-  actorId    String           @map("actor_id") @db.Uuid
-  actorEmail String           @map("actor_email") @db.VarChar(255)
-  action     UserChangeAction
-  field      String?          @db.VarChar(50)
-  oldValue   String?          @map("old_value") @db.Text
-  newValue   String?          @map("new_value") @db.Text
-  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+// Spec 0011: everything that happened to an account, in one append only table (replaces
+// user_changes). The migration also holds what Prisma can't say: the CHECK that `type` belongs
+// to `category`, and the trigger that refuses UPDATE always and DELETE unless it is a non
+// ACCOUNT row deleted by the sweep (`welinc.event_sweep` = 'on'). Never holds a password, code,
+// hash, token, challenge id or SSO handle (AC-21). Rows are written in the transaction of the
+// action they record (AC-7).
+model AccountEvent {
+  id           String               @id @default(uuid()) @db.Uuid
+  userId       String               @map("user_id") @db.Uuid
+  // Null: nobody acted (idle end, automatic lock). Equal to userId: the person did it
+  actorId      String?              @map("actor_id") @db.Uuid
+  category     AccountEventCategory
+  type         AccountEventType
+  // Fail reason, session end reason, or code purpose
+  reason       String?              @db.VarChar(40)
+  // The system the event belongs to; null means account wide
+  system       SystemType?
+  // Plain sid, no relation: sessions are purged after SESSION_RETENTION_DAYS
+  sessionId    String?              @map("session_id") @db.Uuid
+  clientId     String?              @map("client_id") @db.Text
+  field        String?              @db.VarChar(50)
+  oldValue     String?              @map("old_value") @db.Text
+  newValue     String?              @map("new_value") @db.Text
+  attemptsLeft Int?                 @map("attempts_left") @db.SmallInt
+  ip           String?              @db.Inet
+  device       String?              @db.VarChar(100)
+  userAgent    String?              @map("user_agent") @db.VarChar(512)
+  // From the offline DB-IP Lite files at write time, when present
+  country      String?              @db.Char(2)
+  network      String?              @db.VarChar(120)
+  asn          Int?
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  user  User @relation("UserChanges", fields: [userId], references: [id])
-  actor User @relation("UserChangesMade", fields: [actorId], references: [id])
+  user  User  @relation("AccountEvents", fields: [userId], references: [id], onDelete: Restrict)
+  actor User? @relation("AccountEventsMade", fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([userId, createdAt(sort: Desc), id(sort: Desc)])
-  @@map("user_changes")
+  @@index([system, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([ip, createdAt(sort: Desc)])
+  @@map("account_events")
 }
 
 // Spec 0002: who may ask welinc-auth for tokens (spec 0001 section 4). Seeded from env by

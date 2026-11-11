@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   HttpStatus,
   Injectable,
   Logger,
@@ -16,12 +17,18 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as dns from 'dns';
 import {
+  AccountEventType,
   Prisma,
   SessionEndReason,
   SystemType,
-  UserChangeAction,
   VerificationPurpose,
 } from '@prisma/client';
+import { AccountEventsService } from './events/account-events.service';
+import { SignInFailReason } from './events/event-types';
+import { NO_META, type RequestMeta } from './events/request-meta';
+
+/** Who sent a code and from where (spec 0011, AC-5); the user themselves when left out. */
+type CodeSender = { actorId?: string; meta?: RequestMeta };
 import { PrismaService } from '../shared/prisma.service';
 import { CatalogService, holdsAdmin } from './roles/catalog.service';
 import type { RoleAssignment } from './roles/catalog.types';
@@ -36,7 +43,6 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { RoleAssignmentDto } from './dto/role-assignment.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { ListChangesQueryDto } from './dto/list-changes.query.dto';
 import { StartEmailChangeDto } from './dto/email-verification.dto';
 import { coded } from './errors';
 import { CodeService, type CheckResult } from './codes/code.service';
@@ -62,10 +68,10 @@ import {
   assertAnotherAdmin,
   change,
   lockAccount,
-  decodeChangeCursor,
-  encodeChangeCursor,
+  roleChanges,
   rolesKey,
 } from './user-changes';
+import type { EventInput } from './events/account-events.service';
 import {
   AdminCaller,
   LOOKUP_LIMIT,
@@ -154,7 +160,21 @@ export async function validateEmailDomain(
 }
 
 const MAX_FAILED_ATTEMPTS = 5;
-const CHANGES_PAGE_SIZE = 50;
+
+/** The stable `code` of a coded error body (spec 0001 section 11), if any. */
+function errorCode(error: unknown): string | undefined {
+  if (!(error instanceof HttpException)) return undefined;
+  const body = error.getResponse();
+  return typeof body === 'object' && body !== null && 'code' in body
+    ? String(body.code)
+    : undefined;
+}
+
+/** Only the part after `@`, for the no account log line (spec 0011, AC-2). */
+export function emailDomain(email: string): string {
+  const at = email.lastIndexOf('@');
+  return at >= 0 ? email.slice(at + 1).toLowerCase() : '';
+}
 const FORGOT_PASSWORD_MESSAGE =
   'If that email is registered, an OTP has been sent.';
 
@@ -259,6 +279,7 @@ export class AuthService {
     private readonly sessions: SessionService,
     private readonly catalog: CatalogService,
     private readonly codes: CodeService,
+    private readonly events: AccountEventsService,
   ) {
     // PORTAL_URL is required and checked at boot (spec 0010)
     const portalUrl = config.get('PORTAL_URL', { infer: true });
@@ -271,7 +292,10 @@ export class AuthService {
    * the failure counter. Which systems the person may enter is decided by the caller (the
    * launcher answer, spec 0007; the mobile grant, spec 0004).
    */
-  async checkCredentials(dto: Pick<LoginDto, 'email' | 'password'>): Promise<{
+  async checkCredentials(
+    dto: Pick<LoginDto, 'email' | 'password'>,
+    meta: RequestMeta,
+  ): Promise<{
     user: SignInUser & { emailVerified: boolean };
   }> {
     // TODO: Transparent migration — if passwordHash starts with '$2b$' (bcrypt),
@@ -300,18 +324,24 @@ export class AuthService {
       },
     });
 
-    // User not found — generic message to prevent user enumeration
+    // User not found — generic message to prevent user enumeration. Spec 0011, AC-2: no row,
+    // one log line with the address and only the email's domain
     if (!user) {
+      this.logger.warn(
+        `sign in for no account ip=${meta.ip ?? '-'} domain=@${emailDomain(dto.email)}`,
+      );
       throw new UnauthorizedException('Invalid credentials');
     }
 
     // Locked account check — must happen before password validation
     if (user.lockedAt !== null) {
+      await this.recordFail(user.id, SignInFailReason.ACCOUNT_LOCKED, meta);
       throw accountLocked();
     }
 
     // Deactivated account
     if (!user.isActive) {
+      await this.recordFail(user.id, SignInFailReason.ACCOUNT_INACTIVE, meta);
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -321,24 +351,19 @@ export class AuthService {
     );
 
     if (!isPasswordValid) {
-      const newAttempts = user.failedLoginAttempts + 1;
-      const shouldLock = newAttempts >= MAX_FAILED_ATTEMPTS;
-
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: {
-          failedLoginAttempts: newAttempts,
-          ...(shouldLock ? { lockedAt: new Date() } : {}),
-        },
-      });
-
-      if (shouldLock) {
+      // The row (and the counter) commit before the error answer (AC-7)
+      const outcome = await this.recordFail(
+        user.id,
+        SignInFailReason.WRONG_PASSWORD,
+        meta,
+      );
+      if (outcome.locked) {
         throw accountLocked();
       }
 
       throw new UnauthorizedException({
         message: 'Invalid credentials',
-        remainingAttempts: MAX_FAILED_ATTEMPTS - newAttempts,
+        remainingAttempts: outcome.attemptsLeft,
         isLocked: false,
       });
     }
@@ -364,7 +389,10 @@ export class AuthService {
    * Spec 0009, AC-9 step (2): the account checks `/auth/login` makes, without a password and
    * without counting anything. Locked: 403 `ACCOUNT_LOCKED`; deactivated or deleted: 401.
    */
-  async assertCanSignIn(userId: string): Promise<SignInUser> {
+  async assertCanSignIn(
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<SignInUser> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
       select: {
@@ -376,15 +404,111 @@ export class AuthService {
         lockedAt: true,
       },
     });
+    // A deleted account counts as no account: no row (spec 0011, AC-1)
     if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (user.lockedAt !== null) throw accountLocked();
-    if (!user.isActive) throw new UnauthorizedException('Invalid credentials');
+    if (user.lockedAt !== null) {
+      await this.recordFail(user.id, SignInFailReason.ACCOUNT_LOCKED, meta);
+      throw accountLocked();
+    }
+    if (!user.isActive) {
+      await this.recordFail(user.id, SignInFailReason.ACCOUNT_INACTIVE, meta);
+      throw new UnauthorizedException('Invalid credentials');
+    }
     return {
       id: user.id,
       name: user.name,
       email: user.email,
       profilePicture: user.profilePicture,
     };
+  }
+
+  /**
+   * Spec 0011, AC-1, AC-1b, AC-7: the one place a refused sign in is recorded, called from every
+   * place that refuses one. Its row commits on its own (callers throw afterwards). A wrong
+   * password moves the counter in one atomic UPDATE in the same transaction as the row: the 5th
+   * writes one `LOCKED_OUT` and no `SIGN_IN_FAILED`, and a parallel try that finds the account
+   * already locked writes `ACCOUNT_LOCKED`. The actor is left null: a refused try is not proof
+   * that the person made it.
+   */
+  async recordFail(
+    userId: string,
+    reason: SignInFailReason,
+    meta: RequestMeta,
+    extra: { system?: SystemType; clientId?: string } = {},
+  ): Promise<{ locked: boolean; attemptsLeft: number }> {
+    const fail = (
+      tx: Prisma.TransactionClient,
+      failReason: SignInFailReason,
+      attemptsLeft: number | null = null,
+    ) =>
+      this.events.record(tx, {
+        userId,
+        type: AccountEventType.SIGN_IN_FAILED,
+        reason: failReason,
+        attemptsLeft,
+        system: extra.system ?? null,
+        clientId: extra.clientId ?? null,
+        meta,
+      });
+
+    if (reason !== SignInFailReason.WRONG_PASSWORD) {
+      await this.prisma.$transaction((tx) => fail(tx, reason));
+      return {
+        locked: reason === SignInFailReason.ACCOUNT_LOCKED,
+        attemptsLeft: 0,
+      };
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const [row] = await tx.$queryRaw<{ attempts: number; locked: boolean }[]>`
+        UPDATE users
+        SET failed_login_attempts = failed_login_attempts + 1,
+            locked_at = CASE WHEN failed_login_attempts + 1 >= ${MAX_FAILED_ATTEMPTS}
+                             THEN now() ELSE locked_at END
+        WHERE id = ${userId}::uuid AND locked_at IS NULL
+        RETURNING failed_login_attempts AS attempts, locked_at IS NOT NULL AS locked`;
+      if (!row) {
+        // Locked by a parallel try between the read and this update
+        await fail(tx, SignInFailReason.ACCOUNT_LOCKED);
+        return { locked: true, attemptsLeft: 0 };
+      }
+      if (row.locked) {
+        await this.events.record(tx, {
+          userId,
+          type: AccountEventType.LOCKED_OUT,
+          clientId: extra.clientId ?? null,
+          meta,
+        });
+        return { locked: true, attemptsLeft: 0 };
+      }
+      const attemptsLeft = Math.max(0, MAX_FAILED_ATTEMPTS - row.attempts);
+      await fail(tx, reason, attemptsLeft);
+      return { locked: false, attemptsLeft };
+    });
+  }
+
+  /**
+   * Runs a sign in's system check (the launcher answer, the mobile grant) and records a
+   * `NO_SYSTEM_ACCESS` or `APP_NOT_ALLOWED` refusal through `recordFail` before it is rethrown.
+   * `APP_NOT_ALLOWED` carries the app's system; `NO_SYSTEM_ACCESS` stays account wide.
+   */
+  async withSignInCheck<T>(
+    userId: string,
+    meta: RequestMeta,
+    check: () => Promise<T>,
+    app: { system?: SystemType; clientId?: string } = {},
+  ): Promise<T> {
+    try {
+      return await check();
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === SignInFailReason.NO_SYSTEM_ACCESS) {
+        await this.recordFail(userId, code, meta, { clientId: app.clientId });
+      } else if (code === SignInFailReason.APP_NOT_ALLOWED) {
+        await this.recordFail(userId, code, meta, app);
+      }
+      throw error;
+    }
   }
 
   async unlockUser(
@@ -412,9 +536,10 @@ export class AuthService {
         data: { lockedAt: null, failedLoginAttempts: 0 },
         select: MANAGED_USER_SELECT,
       });
-      await tx.userChange.create({
-        data: change(userId, actor, UserChangeAction.UNLOCKED),
-      });
+      await this.events.record(
+        tx,
+        change(userId, actor, AccountEventType.UNLOCKED),
+      );
       return updated;
     });
 
@@ -556,9 +681,11 @@ export class AuthService {
           select: MANAGED_USER_SELECT,
         });
 
-        await tx.userChange.create({
-          data: change(created.id, actor, UserChangeAction.CREATED),
-        });
+        // AC-6: CREATED plus one ROLE_CHANGED per system granted
+        await this.events.recordMany(tx, [
+          change(created.id, actor, AccountEventType.CREATED),
+          ...roleChanges(created.id, actor, [], created.roles),
+        ]);
         return created;
       });
     } catch (error) {
@@ -570,6 +697,7 @@ export class AuthService {
     const setupEmailSent = await this.trySendPasswordCode(
       user,
       VerificationPurpose.PASSWORD_SETUP,
+      { actorId: actor.id, meta: actor.meta },
     );
 
     return { ...this.mapScopedUser(user, actor.system), setupEmailSent };
@@ -584,9 +712,10 @@ export class AuthService {
     purpose:
       | typeof VerificationPurpose.PASSWORD_SETUP
       | typeof VerificationPurpose.PASSWORD_RESET,
+    from: CodeSender = {},
   ): Promise<boolean> {
     try {
-      const result = await this.issuePasswordCode(user, purpose);
+      const result = await this.issuePasswordCode(user, purpose, from);
       return result.kind === 'sent';
     } catch (error) {
       if (error instanceof MailFailedError) return false;
@@ -599,10 +728,13 @@ export class AuthService {
     purpose:
       | typeof VerificationPurpose.PASSWORD_SETUP
       | typeof VerificationPurpose.PASSWORD_RESET,
+    from: CodeSender = {},
   ) {
     return this.codes.issue({
       userId: user.id,
       purpose,
+      actorId: from.actorId,
+      meta: from.meta,
       mail: {
         to: user.email,
         build: (code) =>
@@ -681,13 +813,13 @@ export class AuthService {
       await tx.userRoleAssignment.createMany({
         data: roleAssignments.map((r) => ({ userId, ...r })),
       });
-      await tx.userChange.create({
-        data: change(userId, actor, UserChangeAction.ROLE_CHANGED, {
-          field: 'roles',
-          oldValue: rolesKey(current.roles),
-          newValue: rolesKey([...current.roles, ...roleAssignments]),
-        }),
-      });
+      await this.events.recordMany(
+        tx,
+        roleChanges(userId, actor, current.roles, [
+          ...current.roles,
+          ...roleAssignments,
+        ]),
+      );
       return tx.user.findUniqueOrThrow({
         where: { id: userId },
         select: MANAGED_USER_SELECT,
@@ -831,10 +963,10 @@ export class AuthService {
           select: MANAGED_USER_SELECT,
         });
 
-        const changes: Prisma.UserChangeCreateManyInput[] = [];
+        const changes: EventInput[] = [];
         if (isNameChanging) {
           changes.push(
-            change(userId, actor, UserChangeAction.UPDATED, {
+            change(userId, actor, AccountEventType.UPDATED, {
               field: 'name',
               oldValue: existingUser.name,
               newValue: newName,
@@ -843,7 +975,7 @@ export class AuthService {
         }
         if (isEmailChanging) {
           changes.push(
-            change(userId, actor, UserChangeAction.UPDATED, {
+            change(userId, actor, AccountEventType.UPDATED, {
               field: 'email',
               oldValue: existingUser.email,
               newValue: newEmail,
@@ -852,11 +984,7 @@ export class AuthService {
         }
         if (areRolesChanging) {
           changes.push(
-            change(userId, actor, UserChangeAction.ROLE_CHANGED, {
-              field: 'roles',
-              oldValue: rolesKey(existingUser.roles),
-              newValue: rolesKey(roleAssignments),
-            }),
+            ...roleChanges(userId, actor, existingUser.roles, roleAssignments),
           );
         }
         if (isActiveChanging) {
@@ -865,14 +993,12 @@ export class AuthService {
               userId,
               actor,
               dto.isActive
-                ? UserChangeAction.ACTIVATED
-                : UserChangeAction.DEACTIVATED,
+                ? AccountEventType.ACTIVATED
+                : AccountEventType.DEACTIVATED,
             ),
           );
         }
-        if (changes.length > 0) {
-          await tx.userChange.createMany({ data: changes });
-        }
+        await this.events.recordMany(tx, changes);
         if (isEmailChanging) {
           // AC-2: every live code of the user dies with the old address
           await this.codes.retireAll(tx, userId);
@@ -897,6 +1023,7 @@ export class AuthService {
       const setupEmailSent = await this.trySendPasswordCode(
         user,
         VerificationPurpose.PASSWORD_SETUP,
+        { actorId: actor.id, meta: actor.meta },
       );
       return { ...answer, setupEmailSent };
     } catch (error) {
@@ -956,22 +1083,23 @@ export class AuthService {
         data: { isActive: dto.isActive },
         select: MANAGED_USER_SELECT,
       });
-      await tx.userChange.create({
-        data: change(
+      await this.events.record(
+        tx,
+        change(
           userId,
           actor,
           dto.isActive
-            ? UserChangeAction.ACTIVATED
-            : UserChangeAction.DEACTIVATED,
+            ? AccountEventType.ACTIVATED
+            : AccountEventType.DEACTIVATED,
         ),
-      });
+      );
       // Spec 0003 AC-4: deactivation ends every live session at once
       if (!dto.isActive) {
         await this.sessions.endAllForUser(
           tx,
           userId,
           SessionEndReason.DEACTIVATED,
-          { endedById: actor.id },
+          { endedById: actor.id, system: actor.system, ip: actor.meta?.ip },
         );
       }
       return updated;
@@ -1012,12 +1140,15 @@ export class AuthService {
           lockedAt: null,
         },
       });
-      await tx.userChange.create({
-        data: change(userId, actor, UserChangeAction.DELETED),
-      });
+      await this.events.record(
+        tx,
+        change(userId, actor, AccountEventType.DELETED),
+      );
       // Spec 0003 AC-4
       await this.sessions.endAllForUser(tx, userId, SessionEndReason.DELETED, {
         endedById: actor.id,
+        system: actor.system,
+        ip: actor.meta?.ip,
       });
     });
 
@@ -1028,11 +1159,12 @@ export class AuthService {
    * Public (spec 0009, AC-13). Sends nothing to an unknown, inactive or deleted user, and answers
    * the same message either way, also inside the wait or over the limit. An admin of one of the
    * user's systems instead gets 429 `CODE_SEND_LIMIT` or 503 `MAIL_FAILED`, and the send is
-   * recorded as RESET_SENT once it succeeded. A setup code goes out while setup is pending.
+   * recorded as CODE_SENT once it succeeded. A setup code goes out while setup is pending.
    */
   async forgotPassword(
     email: string,
     caller: OptionalCaller = null,
+    meta: RequestMeta = NO_META,
   ): Promise<{ message: string }> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
@@ -1067,7 +1199,11 @@ export class AuthService {
       : VerificationPurpose.PASSWORD_SETUP;
     let result: Awaited<ReturnType<AuthService['issuePasswordCode']>>;
     try {
-      result = await this.issuePasswordCode(user, purpose);
+      // Spec 0011, AC-5: CODE_SENT (once RESET_SENT) names the admin who sent it
+      result = await this.issuePasswordCode(user, purpose, {
+        actorId: admin?.id,
+        meta,
+      });
     } catch (error) {
       if (error instanceof MailFailedError && !admin) {
         return { message: FORGOT_PASSWORD_MESSAGE };
@@ -1077,11 +1213,6 @@ export class AuthService {
     if (result.kind === 'limited') {
       if (admin) throw new CodeSendLimitError(result.retryAfter);
       return { message: FORGOT_PASSWORD_MESSAGE };
-    }
-    if (admin) {
-      await this.prisma.userChange.create({
-        data: change(user.id, admin, UserChangeAction.RESET_SENT),
-      });
     }
     return { message: FORGOT_PASSWORD_MESSAGE };
   }
@@ -1102,7 +1233,11 @@ export class AuthService {
    * AC-14: checks the live setup or reset code without using it up. Wrong tries count (AC-4), and
    * every refusal keeps the old message.
    */
-  async verifyOtp(email: string, otp: string): Promise<{ message: string }> {
+  async verifyOtp(
+    email: string,
+    otp: string,
+    meta: RequestMeta = NO_META,
+  ): Promise<{ message: string }> {
     const user = await this.codeUser(email);
     if (!user) {
       throw new BadRequestException('Invalid or expired OTP');
@@ -1111,6 +1246,7 @@ export class AuthService {
       target: { userId: user.id, purposes: PASSWORD_CODES },
       code: otp,
       consume: false,
+      meta,
     });
     if (result.kind !== 'right') {
       throw new BadRequestException('Invalid or expired OTP');
@@ -1126,6 +1262,7 @@ export class AuthService {
     email: string,
     otp: string,
     newPassword: string,
+    meta: RequestMeta = NO_META,
   ): Promise<{ message: string }> {
     const user = await this.codeUser(email);
     if (!user) {
@@ -1138,6 +1275,7 @@ export class AuthService {
       target: { userId: user.id, purposes: PASSWORD_CODES },
       code: otp,
       consume: true,
+      meta,
       onRight: async (tx) => {
         await tx.user.update({
           where: { id: user.id },
@@ -1150,11 +1288,19 @@ export class AuthService {
             failedLoginAttempts: 0,
           },
         });
+        // Spec 0011, AC-6: with the CODE_USED the check writes
+        await this.events.record(tx, {
+          userId: user.id,
+          actorId: user.id,
+          type: AccountEventType.PASSWORD_CHANGED,
+          meta,
+        });
         // Spec 0003 AC-4: a code reset ends every session of the user
         await this.sessions.endAllForUser(
           tx,
           user.id,
           SessionEndReason.PASSWORD_CHANGED,
+          { ip: meta.ip },
         );
       },
     });
@@ -1192,16 +1338,39 @@ export class AuthService {
   async updateOwnProfile(
     userId: string,
     dto: UpdateProfileDto,
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     await this.ensureUserExists(userId);
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(dto.name != null ? { name: dto.name.trim() } : {}),
-        ...(dto.contact != null ? { contact: dto.contact.trim() || null } : {}),
-      },
-      select: MANAGED_USER_SELECT,
+    const user = await this.prisma.$transaction(async (tx) => {
+      const before = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { name: true },
+      });
+      const name = dto.name != null ? dto.name.trim() : undefined;
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          ...(name !== undefined ? { name } : {}),
+          ...(dto.contact != null
+            ? { contact: dto.contact.trim() || null }
+            : {}),
+        },
+        select: MANAGED_USER_SELECT,
+      });
+      // Spec 0011, AC-6: your own rename, in the same transaction
+      if (name !== undefined && name !== before.name) {
+        await this.events.record(
+          tx,
+          change(
+            userId,
+            { id: userId, email: updated.email, meta },
+            AccountEventType.UPDATED,
+            { field: 'name', oldValue: before.name, newValue: name },
+          ),
+        );
+      }
+      return updated;
     });
 
     return this.mapManagedUser(user);
@@ -1215,6 +1384,7 @@ export class AuthService {
   async startEmailChange(
     userId: string,
     dto: StartEmailChangeDto,
+    meta: RequestMeta = NO_META,
   ): Promise<{ pendingEmail: string; expiresAt: string; resendAfter: number }> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
@@ -1242,6 +1412,7 @@ export class AuthService {
       userId,
       purpose: VerificationPurpose.EMAIL_CHANGE,
       newEmail,
+      meta,
       mail: {
         to: newEmail,
         build: (code) => emailChangeCodeEmail({ name: user.name, code }),
@@ -1273,6 +1444,7 @@ export class AuthService {
   async verifyEmailChange(
     userId: string,
     code: string,
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     let result: CheckResult<{ oldEmail: string; name: string }>;
     try {
@@ -1280,6 +1452,7 @@ export class AuthService {
         target: { userId, purposes: EMAIL_CHANGE },
         code,
         consume: true,
+        meta,
         onRight: async (tx, row) => {
           // The old address, read inside the transaction before the update (Value sourcing)
           const before = await tx.user.findUniqueOrThrow({
@@ -1291,18 +1464,19 @@ export class AuthService {
             data: { email: row.newEmail!, emailVerified: true },
           });
           await this.codes.retireAll(tx, userId);
-          await tx.userChange.create({
-            data: change(
+          await this.events.record(
+            tx,
+            change(
               userId,
-              { id: userId, email: before.email },
-              UserChangeAction.UPDATED,
+              { id: userId, email: before.email, meta },
+              AccountEventType.UPDATED,
               {
                 field: 'email',
                 oldValue: before.email,
                 newValue: row.newEmail,
               },
             ),
-          });
+          );
           return { oldEmail: before.email, name: before.name };
         },
       });
@@ -1342,6 +1516,7 @@ export class AuthService {
     userId: string,
     dto: ChangePasswordDto,
     currentSid: string,
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     if (dto.newPassword !== dto.confirmPassword) {
       throw new BadRequestException(
@@ -1377,8 +1552,16 @@ export class AuthService {
         tx,
         userId,
         SessionEndReason.PASSWORD_CHANGED,
-        { exceptSid: currentSid },
+        { exceptSid: currentSid, ip: meta.ip },
       );
+      // Spec 0011, AC-6
+      await this.events.record(tx, {
+        userId,
+        actorId: userId,
+        type: AccountEventType.PASSWORD_CHANGED,
+        sessionId: currentSid,
+        meta,
+      });
       return tx.user.update({
         where: { id: userId },
         data: { passwordHash },
@@ -1397,6 +1580,7 @@ export class AuthService {
       size: number;
       mimetype: string;
     },
+    meta: RequestMeta = NO_META,
   ): Promise<ManagedUserResponse> {
     await this.ensureUserExists(userId);
 
@@ -1411,10 +1595,20 @@ export class AuthService {
 
     const profilePicture = `/uploads/profiles/${filename}`;
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { profilePicture },
-      select: MANAGED_USER_SELECT,
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { profilePicture },
+        select: MANAGED_USER_SELECT,
+      });
+      // Spec 0011, AC-6
+      await this.events.record(tx, {
+        userId,
+        actorId: userId,
+        type: AccountEventType.PICTURE_CHANGED,
+        meta,
+      });
+      return updated;
     });
 
     return this.mapManagedUser(user);
@@ -1428,60 +1622,6 @@ export class AuthService {
       inProgress: 0,
       completed: 0,
       totalCards: 0,
-    };
-  }
-
-  /**
-   * Spec 0009, AC-21: a user's change record, newest first, keyset paged on (createdAt, id).
-   * Only for users in the caller's system (spec 0011, AC-26).
-   */
-  async getUserChanges(
-    userId: string,
-    query: ListChangesQueryDto,
-    caller: AdminCaller,
-  ) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, roles: { select: { role: true, system: true } } },
-    });
-    assertInSystem(user, caller.system);
-
-    const limit = query.limit ?? CHANGES_PAGE_SIZE;
-    const cursor = query.cursor ? decodeChangeCursor(query.cursor) : null;
-    const rows = await this.prisma.userChange.findMany({
-      where: {
-        userId,
-        ...(cursor
-          ? {
-              OR: [
-                { createdAt: { lt: cursor.createdAt } },
-                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
-              ],
-            }
-          : {}),
-      },
-      select: {
-        id: true,
-        action: true,
-        field: true,
-        oldValue: true,
-        newValue: true,
-        actorId: true,
-        actorEmail: true,
-        createdAt: true,
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-    });
-
-    const page = rows.slice(0, limit);
-    return {
-      data: page.map((row) => ({
-        ...row,
-        createdAt: row.createdAt.toISOString(),
-      })),
-      nextCursor:
-        rows.length > limit ? encodeChangeCursor(page[page.length - 1]) : null,
     };
   }
 

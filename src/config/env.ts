@@ -93,6 +93,18 @@ export const envSchema = z.object({
   SESSION_RETENTION_DAYS: whole(1, 3650, 90),
   SSO_COOKIE_SECURE: flag,
 
+  // Spec 0011: sign in, session and code events are kept this long; account changes forever
+  ACCOUNT_EVENT_RETENTION_DAYS: whole(30, 3650, 365),
+  // Spec 0011: the offline DB-IP Lite files (npm run geo:fetch). Missing files only leave places empty
+  GEOIP_COUNTRY_FILE: z.preprocess(
+    blank,
+    z.string().trim().default('geo/dbip-country-lite.mmdb'),
+  ),
+  GEOIP_ASN_FILE: z.preprocess(
+    blank,
+    z.string().trim().default('geo/dbip-asn-lite.mmdb'),
+  ),
+
   // Email: all three of host, user and pass are required in production
   SMTP_HOST: optional(z.string().trim()),
   SMTP_PORT: whole(1, 65535, 587),

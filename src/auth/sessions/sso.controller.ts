@@ -29,6 +29,7 @@ import {
 } from '../dto/email-verification.dto';
 import { LoginDto } from '../dto/login.dto';
 import { coded } from '../errors';
+import { requestMeta, type RequestMeta } from '../events/request-meta';
 import { bearerToken } from '../guards/request-authenticator';
 import {
   TokenRejectedError,
@@ -111,10 +112,11 @@ export class SsoController {
         'Too many sign in attempts from this address. Wait a minute and try again.',
       );
     }
-    const { user } = await this.auth.checkCredentials(dto);
-    const answer = await this.launcher.answerFor(user);
-    if (!user.emailVerified) return this.signInStep.start(user);
-    return this.finishLogin(user, answer, req, res);
+    const meta = requestMeta(req);
+    const { user } = await this.auth.checkCredentials(dto, meta);
+    const answer = await this.answerFor(user, meta);
+    if (!user.emailVerified) return this.signInStep.start(user, meta);
+    return this.finishLogin(user, answer, meta, req, res);
   }
 
   /**
@@ -132,13 +134,19 @@ export class SsoController {
   ): Promise<LauncherAnswer> {
     res.setHeader('Cache-Control', 'no-store');
     await countCodeCall(this.storage, 'code-signin', req, res);
+    const meta = requestMeta(req);
     let found: { user: SignInUser; answer: LauncherAnswer } | null = null;
-    await this.signInStep.verify(dto.challengeId, dto.code, async (userId) => {
-      const user = await this.auth.assertCanSignIn(userId);
-      found = { user, answer: await this.launcher.answerFor(user) };
-    });
+    await this.signInStep.verify(
+      dto.challengeId,
+      dto.code,
+      async (userId) => {
+        const user = await this.auth.assertCanSignIn(userId, meta);
+        found = { user, answer: await this.answerFor(user, meta) };
+      },
+      meta,
+    );
     const { user, answer } = found!;
-    return this.finishLogin(user, answer, req, res);
+    return this.finishLogin(user, answer, meta, req, res);
   }
 
   /** Spec 0009, AC-10: a new code on the same ticket. */
@@ -152,20 +160,27 @@ export class SsoController {
   ): Promise<{ resendAfter: number }> {
     res.setHeader('Cache-Control', 'no-store');
     await countCodeCall(this.storage, 'code-signin', req, res);
-    return this.signInStep.resend(dto.challengeId);
+    return this.signInStep.resend(dto.challengeId, requestMeta(req));
+  }
+
+  /** The launcher answer at a sign in, a `NO_SYSTEM_ACCESS` recorded (spec 0011, AC-1). */
+  private answerFor(user: SignInUser, meta: RequestMeta) {
+    return this.auth.withSignInCheck(user.id, meta, () =>
+      this.launcher.answerFor(user),
+    );
   }
 
   /** The one way a portal login ends (AC-9 step 5): a web session and the `welinc_sso` cookie. */
   private async finishLogin(
     user: SignInUser,
     answer: LauncherAnswer,
+    meta: RequestMeta,
     req: Request,
     res: Response,
   ): Promise<LauncherAnswer> {
     const { session, handle } = await this.sessions.createWeb({
       userId: user.id,
-      userAgent: req.headers['user-agent'] ?? null,
-      ip: req.ip ?? null,
+      meta,
       previousHandle: readSsoCookie(req, this.settings),
     });
     setSsoCookie(res, this.settings, handle, session.absoluteExpiresAt!);

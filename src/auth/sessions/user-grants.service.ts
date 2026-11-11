@@ -1,3 +1,4 @@
+import type { RequestMeta } from '../events/request-meta';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
   Prisma,
@@ -202,7 +203,10 @@ export class UserGrantsService {
             ...(userAddress ? { lastSeenIp: userAddress } : {}),
           },
         });
-        await this.sessions.addAudience(tx, session.id, aud);
+        await this.sessions.addAudience(tx, session.id, aud, {
+          ip: userAddress,
+          clientId: client.id,
+        });
         return {
           kind: 'issue',
           session,
@@ -321,7 +325,10 @@ export class UserGrantsService {
             ...(userAddress ? { lastSeenIp: userAddress } : {}),
           },
         });
-        await this.sessions.addAudience(tx, session.id, aud);
+        await this.sessions.addAudience(tx, session.id, aud, {
+          ip: userAddress,
+          clientId: client.id,
+        });
         return {
           kind: 'issue',
           session,
@@ -364,7 +371,7 @@ export class UserGrantsService {
     input: {
       user: { id: string; name: string; email: string };
       deviceName: string | null;
-      ip: string | null;
+      meta: RequestMeta;
     },
   ): Promise<UserTokenAnswer> {
     const { client, aud, roles, systems } = grant;
@@ -373,7 +380,7 @@ export class UserGrantsService {
       clientId: client.id,
       audience: aud,
       deviceName: input.deviceName,
-      ip: input.ip,
+      meta: input.meta,
     });
     return this.finish(client.id, 'mobile_login', {
       kind: 'issue',

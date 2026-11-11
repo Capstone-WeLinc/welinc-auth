@@ -12,8 +12,10 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { SessionEndReason, UserChangeAction } from '@prisma/client';
-import type { Response } from 'express';
+import { AccountEventType, SessionEndReason } from '@prisma/client';
+import type { Request, Response } from 'express';
+import { AccountEventsService } from '../events/account-events.service';
+import { requestMeta } from '../events/request-meta';
 import { PrismaService } from '../../shared/prisma.service';
 import { SystemAdmin } from '../decorators/system-admin.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -26,7 +28,7 @@ import { SessionService } from './session.service';
 export const SELF_END_ALL =
   "You can't end your own sessions here. Use Signed in devices on your profile.";
 
-type UserRequest = { user: UserCaller };
+type UserRequest = Pick<Request, 'ip' | 'headers'> & { user: UserCaller };
 
 /**
  * Seeing and ending sessions (spec 0003, AC-31, AC-32): your own under `/auth/me/sessions`, and
@@ -38,6 +40,7 @@ export class SessionsController {
   constructor(
     private readonly sessions: SessionService,
     private readonly prisma: PrismaService,
+    private readonly events: AccountEventsService,
   ) {}
 
   /** Your live sessions, newest activity first, with `current` on this one (AC-31). */
@@ -69,7 +72,9 @@ export class SessionsController {
     if (!row || row.userId !== req.user.sub) {
       throw new NotFoundException('Session not found');
     }
-    await this.sessions.endNow(sid, SessionEndReason.USER_ENDED);
+    await this.sessions.endNow(sid, SessionEndReason.USER_ENDED, {
+      ip: requestMeta(req).ip,
+    });
   }
 
   /** A user's live sessions, for an admin who can see them (AC-32). */
@@ -110,16 +115,21 @@ export class SessionsController {
         tx,
         id,
         SessionEndReason.ADMIN_ENDED,
-        { endedById: caller.sub },
+        {
+          endedById: caller.sub,
+          system: caller.system,
+          ip: requestMeta(req).ip,
+        },
       );
-      await tx.userChange.create({
-        data: change(
+      await this.events.record(
+        tx,
+        change(
           id,
-          { id: caller.sub, email: caller.email },
-          UserChangeAction.SESSIONS_ENDED,
+          { id: caller.sub, email: caller.email, meta: requestMeta(req) },
+          AccountEventType.SESSIONS_ENDED,
           { newValue: String(count) },
         ),
-      });
+      );
       return count;
     });
     return { ended };

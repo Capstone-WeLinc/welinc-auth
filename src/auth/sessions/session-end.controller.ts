@@ -1,3 +1,4 @@
+import { normaliseIp } from '../events/request-meta';
 import {
   Controller,
   HttpCode,
@@ -80,6 +81,8 @@ export class SessionEndController {
       if (sessionId) {
         await this.sessions.endNow(sessionId, SessionEndReason.LOGOUT, {
           clientId: client.id,
+          // Spec 0011, AC-3: the user's address only as the backend vouched for it
+          ip: userAddressOf(req.headers['x-welinc-user-address']),
         });
       }
       return;
@@ -88,7 +91,7 @@ export class SessionEndController {
     const body = bodyOf(req);
     if (body['refreshToken'] !== undefined) {
       // A public native client (AC-30): no cookie and no CSRF check, the token is the proof
-      await this.mobileLogout(body);
+      await this.mobileLogout(body, normaliseIp(req.ip));
       return;
     }
 
@@ -99,6 +102,7 @@ export class SessionEndController {
     if (session) {
       await this.sessions.endNow(session.id, SessionEndReason.LOGOUT, {
         clientId: 'portal',
+        ip: normaliseIp(req.ip),
       });
     }
     clearSsoCookie(res, this.settings);
@@ -161,7 +165,7 @@ export class SessionEndController {
    * of that client's token rows. An unknown client or token, or an ended session, ends nothing,
    * and the answer is 204 all the same.
    */
-  private async mobileLogout(body: Form): Promise<void> {
+  private async mobileLogout(body: Form, ip: string | null): Promise<void> {
     const client = await this.endpoint.publicClient(body['clientId']);
     if (!client) return;
     const found = await this.sessions.byRefreshToken(
@@ -171,6 +175,7 @@ export class SessionEndController {
     if (found) {
       await this.sessions.endNow(found.sessionId, SessionEndReason.LOGOUT, {
         clientId: client.id,
+        ip,
       });
     }
   }

@@ -1,3 +1,4 @@
+import { NO_META, type RequestMeta } from '../events/request-meta';
 import { Injectable } from '@nestjs/common';
 import { VerificationPurpose } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
@@ -34,17 +35,21 @@ export class SignInStepService {
    * otherwise the ticket moves onto the live code and nothing is sent. No live code and no send
    * allowed: 429 `CODE_SEND_LIMIT`. A failed send: 503 `MAIL_FAILED` (`MailFailedError`).
    */
-  async start(user: {
-    id: string;
-    name: string;
-    email: string;
-  }): Promise<EmailVerificationStep> {
+  async start(
+    user: {
+      id: string;
+      name: string;
+      email: string;
+    },
+    meta: RequestMeta = NO_META,
+  ): Promise<EmailVerificationStep> {
     const ticket = newOpaque();
     const challengeHash = hashOpaque(ticket);
     const result = await this.codes.issue({
       userId: user.id,
       purpose: VerificationPurpose.SIGN_IN,
       challengeHash,
+      meta,
       mail: {
         to: user.email,
         build: (code) => signInCodeEmail({ name: user.name, code }),
@@ -80,12 +85,14 @@ export class SignInStepService {
     challengeId: string,
     code: string,
     precheck: (userId: string) => Promise<void>,
+    meta: RequestMeta = NO_META,
   ): Promise<string> {
     if (!isOpaqueShape(challengeId)) throw codeExpired();
     const result = await this.codes.check({
       target: { challengeHash: hashOpaque(challengeId) },
       code,
       consume: true,
+      meta,
       precheck: async (_tx, row) => {
         if (row.purpose !== VerificationPurpose.SIGN_IN) throw codeExpired();
         await precheck(row.userId);
@@ -106,7 +113,10 @@ export class SignInStepService {
    * AC-10: a new code on the same ticket. A dead ticket: 400 `CODE_EXPIRED`. Inside the wait or
    * over the limit: 429 `CODE_SEND_LIMIT`. A failed send: 503, and the old code stays live.
    */
-  async resend(challengeId: string): Promise<{ resendAfter: number }> {
+  async resend(
+    challengeId: string,
+    meta: RequestMeta = NO_META,
+  ): Promise<{ resendAfter: number }> {
     if (!isOpaqueShape(challengeId)) throw codeExpired();
     const challengeHash = hashOpaque(challengeId);
     const row = await this.prisma.verificationCode.findFirst({
@@ -134,6 +144,7 @@ export class SignInStepService {
       userId: user.id,
       purpose: VerificationPurpose.SIGN_IN,
       challengeHash,
+      meta,
       mail: {
         to: user.email,
         build: (code) => signInCodeEmail({ name: user.name, code }),

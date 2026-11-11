@@ -9,13 +9,15 @@ import {
 } from '@nestjs/common';
 import { fakeConfig } from '../config/fake-config.setup';
 import type { TokenService } from './tokens/token.service';
-import { SystemType, UserChangeAction } from '@prisma/client';
+import { SystemType, AccountEventType } from '@prisma/client';
 import { FakeCatalogService } from './testing/catalog.fake';
 import { fakeCodes } from './testing/codes.fake';
 import type { RoleCode } from './roles/catalog.types';
 import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
+import { AccountEventsService } from './events/account-events.service';
+import { noGeo } from './testing/geo.fake';
 import { SessionService } from './sessions/session.service';
 
 // Spec 0011, AC-26 to AC-30: welinc-auth's admin user endpoints act only inside the
@@ -68,7 +70,7 @@ function build() {
       count: fn(),
     },
     userRoleAssignment: { createMany: fn() },
-    userChange: { create: fn(), createMany: fn(), findMany: fn() },
+    accountEvent: { create: fn(), createMany: fn(), findMany: fn() },
     passwordResetToken: { create: fn() },
     $queryRaw: fn(),
     $transaction: fn(),
@@ -78,7 +80,7 @@ function build() {
   );
   db.$queryRaw.mockResolvedValue([]);
   db.user.count.mockResolvedValue(1);
-  db.userChange.findMany.mockResolvedValue([]);
+  db.accountEvent.findMany.mockResolvedValue([]);
   const sendMail = fn();
   sendMail.mockResolvedValue(undefined);
   const sessions = {
@@ -92,14 +94,15 @@ function build() {
     sessions,
     new FakeCatalogService(),
     fakeCodes(),
+    new AccountEventsService(db as unknown as PrismaService, noGeo),
   );
   return { service, db };
 }
 
 function changesWritten(db: ReturnType<typeof build>['db']) {
   return [
-    ...db.userChange.create.mock.calls.map((c) => c[0].data),
-    ...db.userChange.createMany.mock.calls.flatMap((c) => c[0].data),
+    ...db.accountEvent.create.mock.calls.map((c) => c[0].data),
+    ...db.accountEvent.createMany.mock.calls.flatMap((c) => c[0].data),
   ];
 }
 
@@ -136,16 +139,6 @@ describe('welinc-auth system scoping', () => {
   // covers: AC-26
   describe('users outside the system answer 404', () => {
     const bmsOnly = { ...managedRow([BMS_ADMIN]), deletedAt: null };
-
-    it('on the change record', async () => {
-      const { service, db } = build();
-      db.user.findUnique.mockResolvedValue(bmsOnly);
-
-      await expect(
-        service.getUserChanges(USER_ID, {}, vrmsAdmin),
-      ).rejects.toBeInstanceOf(NotFoundException);
-      expect(db.userChange.findMany).not.toHaveBeenCalled();
-    });
 
     it('on edit, status, unlock, delete and set password', async () => {
       const { service, db } = build();
@@ -227,9 +220,10 @@ describe('welinc-auth system scoping', () => {
       ]);
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
-          action: UserChangeAction.ROLE_CHANGED,
-          oldValue: 'MECHANIC@VRMS,OPERATIONS@BMS',
-          newValue: 'OPERATIONS@BMS',
+          type: AccountEventType.ROLE_CHANGED,
+          system: SystemType.VRMS,
+          oldValue: 'MECHANIC@VRMS',
+          newValue: null,
         }),
       ]);
       expect(result).toBeDefined();
@@ -451,9 +445,10 @@ describe('welinc-auth system scoping', () => {
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
           userId: USER_ID,
-          action: UserChangeAction.ROLE_CHANGED,
-          oldValue: 'OPERATIONS@BMS',
-          newValue: 'MECHANIC@VRMS,OPERATIONS@BMS',
+          type: AccountEventType.ROLE_CHANGED,
+          system: SystemType.VRMS,
+          oldValue: null,
+          newValue: 'MECHANIC@VRMS',
         }),
       ]);
       expect(result).toMatchObject({

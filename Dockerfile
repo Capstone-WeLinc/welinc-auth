@@ -16,6 +16,10 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
+# Spec 0011: the DB-IP Lite location files (CC BY 4.0). --soft: a failed download leaves an empty
+# geo/ and places stay empty. Rebuild the image monthly to refresh them.
+RUN npm run geo:fetch -- --soft
+
 FROM node:24-alpine
 
 WORKDIR /app
@@ -26,6 +30,7 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
+COPY --from=builder /app/geo ./geo
 
 # Add a start script to handle migrations and seeding
 RUN cat << 'EOF' > /start.sh

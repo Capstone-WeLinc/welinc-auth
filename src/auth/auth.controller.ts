@@ -34,7 +34,7 @@ import { OtpResetPasswordDto } from './dto/otp-reset-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { ListChangesQueryDto } from './dto/list-changes.query.dto';
+import { requestMeta } from './events/request-meta';
 import {
   StartEmailChangeDto,
   VerifyEmailChangeDto,
@@ -49,13 +49,18 @@ import type { Caller } from './guards/request-authenticator';
  * The signed in admin, as the change record names them (spec 0009, AC-19, AC-20), plus the
  * system their request resolved to, which scopes every admin user endpoint (spec 0011, AC-26).
  */
-type AdminRequest = {
+type AdminRequest = Pick<Request, 'ip' | 'headers'> & {
   user: { sub: string; email: string; system: SystemType };
 };
+/** A signed in person acting on their own account, with where the request came from. */
+type SelfRequest = Pick<Request, 'ip' | 'headers'> & { user: { sub: string } };
+
+/** Spec 0011, AC-3: the admin's address and device go on every change event they make. */
 const actorOf = (req: AdminRequest) => ({
   id: req.user.sub,
   email: req.user.email,
   system: req.user.system,
+  meta: requestMeta(req),
 });
 
 @Controller('auth')
@@ -76,7 +81,11 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     await countCodeCall(this.storage, 'code-public', req, res);
-    return this.authService.forgotPassword(dto.email, req.user ?? null);
+    return this.authService.forgotPassword(
+      dto.email,
+      req.user ?? null,
+      requestMeta(req),
+    );
   }
 
   @Post('verify-otp')
@@ -87,7 +96,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     await countCodeCall(this.storage, 'code-public', req, res);
-    return this.authService.verifyOtp(dto.email, dto.otp);
+    return this.authService.verifyOtp(dto.email, dto.otp, requestMeta(req));
   }
 
   @Post('reset-password')
@@ -102,6 +111,7 @@ export class AuthController {
       dto.email,
       dto.otp,
       dto.newPassword,
+      requestMeta(req),
     );
   }
 
@@ -159,16 +169,6 @@ export class AuthController {
   }
 
   @SystemAdmin()
-  @Get('users/:id/changes')
-  listUserChanges(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Query() query: ListChangesQueryDto,
-    @Req() req: AdminRequest,
-  ) {
-    return this.authService.getUserChanges(id, query, actorOf(req));
-  }
-
-  @SystemAdmin()
   @Patch('users/:id/unlock')
   unlockUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
     return this.authService.unlockUser(id, actorOf(req));
@@ -176,32 +176,38 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Patch('profile')
-  updateOwnProfile(
-    @Req() req: { user: { sub: string } },
-    @Body() dto: UpdateProfileDto,
-  ) {
-    return this.authService.updateOwnProfile(req.user.sub, dto);
+  updateOwnProfile(@Req() req: SelfRequest, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateOwnProfile(
+      req.user.sub,
+      dto,
+      requestMeta(req),
+    );
   }
 
   // Spec 0009, AC-17 to AC-19: your own email changes only after the new address is confirmed
   @UseGuards(JwtAuthGuard)
   @Post('profile/email')
   @HttpCode(HttpStatus.OK)
-  startEmailChange(
-    @Req() req: { user: { sub: string } },
-    @Body() dto: StartEmailChangeDto,
-  ) {
-    return this.authService.startEmailChange(req.user.sub, dto);
+  startEmailChange(@Req() req: SelfRequest, @Body() dto: StartEmailChangeDto) {
+    return this.authService.startEmailChange(
+      req.user.sub,
+      dto,
+      requestMeta(req),
+    );
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('profile/email/verify')
   @HttpCode(HttpStatus.OK)
   verifyEmailChange(
-    @Req() req: { user: { sub: string } },
+    @Req() req: SelfRequest,
     @Body() dto: VerifyEmailChangeDto,
   ) {
-    return this.authService.verifyEmailChange(req.user.sub, dto.code);
+    return this.authService.verifyEmailChange(
+      req.user.sub,
+      dto.code,
+      requestMeta(req),
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -214,10 +220,15 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Patch('profile/password')
   changeOwnPassword(
-    @Req() req: { user: { sub: string; sid: string } },
+    @Req() req: SelfRequest & { user: { sid: string } },
     @Body() dto: ChangePasswordDto,
   ) {
-    return this.authService.changeOwnPassword(req.user.sub, dto, req.user.sid);
+    return this.authService.changeOwnPassword(
+      req.user.sub,
+      dto,
+      req.user.sid,
+      requestMeta(req),
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -236,7 +247,7 @@ export class AuthController {
     }),
   )
   uploadProfilePicture(
-    @Req() req: { user: { sub: string } },
+    @Req() req: SelfRequest,
     @UploadedFile()
     file: {
       originalname: string;
@@ -245,7 +256,11 @@ export class AuthController {
       mimetype: string;
     },
   ) {
-    return this.authService.uploadProfilePicture(req.user.sub, file);
+    return this.authService.uploadProfilePicture(
+      req.user.sub,
+      file,
+      requestMeta(req),
+    );
   }
 
   @UseGuards(JwtAuthGuard)

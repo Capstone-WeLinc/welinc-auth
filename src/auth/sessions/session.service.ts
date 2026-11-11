@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  AccountEventType,
   Prisma,
   SessionEndReason,
   SessionKind,
@@ -10,6 +11,47 @@ import { PrismaService } from '../../shared/prisma.service';
 import { hashOpaque, isOpaqueShape, newOpaque } from './opaque';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 import { deviceLabel } from './device-label';
+import { AccountEventsService } from '../events/account-events.service';
+import { normaliseIp, type RequestMeta } from '../events/request-meta';
+
+/** Who and what ended a session, for its event (spec 0011, AC-4, Field visibility). */
+export type SessionEndMeta = {
+  endedById?: string;
+  clientId?: string;
+  /** The admin's system (`aud`), tagged on ADMIN_ENDED, DEACTIVATED and DELETED ends. */
+  system?: SystemType;
+  /** The address of the person whose request ended it; null for backends and the sweeper. */
+  ip?: string | null;
+};
+
+/** Ends an admin causes: tagged with the admin's system. */
+const ADMIN_REASONS = new Set<SessionEndReason>([
+  SessionEndReason.ADMIN_ENDED,
+  SessionEndReason.DEACTIVATED,
+  SessionEndReason.DELETED,
+]);
+
+/** Ends the person causes. */
+const SELF_REASONS = new Set<SessionEndReason>([
+  SessionEndReason.LOGOUT,
+  SessionEndReason.USER_ENDED,
+  SessionEndReason.PASSWORD_CHANGED,
+]);
+
+/**
+ * The actor of a session end (spec 0011): the user for LOGOUT, USER_ENDED and PASSWORD_CHANGED,
+ * the admin for ADMIN_ENDED, DEACTIVATED and DELETED, nobody for IDLE, MAX_AGE, MAX_SESSIONS,
+ * REFRESH_REUSE and CODE_REUSE.
+ */
+export function endActor(
+  reason: SessionEndReason,
+  userId: string,
+  endedById: string | undefined,
+): string | null {
+  if (SELF_REASONS.has(reason)) return userId;
+  if (ADMIN_REASONS.has(reason)) return endedById ?? null;
+  return null;
+}
 
 type Db = Prisma.TransactionClient | PrismaService;
 
@@ -86,6 +128,7 @@ export class SessionService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(SESSION_SETTINGS) readonly settings: SessionSettings,
+    private readonly events: AccountEventsService,
   ) {}
 
   /** `last_activity_at` + the idle limit for the session's kind. */
@@ -99,14 +142,19 @@ export class SessionService {
 
   /**
    * Ends a live session with a reason: kills its SSO handle and marks every unused refresh token
-   * under it used, with no grace (AC-5). Ending an ended session changes nothing.
+   * under it used, with no grace (AC-5). Ending an ended session changes nothing. Spec 0011,
+   * AC-4: writes exactly one `SIGNED_OUT` (for `LOGOUT`) or `SESSION_ENDED` in the same
+   * transaction, only when its update changed the row; handed the bare client, it opens its own.
    */
   async end(
     db: Db,
     sessionId: string,
     reason: SessionEndReason,
-    meta: { endedById?: string; clientId?: string } = {},
+    meta: SessionEndMeta = {},
   ): Promise<boolean> {
+    if (db instanceof PrismaService) {
+      return db.$transaction((tx) => this.end(tx, sessionId, reason, meta));
+    }
     const now = new Date();
     const { count } = await db.session.updateMany({
       where: { id: sessionId, endedAt: null },
@@ -123,12 +171,36 @@ export class SessionService {
       data: { usedAt: now },
     });
     // AC-39: sid, user, reason and client only
-    const row = await db.session.findUnique({
+    const row = await db.session.findUniqueOrThrow({
       where: { id: sessionId },
-      select: { userId: true, loginClientId: true },
+      select: {
+        userId: true,
+        loginClientId: true,
+        kind: true,
+        deviceName: true,
+        userAgent: true,
+      },
+    });
+    await this.events.record(db, {
+      userId: row.userId,
+      actorId: endActor(reason, row.userId, meta.endedById),
+      type:
+        reason === SessionEndReason.LOGOUT
+          ? AccountEventType.SIGNED_OUT
+          : AccountEventType.SESSION_ENDED,
+      reason,
+      system: ADMIN_REASONS.has(reason) ? (meta.system ?? null) : null,
+      sessionId,
+      clientId: meta.clientId ?? row.loginClientId,
+      // The session's own device; the address only when a person's request ended it
+      meta: {
+        ip: meta.ip ?? null,
+        device: deviceLabel(row),
+        userAgent: row.userAgent,
+      },
     });
     this.logger.log(
-      `session ended sid=${sessionId} user=${row?.userId ?? '-'} reason=${reason} client=${meta.clientId ?? row?.loginClientId ?? '-'}`,
+      `session ended sid=${sessionId} user=${row.userId} reason=${reason} client=${meta.clientId ?? row.loginClientId}`,
     );
     return true;
   }
@@ -137,11 +209,9 @@ export class SessionService {
   endNow(
     sessionId: string,
     reason: SessionEndReason,
-    meta: { endedById?: string; clientId?: string } = {},
+    meta: SessionEndMeta = {},
   ): Promise<boolean> {
-    return this.prisma.$transaction((tx) =>
-      this.end(tx, sessionId, reason, meta),
-    );
+    return this.end(this.prisma, sessionId, reason, meta);
   }
 
   /**
@@ -189,14 +259,15 @@ export class SessionService {
    * advisory lock on the user, so two logins at once can't both pass the cap; the browser's
    * previous SSO session ends (`LOGOUT`); sessions already past a cutoff are ended; an 11th live
    * session ends the one with the oldest `last_activity_at` (`MAX_SESSIONS`). The SSO handle and
-   * the session id are always new (session fixation).
+   * the session id are always new (session fixation). Spec 0011, AC-1: `SIGNED_IN` in the same
+   * transaction.
    */
   async createWeb(input: {
     userId: string;
-    userAgent: string | null;
-    ip: string | null;
+    meta: RequestMeta;
     previousHandle: unknown;
   }): Promise<{ session: Session; handle: string }> {
+    const { meta } = input;
     const handle = newOpaque();
     const now = new Date();
     const session = await this.prisma.$transaction(async (tx) => {
@@ -214,14 +285,14 @@ export class SessionService {
 
       await this.makeRoom(tx, input.userId, now);
 
-      return tx.session.create({
+      const created = await tx.session.create({
         data: {
           userId: input.userId,
           kind: SessionKind.WEB,
           loginClientId: 'portal',
-          userAgent: input.userAgent?.slice(0, 512) ?? null,
-          createdIp: input.ip,
-          lastSeenIp: input.ip,
+          userAgent: meta.userAgent,
+          createdIp: meta.ip,
+          lastSeenIp: meta.ip,
           ssoHandleHash: hashOpaque(handle),
           createdAt: now,
           lastActivityAt: now,
@@ -231,6 +302,15 @@ export class SessionService {
           ),
         },
       });
+      await this.events.record(tx, {
+        userId: input.userId,
+        actorId: input.userId,
+        type: AccountEventType.SIGNED_IN,
+        sessionId: created.id,
+        clientId: 'portal',
+        meta,
+      });
+      return created;
     });
     this.logger.log(
       `session created sid=${session.id} user=${input.userId} kind=WEB client=portal`,
@@ -242,7 +322,8 @@ export class SessionService {
    * Creates a mobile session at a native login (spec 0003, AC-28, AC-6), with its first refresh
    * token for `clientId`, in one transaction under the same per user lock and cap as a web
    * login. A mobile session has no SSO handle and no absolute limit; it rolls 7 days on each
-   * refresh (AC-2).
+   * refresh (AC-2). Spec 0011, AC-1, AC-4: `SIGNED_IN` and the first `SYSTEM_OPENED` in the same
+   * transaction.
    */
   async createMobile(input: {
     userId: string;
@@ -250,8 +331,9 @@ export class SessionService {
     /** The system the first access token is signed for (`sessions.audiences`). */
     audience: SystemType;
     deviceName: string | null;
-    ip: string | null;
+    meta: RequestMeta;
   }): Promise<{ session: Session; refreshToken: string }> {
+    const { meta } = input;
     const refreshToken = newOpaque();
     const now = new Date();
     const session = await this.prisma.$transaction(async (tx) => {
@@ -264,8 +346,9 @@ export class SessionService {
           loginClientId: input.clientId,
           deviceName: input.deviceName,
           audiences: [input.audience],
-          createdIp: input.ip,
-          lastSeenIp: input.ip,
+          userAgent: meta.userAgent,
+          createdIp: meta.ip,
+          lastSeenIp: meta.ip,
           createdAt: now,
           lastActivityAt: now,
           idleExpiresAt: this.idleCutoff(SessionKind.MOBILE, now),
@@ -279,6 +362,21 @@ export class SessionService {
           tokenHash: hashOpaque(refreshToken),
         },
       });
+      const opened = {
+        userId: input.userId,
+        actorId: input.userId,
+        sessionId: created.id,
+        clientId: input.clientId,
+        meta,
+      };
+      await this.events.recordMany(tx, [
+        { ...opened, type: AccountEventType.SIGNED_IN },
+        {
+          ...opened,
+          type: AccountEventType.SYSTEM_OPENED,
+          system: input.audience,
+        },
+      ]);
       return created;
     });
     this.logger.log(
@@ -322,7 +420,7 @@ export class SessionService {
     db: Db,
     userId: string,
     reason: SessionEndReason,
-    meta: { exceptSid?: string; endedById?: string } = {},
+    meta: SessionEndMeta & { exceptSid?: string } = {},
   ): Promise<number> {
     const rows = await db.session.findMany({
       where: {
@@ -334,7 +432,13 @@ export class SessionService {
     });
     let ended = 0;
     for (const row of rows) {
-      if (await this.end(db, row.id, reason, { endedById: meta.endedById })) {
+      if (
+        await this.end(db, row.id, reason, {
+          endedById: meta.endedById,
+          system: meta.system,
+          ip: meta.ip,
+        })
+      ) {
         ended++;
       }
     }
@@ -445,8 +549,38 @@ export class SessionService {
     }));
   }
 
-  /** Records each system an access token was signed for (`sessions.audiences`). */
-  async addAudience(db: Db, sessionId: string, aud: SystemType): Promise<void> {
-    await db.$executeRaw`UPDATE "sessions" SET "audiences" = array_append("audiences", ${aud}::"SystemType") WHERE "id" = ${sessionId}::uuid AND NOT (${aud}::"SystemType" = ANY("audiences"))`;
+  /**
+   * Records each system an access token was signed for (`sessions.audiences`). Spec 0011, AC-4:
+   * the first time per system writes one `SYSTEM_OPENED`, only when the update changed the row,
+   * so two refreshes racing write one. `ip` is the user's address a backend vouched for
+   * (`X-WeLinc-User-Address` after a valid assertion), else null, never the backend's own.
+   */
+  async addAudience(
+    db: Db,
+    sessionId: string,
+    aud: SystemType,
+    meta: { ip: string | null; clientId: string },
+  ): Promise<number> {
+    const count =
+      await db.$executeRaw`UPDATE "sessions" SET "audiences" = array_append("audiences", ${aud}::"SystemType") WHERE "id" = ${sessionId}::uuid AND NOT (${aud}::"SystemType" = ANY("audiences"))`;
+    if (count !== 1) return count;
+    const row = await db.session.findUniqueOrThrow({
+      where: { id: sessionId },
+      select: { userId: true, kind: true, deviceName: true, userAgent: true },
+    });
+    await this.events.record(db, {
+      userId: row.userId,
+      actorId: row.userId,
+      type: AccountEventType.SYSTEM_OPENED,
+      system: aud,
+      sessionId,
+      clientId: meta.clientId,
+      meta: {
+        ip: normaliseIp(meta.ip),
+        device: deviceLabel(row),
+        userAgent: row.userAgent,
+      },
+    });
+    return count;
   }
 }

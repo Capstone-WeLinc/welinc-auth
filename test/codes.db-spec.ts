@@ -15,6 +15,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg, { Client } from 'pg';
 import { CodeService } from '../src/auth/codes/code.service';
+import { AccountEventsService } from '../src/auth/events/account-events.service';
+import { noGeo } from '../src/auth/testing/geo.fake';
 import { MailFailedError } from '../src/auth/codes/code-errors';
 import type { MailService } from '../src/shared/mail.service';
 import type { PrismaService } from '../src/shared/prisma.service';
@@ -99,6 +101,7 @@ const MINUTE = 60_000;
     codes = new CodeService(
       prisma as unknown as PrismaService,
       { sendMail } as unknown as MailService,
+      new AccountEventsService(prisma as unknown as PrismaService, noGeo),
     );
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});

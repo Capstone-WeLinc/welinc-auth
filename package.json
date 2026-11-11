@@ -33,7 +33,8 @@
     "catalog:sync": "ts-node -r tsconfig-paths/register prisma/catalog-sync.ts",
     "db:deploy": "prisma migrate deploy && npm run catalog:sync",
     "keys:rotate": "ts-node scripts/keys-rotate.ts",
-    "keys:client": "ts-node scripts/keys-client.ts"
+    "keys:client": "ts-node scripts/keys-client.ts",
+    "geo:fetch": "node scripts/geo-fetch.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -49,6 +50,7 @@
     "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.7",
     "jose": "^6.2.15",
+    "maxmind": "5.0.8",
     "nodemailer": "^10.1.4",
     "pg": "^8.21.0",
     "prisma": "^7.10.1",
