@@ -179,6 +179,8 @@ export function parseView(raw: unknown): View {
 @Injectable()
 export class DeletionService {
   private readonly logger = new Logger(DeletionService.name);
+  /** The notice emails waiting to go out, one after another (see `send`). */
+  private mailQueue: Promise<void> = Promise.resolve();
   private readonly graceDays: number;
   private readonly reviewLink: string;
 
@@ -700,23 +702,31 @@ export class DeletionService {
   }
 
   /** A notice email after commit. A failure is logged without the address and never thrown. */
-  private async send(
+  /**
+   * Queues one notice email and returns at once. Mails go out one after another in the
+   * background, so a request never waits on SMTP (about 2 s a mail, so a person with admins in
+   * two systems used to run past the gateway's 60 s). A failure is logged and never retried.
+   */
+  private send(
     userId: string,
     kind: string,
     to: string,
     build: () => Email,
   ): Promise<void> {
-    try {
-      await this.mail.sendMail({
-        to,
-        ...build(),
-        tag: `user=${userId} purpose=${kind}`,
-      });
-    } catch (error) {
-      this.logger.error(
-        `notice email failed user=${userId} purpose=${kind}: ${error instanceof Error ? error.message : 'unknown error'}`,
-      );
-    }
+    this.mailQueue = this.mailQueue.then(async () => {
+      try {
+        await this.mail.sendMail({
+          to,
+          ...build(),
+          tag: `user=${userId} purpose=${kind}`,
+        });
+      } catch (error) {
+        this.logger.error(
+          `notice email failed user=${userId} purpose=${kind}: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
+      }
+    });
+    return Promise.resolve();
   }
 }
 

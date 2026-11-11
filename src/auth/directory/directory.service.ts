@@ -66,7 +66,7 @@ export class DirectoryService {
       SELECT "txid"::text AS "txid", "seq"
         FROM "directory_changes"
        WHERE "txid" < pg_snapshot_xmin(pg_current_snapshot())
-       ORDER BY "txid" DESC, "seq" DESC
+       ORDER BY "directory_changes"."txid" DESC, "directory_changes"."seq" DESC
        LIMIT 1`;
     return rows.length === 0
       ? FEED_START
@@ -124,7 +124,7 @@ export class DirectoryService {
        WHERE ("txid", "seq") > (${from.txid.toString()}::xid8, ${from.seq})
          AND ("txid", "seq") <= (${safe.txid.toString()}::xid8, ${safe.seq})
          AND "systems" @> ARRAY[${view.system}::"SystemType"]
-       ORDER BY "txid", "seq"
+       ORDER BY "directory_changes"."txid", "directory_changes"."seq"
        LIMIT ${limit + 1}`;
 
     const hasMore = rows.length > limit;

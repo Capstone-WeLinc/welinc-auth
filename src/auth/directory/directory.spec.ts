@@ -1,6 +1,8 @@
 import { HttpException, type ExecutionContext } from '@nestjs/common';
 import { ThrottlerStorageService } from '@nestjs/throttler';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PrismaService } from '../../shared/prisma.service';
 import { testTokenService } from '../testing/test-keys';
 import type { TokenService } from '../tokens/token.service';
@@ -365,5 +367,21 @@ describe('GET /auth/users (AC-9)', () => {
     const scope: unknown = Reflect.getMetadata(SERVICE_SCOPE_KEY, handler);
     expect(handler).toBeDefined();
     expect(scope).toBeUndefined();
+  });
+});
+
+// Found by /check verify (spec 0012): `SELECT "txid"::text AS "txid" ... ORDER BY "txid"` sorts
+// by the text alias, so '9519' sorts above '10232' and the safe point sticks once ids pass 9999.
+describe('directory.service.ts feed queries', () => {
+  it('order by the real columns, never by the text alias of txid', () => {
+    const source = readFileSync(
+      join(__dirname, 'directory.service.ts'),
+      'utf8',
+    );
+    const orderBys = source.match(/ORDER BY [^`\n]*"txid"[^`\n]*/g) ?? [];
+    expect(orderBys.length).toBeGreaterThanOrEqual(2);
+    for (const clause of orderBys) {
+      expect(clause).toContain('"directory_changes"."txid"');
+    }
   });
 });

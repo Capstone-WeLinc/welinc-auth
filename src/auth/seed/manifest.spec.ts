@@ -156,6 +156,7 @@ describe('stateFields', () => {
       failedLoginAttempts: 0,
       lockedAt: null,
       deletedAt: null,
+      erasedAt: null,
     });
   });
 
