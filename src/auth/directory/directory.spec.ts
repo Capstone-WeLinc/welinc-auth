@@ -147,6 +147,7 @@ describe('DirectoryUser mapping', () => {
     profilePicture: '/uploads/profiles/u1.jpg',
     isActive: true,
     deletedAt: null,
+    erasedAt: null,
     updatedAt: new Date('2026-11-09T01:02:03.004Z'),
     roles: [
       { system: 'VRMS', role: 'MECHANIC' },
@@ -162,10 +163,10 @@ describe('DirectoryUser mapping', () => {
       name: 'Ana Cruz',
       email: 'ana@welinc.com',
       phone: null,
-      phoneVerified: false,
       picture: '/uploads/profiles/u1.jpg',
       isActive: true,
       deleted: false,
+      erased: false,
       roles: ['CHIEF_MECHANIC', 'MECHANIC'],
       updatedAt: '2026-11-09T01:02:03.004Z',
     });
@@ -185,9 +186,33 @@ describe('DirectoryUser mapping', () => {
     );
     expect(user).toMatchObject({
       deleted: true,
+      // A snapshot from before spec 0012 has no erasedAt: not erased
+      erased: false,
       roles: [],
       phone: null,
       updatedAt: '2026-11-09T01:02:03.004Z',
+    });
+    expect(user).not.toHaveProperty('phoneVerified');
+  });
+
+  // covers: spec 0012 AC-17
+  it('says erased when the snapshot carries erasedAt', () => {
+    const { erasedAt: _unused, ...plain } = row;
+    void _unused;
+    const user = fromSnapshot(
+      {
+        ...plain,
+        name: 'Deleted user',
+        deletedAt: '2026-10-01T05:00:00+00:00',
+        erasedAt: '2026-11-01T05:00:00+00:00',
+        updatedAt: '2026-11-01T05:00:00.000+00:00',
+      },
+      { system: 'VRMS', canSeePhone: false },
+    );
+    expect(user).toMatchObject({
+      erased: true,
+      deleted: true,
+      name: 'Deleted user',
     });
   });
 });

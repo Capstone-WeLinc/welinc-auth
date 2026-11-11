@@ -46,6 +46,7 @@ import { ActivityController } from './events/activity.controller';
 import { PasswordCheckService } from './reauth/password-check.service';
 import { DeletionService } from './deletion/deletion.service';
 import { DeletionController } from './deletion/deletion.controller';
+import { ErasureService } from './deletion/erasure.service';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -85,6 +86,7 @@ import { DeletionController } from './deletion/deletion.controller';
     // Spec 0012: the password recheck, reauth tokens and deletion requests
     PasswordCheckService,
     DeletionService,
+    ErasureService,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [

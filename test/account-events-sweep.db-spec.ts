@@ -63,6 +63,7 @@ const DAY = 86_400_000;
       { retentionDays: 90 } as SessionSettings,
       new AccountEventsService(db, noGeo),
       config,
+      { sweep: () => Promise.resolve({ erased: 0, failed: 0 }) } as never,
     );
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     await pool.query(

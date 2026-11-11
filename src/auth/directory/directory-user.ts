@@ -7,12 +7,12 @@ export type DirectoryUser = {
   email: string;
   /** `users.contact` as stored, only for a token holding `directory.contact`. */
   phone: string | null;
-  /** False until S8 adds phone verification. */
-  phoneVerified: boolean;
   /** `profile_picture` as stored (an `/uploads` address). */
   picture: string | null;
   isActive: boolean;
   deleted: boolean;
+  /** Spec 0012: the person's personal data was replaced by "Deleted user" (never undone). */
+  erased: boolean;
   /** Role codes in the caller's system only. */
   roles: string[];
   updatedAt: string;
@@ -45,6 +45,8 @@ export type FeedSnapshot = {
   profilePicture: string | null;
   isActive: boolean;
   deletedAt: string | null;
+  /** Missing on snapshots written before spec 0012, which reads as not erased. */
+  erasedAt?: string | null;
   updatedAt: string;
   roles: { system: string; role: string }[];
 };
@@ -58,6 +60,7 @@ export type UserRow = {
   profilePicture: string | null;
   isActive: boolean;
   deletedAt: Date | null;
+  erasedAt: Date | null;
   updatedAt: Date;
   roles: { system: string; role: string }[];
 };
@@ -79,10 +82,10 @@ export function fromUserRow(row: UserRow, view: DirectoryView): DirectoryUser {
     name: row.name,
     email: row.email,
     phone: view.canSeePhone ? row.contact : null,
-    phoneVerified: false,
     picture: row.profilePicture,
     isActive: row.isActive,
     deleted: row.deletedAt !== null,
+    erased: row.erasedAt !== null,
     roles: rolesIn(row.roles, view.system),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -97,10 +100,10 @@ export function fromSnapshot(
     name: snapshot.name,
     email: snapshot.email,
     phone: view.canSeePhone ? snapshot.contact : null,
-    phoneVerified: false,
     picture: snapshot.profilePicture,
     isActive: snapshot.isActive,
     deleted: snapshot.deletedAt !== null,
+    erased: snapshot.erasedAt != null,
     roles: rolesIn(snapshot.roles, view.system),
     // Postgres writes `2026-11-09T10:00:00.123+00:00`; answer the same ISO form as the rows
     updatedAt: new Date(snapshot.updatedAt).toISOString(),

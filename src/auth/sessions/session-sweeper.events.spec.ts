@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unnecessary-type-assertion -- test doubles */
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars -- test doubles */
 import { describe, expect, it, jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
 import { SessionSweeper, SWEEP_BATCH } from './session-sweeper';
@@ -17,6 +17,7 @@ function setup(batches: number[], days = 365) {
     {} as never,
     {} as never,
     config,
+    { sweep: () => Promise.resolve({ erased: 0, failed: 0 }) } as never,
   );
   return { sweeper, queryRaw, executeRaw, prisma };
 }

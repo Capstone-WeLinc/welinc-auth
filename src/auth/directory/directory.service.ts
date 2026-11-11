@@ -35,6 +35,7 @@ const USER_SELECT = {
   profilePicture: true,
   isActive: true,
   deletedAt: true,
+  erasedAt: true,
   updatedAt: true,
   roles: { select: { system: true, role: true } },
 } satisfies Prisma.UserSelect;
