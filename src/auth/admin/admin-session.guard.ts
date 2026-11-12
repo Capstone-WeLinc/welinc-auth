@@ -57,7 +57,8 @@ export type AdminRequest = Request & { portalAdmin?: PortalAdmin };
 
 /**
  * Spec 0013, AC-14: `/auth/admin/*` is authenticated by the `welinc_sso` cookie (the live web
- * session it points to), never a bearer token. Writes also run `PortalCsrfGuard`, listed first.
+ * session it points to), never a bearer token. Writes also run `PortalCsrfGuard` at method level,
+ * which Nest runs after this class level guard: a request with no live session answers 401 first.
  */
 @Injectable()
 export class AdminSessionGuard implements CanActivate {

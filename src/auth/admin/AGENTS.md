@@ -42,7 +42,7 @@ npm run admin:recover   # makes a person a suite admin when none can sign in; ne
 
 ## Gotchas
 
-- Nest runs the class level `AdminSessionGuard` before the method level `PortalCsrfGuard` (the guard's doc comment says CSRF is listed first; it still runs second). So a cookie with no session answers 401 before a CSRF 403.
+- Nest runs the class level `AdminSessionGuard` before the method level `PortalCsrfGuard`, so a cookie with no session answers 401 before a CSRF 403.
 - Routes in `suite-admin.controller.ts` keep the `admin-code` level, so a system admin who owes the code gets `ADMIN_CODE_REQUIRED` before `NOT_SUITE_ADMIN`.
 - `GET users/lookup` is declared before `GET users/:id` on purpose; keep that order.
 - The expiry sweep runs every minute under `pg_try_advisory_xact_lock(3003013)`, 100 grants a batch, so only one replica works at a time. Role reads elsewhere also expire grants lazily.
