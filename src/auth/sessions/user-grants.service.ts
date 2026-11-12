@@ -1,3 +1,4 @@
+import { liveRoleWhere } from '../roles/live-roles';
 import type { RequestMeta } from '../events/request-meta';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
@@ -450,8 +451,9 @@ export class UserGrantsService {
     client: Pick<OAuthClient, 'allowedRoles'>,
   ): Promise<GrantRoles> {
     // Every system's rows: the audience's roles, and `user.systems` read fresh (spec 0007, AC-6)
+    // Spec 0013, AC-10: an expired temporary role is left out (lazy expiry)
     const rows = await tx.userRoleAssignment.findMany({
-      where: { userId },
+      where: { userId, ...liveRoleWhere() },
       select: { role: true, system: true },
     });
     const held = rows

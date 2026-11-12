@@ -24,6 +24,10 @@ import { PortalCsrfGuard } from '../sessions/csrf';
 import { SessionService } from '../sessions/session.service';
 import { codeNotRequired } from './admin-errors';
 import {
+  TemporaryGrantsService,
+  type GrantView,
+} from './temporary-grants.service';
+import {
   AdminRoute,
   AdminSessionGuard,
   portalAdmin,
@@ -37,6 +41,8 @@ export type AdminMe = {
   adminOf: SystemType[];
   codeRequired: boolean;
   codePassed: boolean;
+  /** AC-24: a suite admin's own live temporary access (empty for everyone else). */
+  temporaryGrants: GrantView[];
 };
 
 /**
@@ -49,16 +55,17 @@ export class AdminController {
   constructor(
     private readonly signInStep: SignInStepService,
     private readonly sessions: SessionService,
+    private readonly grants: TemporaryGrantsService,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
   /** AC-15: answers for any signed in person, so the launcher knows whether to show Admin. */
   @Get('me')
   @AdminRoute('signed-in')
-  me(
+  async me(
     @Req() req: AdminRequest,
     @Res({ passthrough: true }) res: Response,
-  ): AdminMe {
+  ): Promise<AdminMe> {
     res.setHeader('Cache-Control', 'no-store');
     const caller = portalAdmin(req);
     return {
@@ -72,6 +79,10 @@ export class AdminController {
       adminOf: caller.standing.adminOf,
       codeRequired: caller.codeRequired,
       codePassed: caller.codePassed,
+      // AC-24: the caller's own live temporary access, for the top bar banner
+      temporaryGrants: caller.standing.suiteAdmin
+        ? await this.grants.liveFor(caller.userId)
+        : [],
     };
   }
 

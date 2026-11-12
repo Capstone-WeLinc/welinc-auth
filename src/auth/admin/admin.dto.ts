@@ -24,6 +24,13 @@ export class AdminSystemDto {
   system!: SystemType;
 }
 
+/** AC-17: `system` a suite admin may leave out (lists, delete, restore, deletion decisions). */
+export class AdminOptionalSystemDto {
+  @IsOptional()
+  @IsEnum(SystemType)
+  system?: SystemType;
+}
+
 /** A write that may need the actor's `ADMIN_ACTION` recheck (AC-14b). */
 export class AdminSystemReauthDto extends AdminSystemDto {
   @IsOptional()
@@ -32,7 +39,7 @@ export class AdminSystemReauthDto extends AdminSystemDto {
   reauthToken?: string;
 }
 
-export class AdminListUsersQueryDto extends AdminSystemDto {
+export class AdminListUsersQueryDto extends AdminOptionalSystemDto {
   @IsOptional()
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim() : value,
@@ -86,7 +93,7 @@ export class AdminSetStatusDto extends AdminSystemDto {
 }
 
 /** The deletion bodies are whitelisted only; DeletionService checks the fields (spec 0012). */
-export class AdminDeletionListQueryDto extends AdminSystemDto {
+export class AdminDeletionListQueryDto extends AdminOptionalSystemDto {
   @Allow()
   view?: unknown;
 
@@ -97,7 +104,7 @@ export class AdminDeletionListQueryDto extends AdminSystemDto {
   limit?: unknown;
 }
 
-export class AdminRejectDto extends AdminSystemDto {
+export class AdminRejectDto extends AdminOptionalSystemDto {
   @Allow()
   note?: unknown;
 }

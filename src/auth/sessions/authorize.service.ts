@@ -1,3 +1,4 @@
+import { liveRoleWhere } from '../roles/live-roles';
 import { Injectable, Logger } from '@nestjs/common';
 import { ClientKind, type OAuthClient } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
@@ -133,7 +134,11 @@ export class AuthorizeService {
     }
 
     const role = await this.prisma.userRoleAssignment.findFirst({
-      where: { userId: session.userId, system: request.client.system! },
+      where: {
+        userId: session.userId,
+        system: request.client.system!,
+        ...liveRoleWhere(),
+      },
       select: { id: true },
     });
     if (!role) {

@@ -29,7 +29,7 @@ import { AccountEventsService } from '../events/account-events.service';
 import { parseActivityQuery } from '../events/activity-query';
 import { requestMeta } from '../events/request-meta';
 import { PortalCsrfGuard } from '../sessions/csrf';
-import type { AdminCaller } from '../user-scope';
+import type { AccountScope, AdminCaller } from '../user-scope';
 import { AccountSessionsService } from './account-sessions.service';
 import { notAdminOfSystem } from './admin-errors';
 import {
@@ -43,6 +43,7 @@ import {
   AdminDeletionListQueryDto,
   AdminListUsersQueryDto,
   AdminLookupQueryDto,
+  AdminOptionalSystemDto,
   AdminRejectDto,
   AdminSetStatusDto,
   AdminSystemDto,
@@ -51,38 +52,66 @@ import {
   AdminVerifyPasswordDto,
 } from './admin.dto';
 
+const systemRequired = () =>
+  coded(
+    HttpStatus.BAD_REQUEST,
+    'VALIDATION_FAILED',
+    `system must be one of ${Object.values(SystemType).join(', ')}`,
+  );
+
 /**
- * Spec 0013, AC-16: the scope a system admin acts in. They must pass a system they hold the
- * admin role of (403 `NOT_ADMIN_OF_SYSTEM`). Suite scope (AC-17) comes with slice 3; until then
- * a suite admin, who holds no role, gets the same 403 here.
+ * Spec 0013, AC-16, AC-17: the scope an admin acts in for one system. A system admin must pass a
+ * system they hold the admin role of (403 `NOT_ADMIN_OF_SYSTEM`); a suite admin may pass any.
  */
 export function systemScope(
   req: AdminRequest,
   system: SystemType,
 ): AdminCaller {
   const caller = portalAdmin(req);
-  if (!caller.standing.adminOf.includes(system)) throw notAdminOfSystem();
+  const suite = caller.standing.suiteAdmin;
+  if (!suite && !caller.standing.adminOf.includes(system)) {
+    throw notAdminOfSystem();
+  }
   return {
     id: caller.userId,
     email: caller.user.email,
     system,
     sid: caller.sid,
+    suite,
     meta: requestMeta(req),
   };
 }
 
-/** `system` from a hand parsed query (the activity routes), 400 when missing or unknown. */
-function querySystem(query: Record<string, unknown>): SystemType {
+/**
+ * AC-17: on the routes where a suite admin may leave `system` out (lists, activity, deletion
+ * requests, delete, restore, the deletion decisions). A system admin still must pass one (400).
+ */
+export function accountScope(
+  req: AdminRequest,
+  system: SystemType | undefined,
+): AccountScope {
+  if (system !== undefined) return systemScope(req, system);
+  const caller = portalAdmin(req);
+  if (!caller.standing.suiteAdmin) throw systemRequired();
+  return {
+    id: caller.userId,
+    email: caller.user.email,
+    system: null,
+    sid: caller.sid,
+    suite: true,
+    meta: requestMeta(req),
+  };
+}
+
+/** `system` from a hand parsed query (the activity routes): unknown is 400, missing undefined. */
+function querySystem(query: Record<string, unknown>): SystemType | undefined {
   const system = query.system;
+  if (system === undefined) return undefined;
   if (
     typeof system !== 'string' ||
     !(Object.values(SystemType) as string[]).includes(system)
   ) {
-    throw coded(
-      HttpStatus.BAD_REQUEST,
-      'VALIDATION_FAILED',
-      `system must be one of ${Object.values(SystemType).join(', ')}`,
-    );
+    throw systemRequired();
   }
   return system as SystemType;
 }
@@ -132,7 +161,7 @@ export class AdminAccountsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    return this.authService.listPeople(query, systemScope(req, query.system));
+    return this.authService.listPeople(query, accountScope(req, query.system));
   }
 
   // Declared before users/:id so "lookup" is never read as an id
@@ -147,12 +176,12 @@ export class AdminAccountsController {
   @Get('users/:id')
   getUser(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query() query: AdminSystemDto,
+    @Query() query: AdminOptionalSystemDto,
     @Req() req: AdminRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    return this.authService.getPerson(id, systemScope(req, query.system));
+    return this.authService.getPerson(id, accountScope(req, query.system));
   }
 
   @Post('users')
@@ -256,7 +285,7 @@ export class AdminAccountsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    const scope = systemScope(req, querySystem(query));
+    const scope = accountScope(req, querySystem(query));
     const filters = parseActivityQuery(query, { type: true, dates: true });
     return this.events.listForUser(id, scope.system, filters);
   }
@@ -266,10 +295,10 @@ export class AdminAccountsController {
   @UseGuards(PortalCsrfGuard)
   async deleteUser(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query() query: AdminSystemDto,
+    @Query() query: AdminOptionalSystemDto,
     @Req() req: AdminRequest,
   ): Promise<void> {
-    const actor = systemScope(req, query.system);
+    const actor = accountScope(req, query.system);
     await this.authService.deleteUser(id, actor);
     // Spec 0012, AC-13: the AC-10 emails, after the commit
     await this.deletion.notifyAdminDelete(id, actor);
@@ -280,12 +309,12 @@ export class AdminAccountsController {
   @UseGuards(PortalCsrfGuard)
   async restoreUser(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: AdminSystemDto,
+    @Body() dto: AdminOptionalSystemDto,
     @Req() req: AdminRequest,
   ) {
     const user = await this.authService.restoreUser(
       id,
-      systemScope(req, dto.system),
+      accountScope(req, dto.system),
     );
     await this.deletion.notifyRestored(id);
     return user;
@@ -299,7 +328,7 @@ export class AdminAccountsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    const scope = systemScope(req, querySystem(query));
+    const scope = accountScope(req, querySystem(query));
     await countFeedCall(this.storage, scope.id, res);
     const filters = parseActivityQuery(query, {
       type: true,
@@ -317,7 +346,7 @@ export class AdminAccountsController {
   ) {
     res.setHeader('Cache-Control', 'no-store');
     const { system, ...rest } = query;
-    return this.deletion.list(systemScope(req, system).system, rest);
+    return this.deletion.list(accountScope(req, system).system, rest);
   }
 
   @Post('deletion-requests/:id/approve')
@@ -325,10 +354,10 @@ export class AdminAccountsController {
   @UseGuards(PortalCsrfGuard)
   approve(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: AdminSystemDto,
+    @Body() dto: AdminOptionalSystemDto,
     @Req() req: AdminRequest,
   ) {
-    return this.deletion.approve(id, systemScope(req, dto.system));
+    return this.deletion.approve(id, accountScope(req, dto.system));
   }
 
   @Post('deletion-requests/:id/reject')
@@ -339,6 +368,6 @@ export class AdminAccountsController {
     @Body() dto: AdminRejectDto,
     @Req() req: AdminRequest,
   ) {
-    return this.deletion.reject(id, dto.note, systemScope(req, dto.system));
+    return this.deletion.reject(id, dto.note, accountScope(req, dto.system));
   }
 }

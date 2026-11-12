@@ -1,3 +1,4 @@
+import { liveRoleWhere } from '../roles/live-roles';
 import { HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
 import { SystemType } from '@prisma/client';
@@ -138,7 +139,11 @@ export class RequestAuthenticator {
         email: true,
         isActive: true,
         lockedAt: true,
-        roles: { select: { role: true, system: true } },
+        // Spec 0013, AC-10: an expired temporary role is gone even before the sweep ends it
+        roles: {
+          where: liveRoleWhere(),
+          select: { role: true, system: true },
+        },
       },
     });
 

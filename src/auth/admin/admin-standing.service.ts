@@ -48,8 +48,9 @@ export class AdminStandingService {
       where: { userId },
       select: { userId: true },
     });
+    // AC-15: permanent roles only; a temporary admin grant works inside that system's own app
     const roles = await db.userRoleAssignment.findMany({
-      where: { userId },
+      where: { userId, temporaryGrantId: null },
       select: { role: true, system: true },
     });
     const admins = await this.catalog.adminRoles(db);

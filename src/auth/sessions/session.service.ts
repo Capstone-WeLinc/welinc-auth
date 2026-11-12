@@ -24,11 +24,15 @@ export type SessionEndMeta = {
   ip?: string | null;
 };
 
-/** Ends an admin causes: tagged with the admin's system. */
+/**
+ * Ends an admin causes: tagged with the admin's system. `TEMP_ACCESS_ENDED` is tagged with the
+ * grant's system; its actor is whoever ended the grant early, nobody for the expiry sweep.
+ */
 const ADMIN_REASONS = new Set<SessionEndReason>([
   SessionEndReason.ADMIN_ENDED,
   SessionEndReason.DEACTIVATED,
   SessionEndReason.DELETED,
+  SessionEndReason.TEMP_ACCESS_ENDED,
 ]);
 
 /** Ends the person causes. */
@@ -464,13 +468,18 @@ export class SessionService {
     db: Db,
     userId: string,
     reason: SessionEndReason,
-    meta: SessionEndMeta & { exceptSid?: string } = {},
+    meta: SessionEndMeta & {
+      exceptSid?: string;
+      /** Only sessions that opened this system (spec 0013, AC-10). */
+      audience?: SystemType;
+    } = {},
   ): Promise<number> {
     const rows = await db.session.findMany({
       where: {
         userId,
         endedAt: null,
         ...(meta.exceptSid ? { id: { not: meta.exceptSid } } : {}),
+        ...(meta.audience ? { audiences: { has: meta.audience } } : {}),
       },
       select: { id: true },
     });

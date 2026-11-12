@@ -6,14 +6,21 @@ import { escapeHtml, type Email } from '../codes/code-emails';
 
 const BRAND = 'WeLinc Logistics';
 
-/** What happened, in the alert's words (AC-13 rows built in slice 2; slice 3 adds its own). */
+/** What happened, in the alert's words (every AC-13 row but the matrix edit). */
 export type AdminAlertKind =
   | 'ADMIN_ROLE_ADDED'
   | 'ADMIN_ROLE_REMOVED'
   | 'ADMIN_EMAIL_CHANGED'
   | 'ADMIN_CODE_SENT'
   | 'ADMIN_UNLOCKED'
-  | 'ADMIN_SESSIONS_ENDED';
+  | 'ADMIN_SESSIONS_ENDED'
+  | 'SUITE_ADMIN_ADDED'
+  | 'SUITE_ADMIN_REMOVED'
+  | 'ADMIN_RECOVERY'
+  | 'TEMP_ACCESS_STARTED'
+  | 'TEMP_ACCESS_ENDED_EARLY'
+  | 'SUITE_ROLE_GIVEN'
+  | 'SUITE_ACCOUNT_CREATED';
 
 /** One line of an alert, already resolved to names. */
 export type AlertLine = {
@@ -22,8 +29,10 @@ export type AlertLine = {
   targetEmail: string;
   /** The system name the line is about ("VRMS"), or null for an account wide line. */
   systemName: string | null;
-  /** The admin role's display name in that system, for role lines. */
+  /** The role's display name in that system, for role and temporary access lines. */
   roleName: string | null;
+  /** When temporary access ends, for `TEMP_ACCESS_STARTED`. */
+  until?: Date | null;
   at: Date;
   reason: string | null;
 };
@@ -55,6 +64,22 @@ function what(line: AlertLine): string {
       return 'was unlocked by an admin';
     case 'ADMIN_SESSIONS_ENDED':
       return 'had every session ended by an admin';
+    case 'SUITE_ADMIN_ADDED':
+      return 'was made a suite admin';
+    case 'SUITE_ADMIN_REMOVED':
+      return 'is no longer a suite admin';
+    case 'ADMIN_RECOVERY':
+      return 'was unlocked and made a suite admin by the recovery script on the server';
+    case 'TEMP_ACCESS_STARTED':
+      return `gave themselves temporary ${role} access${
+        line.until ? ` until ${manilaDateTime(line.until)} (Manila time)` : ''
+      }`;
+    case 'TEMP_ACCESS_ENDED_EARLY':
+      return `no longer has temporary ${role} access (ended early)`;
+    case 'SUITE_ROLE_GIVEN':
+      return `was given the ${role} role by a suite admin`;
+    case 'SUITE_ACCOUNT_CREATED':
+      return `had a new account made for ${line.systemName ?? 'a system'} by a suite admin`;
   }
 }
 

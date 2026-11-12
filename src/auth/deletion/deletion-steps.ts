@@ -1,5 +1,5 @@
 import { DeletionRequestStatus, Prisma } from '@prisma/client';
-import type { AdminCaller } from '../user-scope';
+import type { AccountScope } from '../user-scope';
 
 // Spec 0012: the request steps that run inside AuthService's own admin transactions, after the
 // users row is locked (AC-11 lock order).
@@ -13,7 +13,7 @@ type Tx = Prisma.TransactionClient;
 export async function closePendingOnAdminDelete(
   tx: Tx,
   userId: string,
-  actor: AdminCaller,
+  actor: AccountScope,
   now: Date,
 ): Promise<boolean> {
   const { count } = await tx.accountDeletionRequest.updateMany({
@@ -32,7 +32,7 @@ export async function closePendingOnAdminDelete(
 export async function markRestored(
   tx: Tx,
   userId: string,
-  actor: AdminCaller,
+  actor: AccountScope,
   now: Date,
 ): Promise<void> {
   await tx.accountDeletionRequest.updateMany({

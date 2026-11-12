@@ -1,3 +1,4 @@
+import { liveRoleWhere } from '../roles/live-roles';
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ClientKind, SystemType } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
@@ -122,7 +123,7 @@ export class LauncherService {
    */
   async answerFor(user: LauncherInput): Promise<LauncherAnswer> {
     const held = await this.prisma.userRoleAssignment.findMany({
-      where: { userId: user.id },
+      where: { userId: user.id, ...liveRoleWhere() },
       select: { system: true, role: true },
     });
     const codes = launcherOrder(held);

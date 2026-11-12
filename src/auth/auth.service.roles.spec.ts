@@ -282,7 +282,10 @@ describe('spec 0004 role rules in user admin', () => {
     expect(db.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          roles: { deleteMany: {}, create: [role('CHIEF_MECHANIC')] },
+          roles: {
+            deleteMany: [role('MECHANIC')],
+            create: [role('CHIEF_MECHANIC')],
+          },
         }),
       }),
     );

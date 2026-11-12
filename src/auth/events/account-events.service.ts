@@ -190,18 +190,25 @@ export class AccountEventsService {
    */
   async listForUser(
     userId: string,
-    aud: SystemType,
+    aud: SystemType | null,
     filters: ActivityFilters,
   ): Promise<EventPage> {
-    const member = await this.prisma.userRoleAssignment.findFirst({
-      where: { userId, system: aud, user: { deletedAt: null } },
-      select: { id: true },
-    });
+    // Spec 0013, AC-17: with no system (a suite admin) any existing person, every event
+    const member =
+      aud === null
+        ? await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true },
+          })
+        : await this.prisma.userRoleAssignment.findFirst({
+            where: { userId, system: aud, user: { deletedAt: null } },
+            select: { id: true },
+          });
     if (!member) throw new NotFoundException('User not found');
     const rows = await this.prisma.accountEvent.findMany({
       where: {
         userId,
-        OR: [{ system: aud }, { system: null }],
+        ...(aud === null ? {} : { OR: [{ system: aud }, { system: null }] }),
         ...filterWhere(filters),
       },
       select: ADMIN_SELECT,
@@ -218,7 +225,7 @@ export class AccountEventsService {
    * A `userId` outside the scope simply finds nothing.
    */
   async feed(
-    aud: SystemType,
+    aud: SystemType | null,
     filters: ActivityFilters,
   ): Promise<EventPage<EventView & { user: FeedUser }>> {
     const shared = filterWhere(filters);
@@ -242,6 +249,14 @@ export class AccountEventsService {
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: filters.limit + 1,
       });
+    // Spec 0013, AC-20: a suite admin reads every person's events, former members included
+    if (aud === null) {
+      const rows = await branch({});
+      return pageOf(rows, filters.limit, (row) => ({
+        ...adminView(row, null),
+        user: { id: row.user.id, name: row.user.name, email: row.user.email },
+      }));
+    }
     const [tagged, accountWide] = await Promise.all([
       branch({ system: aud }),
       branch({
@@ -275,12 +290,13 @@ type AdminRow = Prisma.AccountEventGetPayload<{ select: typeof ADMIN_SELECT }>;
  * An admin's view (Field visibility): the actor with id and name, the login client only on rows
  * tagged with the admin's own system.
  */
-export function adminView(row: AdminRow, aud: SystemType): EventView {
+export function adminView(row: AdminRow, aud: SystemType | null): EventView {
   const view = ownView(row);
   const kind = actorKind(row);
   return {
     ...view,
-    client: row.system === aud ? row.clientId : null,
+    // A suite admin (`aud` null) sees every row's client
+    client: aud === null || row.system === aud ? row.clientId : null,
     actor:
       kind === 'SYSTEM' || !row.actor
         ? { kind }

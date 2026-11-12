@@ -54,6 +54,10 @@ import { AdminRecoveryService } from './admin/admin-recovery.service';
 import { AdminAlertsService } from './admin/admin-alerts.service';
 import { AccountSessionsService } from './admin/account-sessions.service';
 import { AdminAccountsController } from './admin/admin-accounts.controller';
+import { SuiteAdminController } from './admin/suite-admin.controller';
+import { SuiteAdminsService } from './admin/suite-admins.service';
+import { TemporaryGrantsService } from './admin/temporary-grants.service';
+import { AdminReportService } from './admin/admin-report.service';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -100,6 +104,9 @@ import { AdminAccountsController } from './admin/admin-accounts.controller';
     AdminRecoveryService,
     // Spec 0013 slice 2: admin alerts and the one sessions service for both route families
     AdminAlertsService,
+    SuiteAdminsService,
+    TemporaryGrantsService,
+    AdminReportService,
     AccountSessionsService,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
@@ -117,6 +124,7 @@ import { AdminAccountsController } from './admin/admin-accounts.controller';
     DeletionController,
     AdminController,
     AdminAccountsController,
+    SuiteAdminController,
   ],
 })
 export default class AuthModule {}

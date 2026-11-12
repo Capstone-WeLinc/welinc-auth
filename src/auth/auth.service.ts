@@ -47,7 +47,13 @@ import {
   alertSystemsOf,
   isAdmin,
 } from './admin/admin-standing.service';
-import { suiteAdminSelfOnly } from './admin/admin-errors';
+import {
+  isSuiteAdmin,
+  isSuiteAdminNoRolesError,
+  suiteAdminNoRoles,
+  suiteAdminSelfOnly,
+  temporaryRole,
+} from './admin/admin-errors';
 import {
   afterCursor,
   decodePeopleCursor,
@@ -60,7 +66,11 @@ import {
 /** Who sent a code and from where (spec 0011, AC-5); the user themselves when left out. */
 type CodeSender = { actorId?: string; meta?: RequestMeta };
 import { PrismaService } from '../shared/prisma.service';
-import { CatalogService, holdsAdmin } from './roles/catalog.service';
+import {
+  CatalogService,
+  holdsAdmin,
+  type AdminRoles,
+} from './roles/catalog.service';
 import type { RoleAssignment } from './roles/catalog.types';
 import { TokenService } from './tokens/token.service';
 import { SessionService } from './sessions/session.service';
@@ -103,8 +113,10 @@ import {
 } from './user-changes';
 import type { EventInput } from './events/account-events.service';
 import {
+  AccountScope,
   AdminCaller,
   LOOKUP_LIMIT,
+  assertInScope,
   LookupLimiter,
   assertInSystem,
   assertNotAdminElsewhere,
@@ -221,7 +233,13 @@ const MANAGED_USER_SELECT = {
   lockedAt: true,
   createdAt: true,
   updatedAt: true,
-  roles: { select: { role: true, system: true } },
+  roles: {
+    select: {
+      role: true,
+      system: true,
+      temporaryGrant: { select: { expiresAt: true } },
+    },
+  },
 } satisfies Prisma.UserSelect;
 
 /** The signed in caller of a public route, when they sent a valid token (OptionalJwtAuthGuard). */
@@ -244,7 +262,9 @@ type ManagedUserRecord = {
   lockedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  roles: RoleAssignment[];
+  roles: (RoleAssignment & {
+    temporaryGrant?: { expiresAt: Date } | null;
+  })[];
 };
 
 /** The person a login finishes for (the launcher answer and the session). */
@@ -284,6 +304,8 @@ export type ManagedUserResponse = {
 /** An admin answer: only the caller's system roles, plus the other systems by name (spec 0011, AC-26). */
 export type ScopedUserResponse = ManagedUserResponse & {
   otherSystems: SystemType[];
+  /** Spec 0013, AC-11: when the person's temporary role in this system ends, else null. */
+  temporaryUntil: string | null;
 };
 
 export type LookupUserResponse = {
@@ -597,6 +619,48 @@ export class AuthService {
     return alerts;
   }
 
+  /**
+   * Spec 0013, AC-13, AC-14c: the alerts for roles given on create, attach or edit. An admin
+   * role is `ADMIN_ROLE_ADDED` for anyone; when a suite admin acts, every other role given is
+   * `SUITE_ROLE_GIVEN` and a new account is `SUITE_ACCOUNT_CREATED`.
+   */
+  private grantAlerts(
+    userId: string,
+    actor: AdminCaller,
+    added: RoleAssignment[],
+    admins: AdminRoles,
+    created: boolean,
+  ): AdminAlert[] {
+    const alerts: AdminAlert[] = [];
+    if (actor.suite && created) {
+      alerts.push({
+        kind: 'SUITE_ACCOUNT_CREATED',
+        targetId: userId,
+        systems: [actor.system],
+        roleSystem: actor.system,
+      });
+    }
+    for (const role of added) {
+      if (admins.get(role.system) === role.role) {
+        alerts.push({
+          kind: 'ADMIN_ROLE_ADDED',
+          targetId: userId,
+          systems: [role.system],
+          roleSystem: role.system,
+        });
+      } else if (actor.suite) {
+        alerts.push({
+          kind: 'SUITE_ROLE_GIVEN',
+          targetId: userId,
+          systems: [role.system],
+          roleSystem: role.system,
+          role: role.role,
+        });
+      }
+    }
+    return alerts;
+  }
+
   async unlockUser(
     userId: string,
     actor: AdminCaller,
@@ -761,12 +825,22 @@ export class AuthService {
       cursor?: string;
       limit?: string;
     },
-    caller: Pick<AdminCaller, 'system'>,
+    caller: Pick<AccountScope, 'system'>,
   ): Promise<{
-    items: (ScopedUserResponse & { pendingDeletion: boolean })[];
+    items: (ScopedUserResponse & {
+      pendingDeletion: boolean;
+      suiteAdmin: boolean;
+    })[];
     next: string | null;
   }> {
     if (query.role !== undefined) {
+      if (caller.system === null) {
+        throw coded(
+          HttpStatus.BAD_REQUEST,
+          'VALIDATION_FAILED',
+          'A role filter needs a system',
+        );
+      }
       await this.catalog.assertKnownRole(caller.system, query.role);
     }
     const limit = parsePeopleLimit(query.limit);
@@ -776,14 +850,17 @@ export class AuthService {
       where: {
         AND: [
           { deletedAt: null },
-          {
-            roles: {
-              some: {
-                system: caller.system,
-                ...(query.role !== undefined ? { role: query.role } : {}),
+          // Spec 0013, AC-17: suite scope is every person, people with no role included
+          caller.system === null
+            ? {}
+            : {
+                roles: {
+                  some: {
+                    system: caller.system,
+                    ...(query.role !== undefined ? { role: query.role } : {}),
+                  },
+                },
               },
-            },
-          },
           q
             ? {
                 OR: [
@@ -803,6 +880,7 @@ export class AuthService {
           select: { id: true },
           take: 1,
         },
+        suiteAdmin: { select: { userId: true } },
       },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
       take: limit + 1,
@@ -810,9 +888,10 @@ export class AuthService {
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     return {
-      items: page.map(({ deletionRequests, ...user }) => ({
+      items: page.map(({ deletionRequests, suiteAdmin, ...user }) => ({
         ...this.mapScopedUser(user, caller.system),
         pendingDeletion: deletionRequests.length > 0,
+        suiteAdmin: suiteAdmin !== null,
       })),
       next:
         rows.length > limit && last
@@ -828,9 +907,13 @@ export class AuthService {
    */
   async getPerson(
     userId: string,
-    caller: Pick<AdminCaller, 'system'>,
+    caller: Pick<AccountScope, 'system'>,
   ): Promise<
-    ScopedUserResponse & { pendingDeletion: boolean; deletedAt: string | null }
+    ScopedUserResponse & {
+      pendingDeletion: boolean;
+      deletedAt: string | null;
+      suiteAdmin: boolean;
+    }
   > {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, erasedAt: null },
@@ -842,14 +925,16 @@ export class AuthService {
           select: { id: true },
           take: 1,
         },
+        suiteAdmin: { select: { userId: true } },
       },
     });
-    assertInSystem(user, caller.system);
-    const { deletionRequests, deletedAt, ...rest } = user;
+    assertInScope(user, caller.system);
+    const { deletionRequests, deletedAt, suiteAdmin, ...rest } = user;
     return {
       ...this.mapScopedUser(rest, caller.system),
       pendingDeletion: deletionRequests.length > 0,
       deletedAt: deletedAt ? deletedAt.toISOString() : null,
+      suiteAdmin: suiteAdmin !== null,
     };
   }
 
@@ -864,6 +949,8 @@ export class AuthService {
         isActive: true,
         deletedAt: null,
         roles: { none: { system: caller.system } },
+        // Spec 0013, AC-3: a suite admin can't be given a system role
+        suiteAdmin: { is: null },
         OR: [
           { name: { contains: q, mode: 'insensitive' } },
           { email: { contains: q, mode: 'insensitive' } },
@@ -895,12 +982,11 @@ export class AuthService {
     assertOwnSystemRoles(roleAssignments, actor.system);
     // Spec 0004, AC-10: 400, 403, then UNKNOWN_ROLE, then ROLE_LIMIT
     await this.catalog.assertRoleRules(roleAssignments, actor.system);
-    // Spec 0013, AC-14a: giving the admin role needs the actor's password again
-    const givesAdmin = holdsAdmin(
-      roleAssignments,
-      actor.system,
-      await this.catalog.adminRoles(),
-    );
+    // Spec 0013, AC-14a: giving the admin role needs the actor's password again; AC-14c: so
+    // does every role and every account a suite admin gives
+    const admins = await this.catalog.adminRoles();
+    const givesAdmin = holdsAdmin(roleAssignments, actor.system, admins);
+    const recheck = givesAdmin || actor.suite === true;
 
     // Spec 0011, AC-30: an email that already has an account outside this system can be attached
     const existing = await this.prisma.user.findFirst({
@@ -933,7 +1019,7 @@ export class AuthService {
         existing.id,
         roleAssignments,
         actor,
-        givesAdmin ? dto.reauthToken : null,
+        recheck ? dto.reauthToken : null,
       );
       return { ...attached, setupEmailSent: false };
     }
@@ -948,7 +1034,7 @@ export class AuthService {
     let user: Prisma.UserGetPayload<{ select: typeof MANAGED_USER_SELECT }>;
     try {
       user = await this.prisma.$transaction(async (tx) => {
-        if (givesAdmin) await this.useAdminAction(tx, actor, dto.reauthToken);
+        if (recheck) await this.useAdminAction(tx, actor, dto.reauthToken);
         const created = await tx.user.create({
           data: {
             name: dto.name.trim(),
@@ -976,16 +1062,10 @@ export class AuthService {
       this.handlePrismaError(error);
     }
 
-    if (givesAdmin) {
-      await this.alerts.send(actor.id, [
-        {
-          kind: 'ADMIN_ROLE_ADDED',
-          targetId: user.id,
-          systems: [actor.system],
-          roleSystem: actor.system,
-        },
-      ]);
-    }
+    await this.alerts.send(
+      actor.id,
+      this.grantAlerts(user.id, actor, roleAssignments, admins, true),
+    );
 
     // The user is saved: a failed or refused send only sets setupEmailSent to false. An inactive
     // user's code works once an admin activates them, while it lives (AC-15).
@@ -1093,6 +1173,10 @@ export class AuthService {
     const user = await this.prisma.$transaction(async (tx) => {
       // Spec 0004, AC-13: the account row first, then everything is decided from a fresh read
       await lockAccount(tx, userId);
+      // Spec 0013, AC-3: a suite admin holds no permanent system role
+      if ((await this.admins.standing(userId, tx)).suiteAdmin) {
+        throw suiteAdminNoRoles();
+      }
       if (adminAction !== null) {
         await this.useAdminAction(tx, actor, adminAction);
       }
@@ -1129,16 +1213,16 @@ export class AuthService {
       });
     });
 
-    if (adminAction !== null) {
-      await this.alerts.send(actor.id, [
-        {
-          kind: 'ADMIN_ROLE_ADDED',
-          targetId: userId,
-          systems: [actor.system],
-          roleSystem: actor.system,
-        },
-      ]);
-    }
+    await this.alerts.send(
+      actor.id,
+      this.grantAlerts(
+        userId,
+        actor,
+        roleAssignments,
+        await this.catalog.adminRoles(),
+        false,
+      ),
+    );
     return this.mapScopedUser(user, actor.system);
   }
 
@@ -1158,6 +1242,7 @@ export class AuthService {
         select: {
           role: true,
           system: true,
+          temporaryGrantId: true,
         },
       },
     } satisfies Prisma.UserSelect;
@@ -1219,8 +1304,9 @@ export class AuthService {
           const target = await this.admins.standing(userId, tx);
           // Spec 0013, AC-14b: a suite admin's email changes only through their own inbox
           if (isEmailChanging && target.suiteAdmin) throw suiteAdminSelfOnly();
-          // Another system's admin keeps their own sign in details (spec 0011, AC-28)
-          if (isEmailChanging) {
+          // Another system's admin keeps their own sign in details (spec 0011, AC-28); a suite
+          // admin acts across systems and rechecks their password instead (spec 0013, AC-14b)
+          if (isEmailChanging && !actor.suite) {
             assertNotAdminElsewhere(existingUser.roles, actor.system, admins);
           }
           const isNameChanging = !!newName && newName !== existingUser.name;
@@ -1251,6 +1337,20 @@ export class AuthService {
               throw new ConflictException(SELF_DEACTIVATE);
             }
           }
+          // Spec 0013, AC-11: a temporary role is ended, never edited; AC-3: a suite admin
+          // holds no permanent role; a suite admin is removed as one before deactivation
+          if (
+            areRolesChanging &&
+            existingUser.roles.some(
+              (r) => r.system === actor.system && !!r.temporaryGrantId,
+            )
+          ) {
+            throw temporaryRole();
+          }
+          if (areRolesChanging && target.suiteAdmin) throw suiteAdminNoRoles();
+          if (isActiveChanging && !dto.isActive && target.suiteAdmin) {
+            throw isSuiteAdmin();
+          }
 
           // An active admin who stops being one, by role or deactivation, must not be the last
           if (existingUser.isActive) {
@@ -1276,12 +1376,27 @@ export class AuthService {
           const givesAdmin = roleAlerts.some(
             (a) => a.kind === 'ADMIN_ROLE_ADDED',
           );
+          const before = new Set(
+            existingUser.roles.map((r) => `${r.role}@${r.system}`),
+          );
+          const added = areRolesChanging
+            ? roleAssignments.filter(
+                (r) => !before.has(`${r.role}@${r.system}`),
+              )
+            : [];
+          // AC-14c: every role a suite admin gives rechecks their password and alerts
+          const suiteGives = actor.suite === true && added.length > 0;
           const emailOnAdmin = isEmailChanging && isAdmin(target);
-          if (givesAdmin || emailOnAdmin) {
+          if (givesAdmin || emailOnAdmin || suiteGives) {
             await this.useAdminAction(tx, actor, dto.reauthToken);
           }
           const editAlerts: AdminAlert[] = [
             ...roleAlerts,
+            ...(actor.suite
+              ? this.grantAlerts(userId, actor, added, admins, false).filter(
+                  (a) => a.kind === 'SUITE_ROLE_GIVEN',
+                )
+              : []),
             ...(emailOnAdmin
               ? [
                   {
@@ -1302,11 +1417,24 @@ export class AuthService {
                 ? { email: newEmail, emailVerified: false }
                 : {}),
               ...(isActiveChanging ? { isActive: dto.isActive } : {}),
+              // Only this system's rows that change: every other row, a temporary one or one
+              // whose `created_at` the report reads as "since", stays as it is
               ...(areRolesChanging
                 ? {
                     roles: {
-                      deleteMany: {},
-                      create: roleAssignments,
+                      deleteMany: existingUser.roles
+                        .filter(
+                          (r) =>
+                            r.system === actor.system &&
+                            !roleAssignments.some(
+                              (n) => n.system === r.system && n.role === r.role,
+                            ),
+                        )
+                        .map((r) => ({ system: r.system, role: r.role })),
+                      create: added.map((r) => ({
+                        role: r.role,
+                        system: r.system,
+                      })),
                     },
                   }
                 : {}),
@@ -1387,6 +1515,7 @@ export class AuthService {
       return { ...answer, setupEmailSent };
     } catch (error) {
       if (isUniqueViolation(error)) throw emailTaken();
+      if (isSuiteAdminNoRolesError(error)) throw suiteAdminNoRoles();
       this.handlePrismaError(error);
     }
   }
@@ -1432,6 +1561,10 @@ export class AuthService {
         });
       }
       if (!dto.isActive) {
+        // Spec 0013, AC-3: remove the suite admin row first
+        if ((await this.admins.standing(userId, tx)).suiteAdmin) {
+          throw isSuiteAdmin();
+        }
         const admins = await this.catalog.adminRoles(tx);
         for (const system of adminSystems(existing.roles, admins)) {
           await assertAnotherAdmin(tx, userId, system);
@@ -1467,9 +1600,13 @@ export class AuthService {
     return this.mapScopedUser(user, actor.system);
   }
 
+  /**
+   * Soft deletes an account. A suite admin (spec 0013, AC-17) may pass no system and may delete
+   * a shared account; the last active admin rule still holds in every system.
+   */
   async deleteUser(
     userId: string,
-    actor: AdminCaller,
+    actor: AccountScope,
   ): Promise<{ id: string }> {
     if (actor.id === userId) throw new ConflictException(SELF_DELETE);
 
@@ -1483,8 +1620,14 @@ export class AuthService {
           roles: { select: { role: true, system: true } },
         },
       });
-      assertInSystem(existing, actor.system);
-      assertNotShared(existing.roles, actor.system);
+      assertInScope(existing, actor.system);
+      if (!actor.suite && actor.system !== null) {
+        assertNotShared(existing.roles, actor.system);
+      }
+      // Spec 0013, AC-3: remove the suite admin row first
+      if ((await this.admins.standing(userId, tx)).suiteAdmin) {
+        throw isSuiteAdmin();
+      }
       if (existing.isActive) {
         const admins = await this.catalog.adminRoles(tx);
         for (const system of adminSystems(existing.roles, admins)) {
@@ -1514,7 +1657,7 @@ export class AuthService {
       // Spec 0003 AC-4
       await this.sessions.endAllForUser(tx, userId, SessionEndReason.DELETED, {
         endedById: actor.id,
-        system: actor.system,
+        system: actor.system ?? undefined,
         ip: actor.meta?.ip,
       });
       // Spec 0013, AC-13: deleting an admin removes their admin role in each system
@@ -1531,7 +1674,7 @@ export class AuthService {
    */
   async restoreUser(
     userId: string,
-    actor: AdminCaller,
+    actor: AccountScope,
   ): Promise<ScopedUserResponse> {
     const { user, alerts } = await this.prisma.$transaction(async (tx) => {
       await lockAccount(tx, userId);
@@ -1543,7 +1686,7 @@ export class AuthService {
           roles: { select: { role: true, system: true } },
         },
       });
-      assertInSystem(existing, actor.system);
+      assertInScope(existing, actor.system);
       if (existing.deletedAt === null || existing.erasedAt !== null) {
         throw notRestorable();
       }
@@ -2095,15 +2238,27 @@ export class AuthService {
     return normalized;
   }
 
+  /**
+   * One system's view of a person (spec 0011, AC-26), or with `system` null (a suite admin,
+   * spec 0013 AC-17) every system's roles and no `otherSystems`.
+   */
   private mapScopedUser(
     user: ManagedUserRecord,
-    system: SystemType,
+    system: SystemType | null,
   ): ScopedUserResponse {
     const mapped = this.mapManagedUser(user);
+    const inScope = user.roles.filter(
+      (r) => system === null || r.system === system,
+    );
+    const ends = inScope
+      .map((r) => r.temporaryGrant?.expiresAt)
+      .filter((at): at is Date => at instanceof Date)
+      .sort((a, b) => b.getTime() - a.getTime());
     return {
       ...mapped,
-      roles: mapped.roles.filter((r) => r.system === system),
-      otherSystems: otherSystems(user.roles, system),
+      roles: mapped.roles.filter((r) => system === null || r.system === system),
+      otherSystems: system === null ? [] : otherSystems(user.roles, system),
+      temporaryUntil: ends[0] ? ends[0].toISOString() : null,
     };
   }
 

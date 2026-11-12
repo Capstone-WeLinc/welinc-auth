@@ -20,6 +20,12 @@ export type AdminAlert = {
   systems: AlertSystems;
   /** For role lines: the system whose admin role was added or removed. */
   roleSystem?: SystemType;
+  /** A role other than the admin role (temporary access, a suite admin's grant), by code. */
+  role?: string;
+  /** When temporary access ends. */
+  until?: Date;
+  /** The person the line is about gets it too, even when no longer an admin (AC-13). */
+  notifyTarget?: boolean;
   reason?: string | null;
 };
 
@@ -76,6 +82,9 @@ export class AdminAlertsService {
         s.roles.filter((r) => r.isSystemAdmin).map((r) => [s.code, r] as const),
       ),
     );
+    const roleName = (system: SystemType, code: string) =>
+      systems.find((s) => s.code === system)?.roles.find((r) => r.code === code)
+        ?.name ?? code;
 
     const targetIds = [...new Set(alerts.map((a) => a.targetId))];
     const people = await this.prisma.user.findMany({
@@ -93,9 +102,12 @@ export class AdminAlertsService {
         systemName: alert.roleSystem
           ? (systemName.get(alert.roleSystem) ?? alert.roleSystem)
           : null,
-        roleName: alert.roleSystem
-          ? (adminRole.get(alert.roleSystem)?.name ?? null)
-          : null,
+        roleName: !alert.roleSystem
+          ? null
+          : alert.role
+            ? roleName(alert.roleSystem, alert.role)
+            : (adminRole.get(alert.roleSystem)?.name ?? null),
+        until: alert.until ?? null,
         at,
         reason: alert.reason ?? null,
       };
@@ -103,6 +115,20 @@ export class AdminAlertsService {
     });
 
     const recipients = await this.recipients(alerts, adminRole);
+    // AC-13: a removed suite admin also hears about their own removal
+    for (const alert of alerts) {
+      if (!alert.notifyTarget) continue;
+      if (recipients.some((r) => r.id === alert.targetId)) continue;
+      const target = byId.get(alert.targetId);
+      if (!target) continue;
+      recipients.push({
+        id: target.id,
+        name: target.name,
+        email: target.email,
+        suite: true,
+        adminOf: new Set(),
+      });
+    }
     const actorName = actorId
       ? byId.get(actorId)?.name || 'An admin'
       : 'WeLinc (automatic)';
@@ -196,6 +222,11 @@ export class AdminAlertsService {
       (recipient.suite ? systems[0] : undefined);
     const query = system ? `?system=${system}` : '';
     return `${this.portal}/admin/people/${targetId}${query}`;
+  }
+
+  /** Waits for queued alert emails; a script calls it before it exits (AC-12). */
+  flush(): Promise<void> {
+    return this.mailQueue;
   }
 
   /** Mails go out one after another in the background (as deletion notices), never awaited. */

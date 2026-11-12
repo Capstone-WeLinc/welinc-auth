@@ -3,6 +3,7 @@ import { AccountEventType, Prisma, SessionEndReason } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
 import { AccountEventsService } from '../events/account-events.service';
 import { SessionService } from '../sessions/session.service';
+import { AdminAlertsService } from './admin-alerts.service';
 import { MAX_SUITE_ADMINS } from '../../../prisma/seeds/manifest';
 
 type Tx = Prisma.TransactionClient;
@@ -67,6 +68,7 @@ export class AdminRecoveryService {
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
     private readonly events: AccountEventsService,
+    private readonly alerts: AdminAlertsService,
   ) {}
 
   async recover(input: RecoveryInput): Promise<RecoveryResult> {
@@ -91,8 +93,9 @@ export class AdminRecoveryService {
           'the account has not verified its email, so it could not receive a reset code',
         );
       }
+      // A temporary grant of a suite admin being recovered doesn't count (spec 0013, AC-3)
       const roles = await tx.userRoleAssignment.count({
-        where: { userId: target.id },
+        where: { userId: target.id, temporaryGrantId: null },
       });
       if (roles > 0) {
         throw new RecoveryRefused(
@@ -149,6 +152,16 @@ export class AdminRecoveryService {
     this.logger.log(
       `admin recovery user=${result.userId} added=${result.added} host=${input.host}`,
     );
+    // AC-13: every suite admin and every system's admins hear about it
+    await this.alerts.send(null, [
+      {
+        kind: 'ADMIN_RECOVERY',
+        targetId: result.userId,
+        systems: 'ALL',
+        reason,
+      },
+    ]);
+    await this.alerts.flush();
     return result;
   }
 }

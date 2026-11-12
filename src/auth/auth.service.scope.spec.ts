@@ -216,10 +216,11 @@ describe('welinc-auth system scoping', () => {
         vrmsAdmin,
       );
 
-      expect(db.user.update.mock.calls[0][0].data.roles.create).toEqual([
-        BMS_OPERATIONS,
-        chief,
-      ]);
+      // Spec 0013: only the VRMS rows that change; the BMS row is never touched
+      expect(db.user.update.mock.calls[0][0].data.roles).toEqual({
+        deleteMany: [VRMS_MECHANIC],
+        create: [chief],
+      });
     });
 
     // covers: AC-28
@@ -232,9 +233,10 @@ describe('welinc-auth system scoping', () => {
         vrmsAdmin,
       );
 
-      expect(db.user.update.mock.calls[0][0].data.roles.create).toEqual([
-        BMS_OPERATIONS,
-      ]);
+      expect(db.user.update.mock.calls[0][0].data.roles).toEqual({
+        deleteMany: [VRMS_MECHANIC],
+        create: [],
+      });
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
           type: AccountEventType.ROLE_CHANGED,
@@ -366,6 +368,7 @@ describe('welinc-auth system scoping', () => {
         isActive: true,
         deletedAt: null,
         roles: { none: { system: SystemType.VRMS } },
+        suiteAdmin: { is: null },
         OR: [
           { name: { contains: 'ped', mode: 'insensitive' } },
           { email: { contains: 'ped', mode: 'insensitive' } },

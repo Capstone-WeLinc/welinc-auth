@@ -160,10 +160,8 @@ const TYPE_LABELS: Record<
     labelAdmin: 'A suite admin removed you as suite admin',
   },
   [T.TEMP_ACCESS_STARTED]: { label: 'Temporary access started' },
-  [T.TEMP_ACCESS_ENDED]: {
-    label: 'Temporary access ended',
-    labelAdmin: 'An admin ended your temporary access',
-  },
+  // No admin wording: the minute sweep ends most grants, and `newValue` says how it ended
+  [T.TEMP_ACCESS_ENDED]: { label: 'Temporary access ended' },
   [T.ADMIN_RECOVERY]: { label: 'Admin access recovered from the server' },
   [T.ADMIN_CODE_PASSED]: { label: 'Admin sign in confirmed with a code' },
 };
