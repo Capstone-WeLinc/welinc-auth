@@ -37,6 +37,9 @@ import { SessionSweeper } from './sessions/session-sweeper';
 import { DirectoryController } from './directory/directory.controller';
 import { DirectoryGuard } from './directory/directory.guard';
 import { DirectoryService } from './directory/directory.service';
+import { MatrixService } from './permissions/matrix.service';
+import { PermissionsController } from './permissions/permissions.controller';
+import { PermissionsReadGuard } from './permissions/permissions-read.guard';
 import { CodeService } from './codes/code.service';
 import { CodeErrorFilter } from './codes/code-errors';
 import { SignInStepService } from './codes/sign-in-step.service';
@@ -108,6 +111,9 @@ import { AdminReportService } from './admin/admin-report.service';
     TemporaryGrantsService,
     AdminReportService,
     AccountSessionsService,
+    // Spec 0013 slice 5: the central permission matrix
+    MatrixService,
+    PermissionsReadGuard,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
@@ -125,6 +131,7 @@ import { AdminReportService } from './admin/admin-report.service';
     AdminController,
     AdminAccountsController,
     SuiteAdminController,
+    PermissionsController,
   ],
 })
 export default class AuthModule {}
