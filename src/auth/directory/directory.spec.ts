@@ -152,9 +152,9 @@ describe('DirectoryUser mapping', () => {
     erasedAt: null,
     updatedAt: new Date('2026-11-09T01:02:03.004Z'),
     roles: [
-      { system: 'VRMS', role: 'MECHANIC' },
-      { system: 'VMMS', role: 'ADMIN' },
-      { system: 'VRMS', role: 'CHIEF_MECHANIC' },
+      { system: 'VRMS', role: 'MECHANIC', temporaryGrantId: null },
+      { system: 'VMMS', role: 'ADMIN', temporaryGrantId: null },
+      { system: 'VRMS', role: 'CHIEF_MECHANIC', temporaryGrantId: null },
     ],
   };
 
@@ -170,6 +170,7 @@ describe('DirectoryUser mapping', () => {
       deleted: false,
       erased: false,
       roles: ['CHIEF_MECHANIC', 'MECHANIC'],
+      temporaryRoles: [],
       updatedAt: '2026-11-09T01:02:03.004Z',
     });
     expect(
@@ -195,6 +196,37 @@ describe('DirectoryUser mapping', () => {
       updatedAt: '2026-11-09T01:02:03.004Z',
     });
     expect(user).not.toHaveProperty('phoneVerified');
+  });
+
+  // covers: spec 0013 AC-11
+  it('lists a temporary role in roles and in temporaryRoles, from a row and from a snapshot', () => {
+    const suiteAdmin = {
+      ...row,
+      roles: [{ system: 'VRMS', role: 'MECHANIC', temporaryGrantId: 'g1' }],
+    };
+    expect(
+      fromUserRow(suiteAdmin, { system: 'VRMS', canSeePhone: false }),
+    ).toMatchObject({ roles: ['MECHANIC'], temporaryRoles: ['MECHANIC'] });
+    expect(
+      fromUserRow(suiteAdmin, { system: 'BMS', canSeePhone: false }),
+    ).toMatchObject({ roles: [], temporaryRoles: [] });
+    const snapshot = {
+      ...row,
+      deletedAt: null,
+      erasedAt: null,
+      updatedAt: '2026-11-09T01:02:03.004+00:00',
+      roles: [
+        { system: 'VRMS', role: 'ADMIN', temporary: true },
+        // Written before spec 0013: no flag, so permanent
+        { system: 'VRMS', role: 'MECHANIC' },
+      ],
+    };
+    expect(
+      fromSnapshot(snapshot, { system: 'VRMS', canSeePhone: false }),
+    ).toMatchObject({
+      roles: ['ADMIN', 'MECHANIC'],
+      temporaryRoles: ['ADMIN'],
+    });
   });
 
   // covers: spec 0012 AC-17

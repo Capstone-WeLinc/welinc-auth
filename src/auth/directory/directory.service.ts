@@ -37,7 +37,7 @@ const USER_SELECT = {
   deletedAt: true,
   erasedAt: true,
   updatedAt: true,
-  roles: { select: { system: true, role: true } },
+  roles: { select: { system: true, role: true, temporaryGrantId: true } },
 } satisfies Prisma.UserSelect;
 
 /**
