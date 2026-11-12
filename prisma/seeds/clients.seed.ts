@@ -30,7 +30,8 @@ const SYSTEM_GRANTS = [
 ];
 /** Spec 0005 AC-7: VMMS and BMS may read phones; VRMS keeps names and roles only. */
 const DIRECTORY = { AUTH: ['directory.read', 'directory.contact'] };
-const DIRECTORY_NO_CONTACT = { AUTH: ['directory.read'] };
+/** VRMS reads the directory without phones, and its permission matrix (spec 0013, AC-26). */
+const VRMS_SCOPES = { AUTH: ['directory.read', 'permissions.read'] };
 
 export const CLIENTS: ClientDefinition[] = [
   {
@@ -50,7 +51,7 @@ export const CLIENTS: ClientDefinition[] = [
     system: SystemType.VRMS,
     grants: SYSTEM_GRANTS,
     userAudiences: ['VRMS'],
-    serviceScopes: DIRECTORY_NO_CONTACT,
+    serviceScopes: VRMS_SCOPES,
   },
   {
     id: 'vmms',

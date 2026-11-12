@@ -159,8 +159,14 @@ describe('LauncherService.answerFor', () => {
   function build(
     held: { system: SystemType; role: string }[],
     clients: ReturnType<typeof client>[],
+    suiteAdmin = false,
   ) {
     const db = {
+      suiteAdmin: {
+        findUnique: fn().mockResolvedValue(
+          suiteAdmin ? { userId: 'u1' } : null,
+        ),
+      },
       userRoleAssignment: { findMany: fn().mockResolvedValue(held) },
       system: {
         findMany: fn().mockImplementation(
@@ -208,6 +214,17 @@ describe('LauncherService.answerFor', () => {
           isActive: true,
         }),
       }),
+    );
+  });
+
+  // covers: suite spec 0013 AC-5 (a suite admin holds no system by design)
+  it('answers a suite admin with no role an empty list, not 403', async () => {
+    const { service, db } = build([], [], true);
+    const answer = await service.answerFor(USER);
+    expect(answer.systems).toEqual([]);
+    expect(answer.user.email).toBe('multi.lead@welinc.com');
+    expect(db.suiteAdmin.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'u1' } }),
     );
   });
 

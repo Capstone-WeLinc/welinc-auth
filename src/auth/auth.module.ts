@@ -37,6 +37,10 @@ import { SessionSweeper } from './sessions/session-sweeper';
 import { DirectoryController } from './directory/directory.controller';
 import { DirectoryGuard } from './directory/directory.guard';
 import { DirectoryService } from './directory/directory.service';
+import { AdminPermissionsController } from './permissions/admin-permissions.controller';
+import { MatrixService } from './permissions/matrix.service';
+import { PermissionsController } from './permissions/permissions.controller';
+import { PermissionsReadGuard } from './permissions/permissions-read.guard';
 import { CodeService } from './codes/code.service';
 import { CodeErrorFilter } from './codes/code-errors';
 import { SignInStepService } from './codes/sign-in-step.service';
@@ -47,6 +51,17 @@ import { PasswordCheckService } from './reauth/password-check.service';
 import { DeletionService } from './deletion/deletion.service';
 import { DeletionController } from './deletion/deletion.controller';
 import { ErasureService } from './deletion/erasure.service';
+import { AdminStandingService } from './admin/admin-standing.service';
+import { AdminSessionGuard } from './admin/admin-session.guard';
+import { AdminController } from './admin/admin.controller';
+import { AdminRecoveryService } from './admin/admin-recovery.service';
+import { AdminAlertsService } from './admin/admin-alerts.service';
+import { AccountSessionsService } from './admin/account-sessions.service';
+import { AdminAccountsController } from './admin/admin-accounts.controller';
+import { SuiteAdminController } from './admin/suite-admin.controller';
+import { SuiteAdminsService } from './admin/suite-admins.service';
+import { TemporaryGrantsService } from './admin/temporary-grants.service';
+import { AdminReportService } from './admin/admin-report.service';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -87,6 +102,19 @@ import { ErasureService } from './deletion/erasure.service';
     PasswordCheckService,
     DeletionService,
     ErasureService,
+    // Spec 0013: who is an admin, and the cookie guard of /auth/admin/*
+    AdminStandingService,
+    AdminSessionGuard,
+    AdminRecoveryService,
+    // Spec 0013 slice 2: admin alerts and the one sessions service for both route families
+    AdminAlertsService,
+    SuiteAdminsService,
+    TemporaryGrantsService,
+    AdminReportService,
+    AccountSessionsService,
+    // Spec 0013 slice 5: the central permission matrix
+    MatrixService,
+    PermissionsReadGuard,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
@@ -101,6 +129,11 @@ import { ErasureService } from './deletion/erasure.service';
     DirectoryController,
     ActivityController,
     DeletionController,
+    AdminController,
+    AdminAccountsController,
+    SuiteAdminController,
+    PermissionsController,
+    AdminPermissionsController,
   ],
 })
 export default class AuthModule {}

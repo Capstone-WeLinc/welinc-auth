@@ -24,11 +24,15 @@ export type SessionEndMeta = {
   ip?: string | null;
 };
 
-/** Ends an admin causes: tagged with the admin's system. */
+/**
+ * Ends an admin causes: tagged with the admin's system. `TEMP_ACCESS_ENDED` is tagged with the
+ * grant's system; its actor is whoever ended the grant early, nobody for the expiry sweep.
+ */
 const ADMIN_REASONS = new Set<SessionEndReason>([
   SessionEndReason.ADMIN_ENDED,
   SessionEndReason.DEACTIVATED,
   SessionEndReason.DELETED,
+  SessionEndReason.TEMP_ACCESS_ENDED,
 ]);
 
 /** Ends the person causes. */
@@ -266,6 +270,11 @@ export class SessionService {
     userId: string;
     meta: RequestMeta;
     previousHandle: unknown;
+    /**
+     * Spec 0013, AC-5, AC-7: the login finished through the code step, so the session starts
+     * with `sign_in_code_at`; `admin` also writes `ADMIN_CODE_PASSED`.
+     */
+    codePassed?: { admin: boolean };
   }): Promise<{ session: Session; handle: string }> {
     const { meta } = input;
     const handle = newOpaque();
@@ -300,6 +309,7 @@ export class SessionService {
           absoluteExpiresAt: new Date(
             now.getTime() + this.settings.webMaxHours * 3_600_000,
           ),
+          signInCodeAt: input.codePassed ? now : null,
         },
       });
       await this.events.record(tx, {
@@ -310,12 +320,50 @@ export class SessionService {
         clientId: 'portal',
         meta,
       });
+      if (input.codePassed?.admin) {
+        await this.events.record(tx, {
+          userId: input.userId,
+          actorId: input.userId,
+          type: AccountEventType.ADMIN_CODE_PASSED,
+          sessionId: created.id,
+          clientId: 'portal',
+          meta,
+        });
+      }
       return created;
     });
     this.logger.log(
       `session created sid=${session.id} user=${input.userId} kind=WEB client=portal`,
     );
     return { session, handle };
+  }
+
+  /**
+   * Spec 0013, AC-7: the step up. Sets `sign_in_code_at` on a live session that has none and
+   * writes `ADMIN_CODE_PASSED`, in one transaction. Answers false when nothing changed (already
+   * passed, or the session ended meanwhile). Never cleared afterwards.
+   */
+  async markCodePassed(
+    sessionId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.session.updateMany({
+        where: { id: sessionId, userId, endedAt: null, signInCodeAt: null },
+        data: { signInCodeAt: new Date() },
+      });
+      if (count === 0) return false;
+      await this.events.record(tx, {
+        userId,
+        actorId: userId,
+        type: AccountEventType.ADMIN_CODE_PASSED,
+        sessionId,
+        clientId: 'portal',
+        meta,
+      });
+      return true;
+    });
   }
 
   /**
@@ -420,13 +468,18 @@ export class SessionService {
     db: Db,
     userId: string,
     reason: SessionEndReason,
-    meta: SessionEndMeta & { exceptSid?: string } = {},
+    meta: SessionEndMeta & {
+      exceptSid?: string;
+      /** Only sessions that opened this system (spec 0013, AC-10). */
+      audience?: SystemType;
+    } = {},
   ): Promise<number> {
     const rows = await db.session.findMany({
       where: {
         userId,
         endedAt: null,
         ...(meta.exceptSid ? { id: { not: meta.exceptSid } } : {}),
+        ...(meta.audience ? { audiences: { has: meta.audience } } : {}),
       },
       select: { id: true },
     });

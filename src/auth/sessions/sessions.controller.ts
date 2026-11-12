@@ -1,7 +1,7 @@
 import {
+  Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -12,23 +12,28 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { AccountEventType, SessionEndReason } from '@prisma/client';
+import { SessionEndReason } from '@prisma/client';
 import type { Request, Response } from 'express';
-import { AccountEventsService } from '../events/account-events.service';
+import { AccountSessionsService } from '../admin/account-sessions.service';
+import { ReauthBodyDto } from '../dto/reauth-body.dto';
 import { requestMeta } from '../events/request-meta';
 import { PrismaService } from '../../shared/prisma.service';
 import { SystemAdmin } from '../decorators/system-admin.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import type { UserCaller } from '../guards/request-authenticator';
-import { change } from '../user-changes';
-import { assertInSystem } from '../user-scope';
+import type { AdminCaller } from '../user-scope';
 import { SessionService } from './session.service';
 
-/** Admins end their own sessions through logout or Signed in devices, not the admin route. */
-export const SELF_END_ALL =
-  "You can't end your own sessions here. Use Signed in devices on your profile.";
-
 type UserRequest = Pick<Request, 'ip' | 'headers'> & { user: UserCaller };
+
+/** The bearer admin's scope: the token's system and session (spec 0013, AC-16). */
+const adminOf = (req: UserRequest): AdminCaller => ({
+  id: req.user.sub,
+  email: req.user.email,
+  system: req.user.system,
+  sid: req.user.sid,
+  meta: requestMeta(req),
+});
 
 /**
  * Seeing and ending sessions (spec 0003, AC-31, AC-32): your own under `/auth/me/sessions`, and
@@ -40,7 +45,7 @@ export class SessionsController {
   constructor(
     private readonly sessions: SessionService,
     private readonly prisma: PrismaService,
-    private readonly events: AccountEventsService,
+    private readonly accountSessions: AccountSessionsService,
   ) {}
 
   /** Your live sessions, newest activity first, with `current` on this one (AC-31). */
@@ -86,64 +91,26 @@ export class SessionsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    await this.visibleUser(id, req.user);
-    return { sessions: await this.sessions.listLive(id) };
+    return { sessions: await this.accountSessions.list(id, adminOf(req)) };
   }
 
   /**
-   * Ends every live session of a user (`ADMIN_ENDED`, the admin as `endedById`) and records one
-   * `SESSIONS_ENDED` change holding the count, in one transaction (AC-32).
+   * Ends every live session of a user (AC-32). An admin account needs `reauthToken` in the body
+   * (spec 0013, AC-14b).
    */
   @Delete('users/:id/sessions')
   @SystemAdmin()
   async endAllOfUser(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: UserRequest,
+    @Body() dto: ReauthBodyDto,
   ) {
-    const caller = req.user;
-    const ended = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.findUnique({
-        where: { id },
-        select: {
-          deletedAt: true,
-          roles: { select: { role: true, system: true } },
-        },
-      });
-      assertInSystem(user?.deletedAt ? null : user, caller.system);
-      if (id === caller.sub) throw new ForbiddenException(SELF_END_ALL);
-      const count = await this.sessions.endAllForUser(
-        tx,
+    return {
+      ended: await this.accountSessions.endAll(
         id,
-        SessionEndReason.ADMIN_ENDED,
-        {
-          endedById: caller.sub,
-          system: caller.system,
-          ip: requestMeta(req).ip,
-        },
-      );
-      await this.events.record(
-        tx,
-        change(
-          id,
-          { id: caller.sub, email: caller.email, meta: requestMeta(req) },
-          AccountEventType.SESSIONS_ENDED,
-          { newValue: String(count) },
-        ),
-      );
-      return count;
-    });
-    return { ended };
-  }
-
-  /** 404 unless the user exists, isn't deleted and holds a role in the caller's system. */
-  private async visibleUser(id: string, caller: UserCaller) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-      select: {
-        deletedAt: true,
-        roles: { select: { role: true, system: true } },
-      },
-    });
-    assertInSystem(user?.deletedAt ? null : user, caller.system);
+        adminOf(req),
+        dto.reauthToken,
+      ),
+    };
   }
 }

@@ -31,9 +31,11 @@
     "seed:clients": "ts-node -r tsconfig-paths/register prisma/seed-clients.ts",
     "seed:check": "ts-node -r tsconfig-paths/register prisma/seed-check.ts",
     "catalog:sync": "ts-node -r tsconfig-paths/register prisma/catalog-sync.ts",
+    "permissions:import": "ts-node -r tsconfig-paths/register prisma/permissions-import.ts",
     "db:deploy": "prisma migrate deploy && npm run catalog:sync",
     "keys:rotate": "ts-node scripts/keys-rotate.ts",
     "keys:client": "ts-node scripts/keys-client.ts",
+    "admin:recover": "ts-node -r tsconfig-paths/register scripts/admin-recover.ts",
     "geo:fetch": "node scripts/geo-fetch.mjs"
   },
   "dependencies": {

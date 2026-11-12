@@ -12,8 +12,38 @@ import type { RoleAssignment } from './roles/catalog.types';
 
 // Spec 0011, AC-26 to AC-30: admin user endpoints act only inside the caller's system.
 
-/** The signed in admin plus the system their request resolved to (spec 0009, AC-24). */
-export type AdminCaller = Actor & { system: SystemType };
+/**
+ * The scope every admin account action runs in (spec 0013, AC-16): the signed in admin, the
+ * system their request resolved to (the token's `aud` on bearer routes, the checked `system`
+ * input on `/auth/admin/*`), and their session, which a reauth token is bound to (AC-14).
+ */
+export type AdminCaller = Actor & {
+  system: SystemType;
+  sid: string;
+  /** A suite admin acting in `system` (AC-17); false or left out for a system admin. */
+  suite?: boolean;
+};
+
+/**
+ * Spec 0013, AC-17: a suite admin acting with no system, on the routes that allow it (lists,
+ * activity, deletion requests, delete, restore and the deletion decisions).
+ */
+export type SuiteScope = Actor & { system: null; sid: string; suite: true };
+
+/** Where an account action runs: one system, or (suite admins only) the whole suite. */
+export type AccountScope = AdminCaller | SuiteScope;
+
+/** 404 unless the person is in scope: any existing person for a suite wide caller. */
+export function assertInScope<T extends { roles: RoleAssignment[] }>(
+  user: T | null | undefined,
+  system: SystemType | null,
+): asserts user is T {
+  if (system === null) {
+    if (!user) throw new NotFoundException('User not found');
+    return;
+  }
+  assertInSystem(user, system);
+}
 
 /** Lookups each admin may run per minute (AC-29). */
 export const LOOKUP_PER_MINUTE = 30;

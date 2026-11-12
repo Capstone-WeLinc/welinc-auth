@@ -1,3 +1,4 @@
+import { fakeAdminAlerts, fakeAdminStanding } from './testing/admin.fake';
 import { describe, it, expect, jest } from '@jest/globals';
 import {
   ConflictException,
@@ -26,6 +27,7 @@ const vrmsAdmin = {
   id: ADMIN_ID,
   email: 'admin@welinc.com',
   system: SystemType.VRMS,
+  sid: 'sid-admin',
 };
 const NOW = new Date('2026-11-08T08:00:00.000Z');
 
@@ -107,6 +109,8 @@ function build() {
       db as unknown as PrismaService,
       new AccountEventsService(db as unknown as PrismaService, noGeo),
     ),
+    fakeAdminStanding(),
+    fakeAdminAlerts(),
   );
   return { service, db, order };
 }
@@ -278,7 +282,10 @@ describe('spec 0004 role rules in user admin', () => {
     expect(db.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          roles: { deleteMany: {}, create: [role('CHIEF_MECHANIC')] },
+          roles: {
+            deleteMany: [role('MECHANIC')],
+            create: [role('CHIEF_MECHANIC')],
+          },
         }),
       }),
     );

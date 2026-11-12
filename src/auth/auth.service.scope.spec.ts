@@ -1,3 +1,4 @@
+import { fakeAdminAlerts, fakeAdminStanding } from './testing/admin.fake';
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- the faked database is untyped on purpose */
 import { describe, it, expect, jest } from '@jest/globals';
 import {
@@ -30,6 +31,7 @@ const vrmsAdmin = {
   id: ADMIN_ID,
   email: 'admin@welinc.com',
   system: SystemType.VRMS,
+  sid: 'sid-admin',
 };
 
 const role = (r: RoleCode, system: SystemType) => ({ role: r, system });
@@ -100,6 +102,8 @@ function build() {
       db as unknown as PrismaService,
       new AccountEventsService(db as unknown as PrismaService, noGeo),
     ),
+    fakeAdminStanding(),
+    fakeAdminAlerts(),
   );
   return { service, db };
 }
@@ -212,10 +216,11 @@ describe('welinc-auth system scoping', () => {
         vrmsAdmin,
       );
 
-      expect(db.user.update.mock.calls[0][0].data.roles.create).toEqual([
-        BMS_OPERATIONS,
-        chief,
-      ]);
+      // Spec 0013: only the VRMS rows that change; the BMS row is never touched
+      expect(db.user.update.mock.calls[0][0].data.roles).toEqual({
+        deleteMany: [VRMS_MECHANIC],
+        create: [chief],
+      });
     });
 
     // covers: AC-28
@@ -228,9 +233,10 @@ describe('welinc-auth system scoping', () => {
         vrmsAdmin,
       );
 
-      expect(db.user.update.mock.calls[0][0].data.roles.create).toEqual([
-        BMS_OPERATIONS,
-      ]);
+      expect(db.user.update.mock.calls[0][0].data.roles).toEqual({
+        deleteMany: [VRMS_MECHANIC],
+        create: [],
+      });
       expect(changesWritten(db)).toEqual([
         expect.objectContaining({
           type: AccountEventType.ROLE_CHANGED,
@@ -362,6 +368,7 @@ describe('welinc-auth system scoping', () => {
         isActive: true,
         deletedAt: null,
         roles: { none: { system: SystemType.VRMS } },
+        suiteAdmin: { is: null },
         OR: [
           { name: { contains: 'ped', mode: 'insensitive' } },
           { email: { contains: 'ped', mode: 'insensitive' } },

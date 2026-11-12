@@ -58,6 +58,14 @@ enum AccountEventType {
   DELETION_REJECTED
   RESTORED
   ERASED
+  // Spec 0013: ACCOUNT (kept forever)
+  SUITE_ADMIN_ACTIONED
+  SUITE_ADMIN_REMOVED
+  TEMP_ACCESS_STARTED
+  TEMP_ACCESS_ENDED
+  ADMIN_RECOVERY
+  // Spec 0013: SIGN_IN
+  ADMIN_CODE_PASSED
 }
 
 // Spec 0003: a login is a session that welinc-auth tracks on the server.
@@ -78,36 +86,44 @@ enum SessionEndReason {
   REFRESH_REUSE
   CODE_REUSE
   MAX_SESSIONS
+  // Spec 0013, AC-10: a temporary grant ended, so the holder's sessions in that system end
+  TEMP_ACCESS_ENDED
 }
 
 model User {
-  id                  String                   @id @default(uuid()) @db.Uuid
-  name                String                   @db.VarChar(100)
-  email               String                   @unique @map("email") @db.VarChar(255)
-  emailVerified       Boolean                  @default(false) @map("email_verified")
+  id                   String                   @id @default(uuid()) @db.Uuid
+  name                 String                   @db.VarChar(100)
+  email                String                   @unique @map("email") @db.VarChar(255)
+  emailVerified        Boolean                  @default(false) @map("email_verified")
   // Spec 0009, AC-16: true once a setup or reset code was used; never turns back to false
-  passwordSet         Boolean                  @default(false) @map("password_set")
-  passwordHash        String                   @map("password_hash") @db.VarChar(255)
-  contact             String?                  @db.VarChar(100)
-  profilePicture      String?                  @map("profile_picture") @db.Text
-  isActive            Boolean                  @default(true) @map("is_active")
-  failedLoginAttempts Int                      @default(0) @map("failed_login_attempts")
-  lockedAt            DateTime?                @map("locked_at") @db.Timestamptz(6)
-  deletedAt           DateTime?                @map("deleted_at") @db.Timestamptz(6)
+  passwordSet          Boolean                  @default(false) @map("password_set")
+  passwordHash         String                   @map("password_hash") @db.VarChar(255)
+  contact              String?                  @db.VarChar(100)
+  profilePicture       String?                  @map("profile_picture") @db.Text
+  isActive             Boolean                  @default(true) @map("is_active")
+  failedLoginAttempts  Int                      @default(0) @map("failed_login_attempts")
+  lockedAt             DateTime?                @map("locked_at") @db.Timestamptz(6)
+  deletedAt            DateTime?                @map("deleted_at") @db.Timestamptz(6)
   // Spec 0012: personal data replaced by "Deleted user"; never cleared
-  erasedAt            DateTime?                @map("erased_at") @db.Timestamptz(6)
-  createdAt           DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
-  roles               UserRoleAssignment[]
-  verificationCodes   VerificationCode[]
-  sessions            Session[]                @relation("UserSessions")
-  sessionsEnded       Session[]                @relation("SessionsEndedBy")
-  events              AccountEvent[]           @relation("AccountEvents")
-  eventsMade          AccountEvent[]           @relation("AccountEventsMade")
-  deletionRequests    AccountDeletionRequest[] @relation("DeletionRequests")
-  deletionsDecided    AccountDeletionRequest[] @relation("DeletionDecidedBy")
-  deletionsRestored   AccountDeletionRequest[] @relation("DeletionRestoredBy")
-  reauthTokens        ReauthToken[]
+  erasedAt             DateTime?                @map("erased_at") @db.Timestamptz(6)
+  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  roles                UserRoleAssignment[]
+  verificationCodes    VerificationCode[]
+  sessions             Session[]                @relation("UserSessions")
+  sessionsEnded        Session[]                @relation("SessionsEndedBy")
+  events               AccountEvent[]           @relation("AccountEvents")
+  eventsMade           AccountEvent[]           @relation("AccountEventsMade")
+  deletionRequests     AccountDeletionRequest[] @relation("DeletionRequests")
+  deletionsDecided     AccountDeletionRequest[] @relation("DeletionDecidedBy")
+  deletionsRestored    AccountDeletionRequest[] @relation("DeletionRestoredBy")
+  reauthTokens         ReauthToken[]
+  suiteAdmin           SuiteAdmin?              @relation("SuiteAdmin")
+  suiteAdminsGranted   SuiteAdmin[]             @relation("SuiteAdminGrantedBy")
+  temporaryGrants      TemporaryGrant[]         @relation("TemporaryGrants")
+  temporaryGrantsEnded TemporaryGrant[]         @relation("TemporaryGrantsEnded")
+  permissionCells      RolePermission[]         @relation("RolePermissionUpdatedBy")
+  permissionChanges    PermissionChange[]       @relation("PermissionChangeActor")
 
   @@index([deletedAt])
   @@map("users")
@@ -125,39 +141,121 @@ model System {
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   roles           SystemRole[]
+  permissions     SystemPermission[]
+  matrix          PermissionMatrix?
 
   @@map("systems")
 }
 
+// Spec 0013, AC-25: a system's permission keys, written only by `npm run catalog:sync` from the
+// `permissions` list in prisma/catalog/<system>.ts. No route edits them.
+model SystemPermission {
+  system      SystemType
+  key         String           @db.VarChar(60)
+  label       String           @db.VarChar(100)
+  group       String           @db.VarChar(40)
+  description String           @db.VarChar(300)
+  // Position in the catalog file (display order)
+  sortOrder   Int              @map("sort_order")
+  // Roles whose cell always equals its default (AC-27 refuses edits, the sync resets them)
+  lockedRoles String[]         @map("locked_roles") @db.VarChar(40)
+  systemRef   System           @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  cells       RolePermission[]
+
+  @@id([system, key])
+  @@map("system_permissions")
+}
+
+// Spec 0013, AC-25 and AC-27: whether a role holds a permission. Inserted by catalog:sync with
+// the default, edited by suite admins; locked cells only by the sync.
+model RolePermission {
+  system      SystemType
+  role        String           @db.VarChar(40)
+  key         String           @db.VarChar(60)
+  allowed     Boolean
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedById String?          @map("updated_by_id") @db.Uuid
+  roleRef     SystemRole       @relation(fields: [system, role], references: [system, code], onDelete: Cascade, onUpdate: Restrict)
+  permission  SystemPermission @relation(fields: [system, key], references: [system, key], onDelete: Cascade, onUpdate: Restrict)
+  updatedBy   User?            @relation("RolePermissionUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@id([system, role, key])
+  @@map("role_permissions")
+}
+
+// Spec 0013, AC-26: one per system; `version` is the ETag systems poll with. Raised with
+// `version = version + 1` by every write that changes a cell.
+model PermissionMatrix {
+  system    SystemType @id
+  version   Int        @default(1)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  systemRef System     @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("permission_matrices")
+}
+
+// Spec 0013, AC-25, AC-27 and AC-28: one row per changed cell, append only by trigger (migration
+// SQL); erasure may blank actor_name and actor_email. No FK on role or key: history outlives the
+// catalog.
+model PermissionChange {
+  id         String     @id @default(uuid()) @db.Uuid
+  system     SystemType
+  role       String     @db.VarChar(40)
+  key        String     @db.VarChar(60)
+  // Null when the cell was created
+  before     Boolean?
+  // Null when the cell was removed
+  after      Boolean?
+  actorId    String?    @map("actor_id") @db.Uuid
+  // "Catalog sync" when the sync wrote it
+  actorName  String?    @map("actor_name") @db.VarChar(100)
+  actorEmail String?    @map("actor_email") @db.VarChar(255)
+  note       String?    @db.VarChar(500)
+  // Copied from VRMS by permissions:import (AC-28)
+  imported   Boolean    @default(false)
+  // Millisecond precision so keyset cursors match exactly (as account_events)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor      User?      @relation("PermissionChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([system, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("permission_changes")
+}
+
 model SystemRole {
-  system        SystemType
+  system          SystemType
   // ^[A-Z][A-Z0-9_]{1,39}$, never changed once synced
-  code          String               @db.VarChar(40)
-  name          String               @db.VarChar(60)
-  description   String               @db.VarChar(200)
+  code            String               @db.VarChar(40)
+  name            String               @db.VarChar(60)
+  description     String               @db.VarChar(200)
   // Position in the catalog file: display order and power order (0 is the most powerful)
-  sortOrder     Int                  @map("sort_order")
+  sortOrder       Int                  @map("sort_order")
   // Exactly one per system, checked by the sync
-  isSystemAdmin Boolean              @default(false) @map("is_system_admin")
-  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  systemRef     System               @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
-  assignments   UserRoleAssignment[]
+  isSystemAdmin   Boolean              @default(false) @map("is_system_admin")
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  systemRef       System               @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  assignments     UserRoleAssignment[]
+  temporaryGrants TemporaryGrant[]
+  permissionCells RolePermission[]
 
   @@id([system, code])
   @@map("system_roles")
 }
 
 model UserRoleAssignment {
-  id        String     @id @default(uuid()) @db.Uuid
-  userId    String     @map("user_id") @db.Uuid
-  role      String     @db.VarChar(40)
-  system    SystemType
-  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String     @id @default(uuid()) @db.Uuid
+  userId           String     @map("user_id") @db.Uuid
+  role             String     @db.VarChar(40)
+  system           SystemType
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  // Spec 0013, AC-9: set when a temporary grant gave this row; a suite admin's rows always have it
+  // (a deferred trigger in the migration SQL raises suite_admin_no_roles otherwise)
+  temporaryGrantId String?    @unique @map("temporary_grant_id") @db.Uuid
 
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  systemRole SystemRole @relation(fields: [system, role], references: [system, code], onDelete: Restrict, onUpdate: Restrict)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  systemRole     SystemRole      @relation(fields: [system, role], references: [system, code], onDelete: Restrict, onUpdate: Restrict)
+  temporaryGrant TemporaryGrant? @relation(fields: [temporaryGrantId], references: [id], onDelete: Restrict)
 
   @@unique([userId, role, system])
   @@map("user_roles")
@@ -218,6 +316,8 @@ model Session {
   endedAt           DateTime?         @map("ended_at") @db.Timestamptz(6)
   endReason         SessionEndReason? @map("end_reason")
   endedById         String?           @map("ended_by_id") @db.Uuid
+  // Spec 0013, AC-5 to AC-7: when this session passed an emailed code (login or step up); never cleared
+  signInCodeAt      DateTime?         @map("sign_in_code_at") @db.Timestamptz(6)
 
   user               User                @relation("UserSessions", fields: [userId], references: [id], onDelete: NoAction)
   endedBy            User?               @relation("SessionsEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
@@ -454,6 +554,56 @@ model AccountDeletionRequest {
 // Spec 0012: what a reauth token may be used for.
 enum ReauthPurpose {
   ACCOUNT_DELETION
+  // Spec 0013, AC-14
+  ADMIN_ACTION
+  TEMPORARY_ACCESS
+}
+
+// Spec 0013, AC-1 to AC-4: the suite admins, 1 to 3 people who hold no permanent system role
+// (a deferred trigger in the migration SQL enforces that once user_roles can hold temporary rows).
+model SuiteAdmin {
+  userId      String   @id @map("user_id") @db.Uuid
+  // Null: the seed or the recovery script
+  grantedById String?  @map("granted_by_id") @db.Uuid
+  grantedAt   DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+  // Null only for the seed
+  reason      String?  @db.VarChar(500)
+
+  user      User  @relation("SuiteAdmin", fields: [userId], references: [id], onDelete: Restrict)
+  grantedBy User? @relation("SuiteAdminGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@map("suite_admins")
+}
+
+// Spec 0013, AC-9 to AC-11: a suite admin's own role in one system for 1 to 8 hours. Live while
+// ended_at is null (one live grant per person and system, a partial unique index in the SQL).
+// A live grant always has its user_roles row; an ended one never does.
+enum TemporaryGrantEnd {
+  EXPIRED
+  ENDED_EARLY
+  SUITE_ADMIN_REMOVED
+}
+
+model TemporaryGrant {
+  id        String             @id @default(uuid()) @db.Uuid
+  userId    String             @map("user_id") @db.Uuid
+  system    SystemType
+  role      String             @db.VarChar(40)
+  reason    String             @db.VarChar(500)
+  startedAt DateTime           @default(now()) @map("started_at") @db.Timestamptz(6)
+  // 1 to 8 hours after started_at (CHECK in the SQL)
+  expiresAt DateTime           @map("expires_at") @db.Timestamptz(6)
+  endedAt   DateTime?          @map("ended_at") @db.Timestamptz(6)
+  endReason TemporaryGrantEnd? @map("end_reason")
+  endedById String?            @map("ended_by_id") @db.Uuid
+
+  user       User                @relation("TemporaryGrants", fields: [userId], references: [id], onDelete: Restrict)
+  endedBy    User?               @relation("TemporaryGrantsEnded", fields: [endedById], references: [id], onDelete: SetNull)
+  systemRole SystemRole          @relation(fields: [system, role], references: [system, code], onDelete: Restrict, onUpdate: Restrict)
+  roleRow    UserRoleAssignment?
+
+  @@index([startedAt(sort: Desc), id(sort: Desc)])
+  @@map("temporary_grants")
 }
 
 // Spec 0012, AC-1, AC-3: a one use token from `POST /auth/profile/verify-password`, bound to the

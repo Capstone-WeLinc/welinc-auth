@@ -33,7 +33,10 @@ import {
   change,
   lockAccount,
 } from '../user-changes';
-import { assertInSystem, type AdminCaller } from '../user-scope';
+import { assertInScope, type AccountScope } from '../user-scope';
+import { isSuiteAdmin, notAnAdmin, notSuiteAdmin } from '../admin/admin-errors';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { AdminStandingService, isAdmin } from '../admin/admin-standing.service';
 import {
   decodeDeletionCursor,
   encodeDeletionCursor,
@@ -64,6 +67,8 @@ export type DeletionRequestView = {
   decisionNote: string | null;
   eraseAfter: string | null;
   user?: { id: string; name: string; email: string; systems: SystemType[] };
+  /** Spec 0013, AC-21: suite view only; no other active admin of the person's systems. */
+  orphan?: boolean;
 };
 
 /** One account in its grace period (AC-9, `view=grace`). */
@@ -72,7 +77,12 @@ export type GraceItem = {
   deletedAt: string;
   eraseAfter: string;
   requestId: string | null;
+  /** Spec 0013, AC-21: suite view only. */
+  orphan?: boolean;
 };
+
+/** Spec 0013, AC-21: the suite view reads at most this many rows and sorts them in memory. */
+const SUITE_LIST_MAX = 1000;
 
 export type Page<T> = { data: T[]; nextCursor: string | null };
 
@@ -192,6 +202,8 @@ export class DeletionService {
     private readonly passwords: PasswordCheckService,
     private readonly mail: MailService,
     config: ConfigService<Env, true>,
+    private readonly admins: AdminStandingService,
+    private readonly alerts: AdminAlertsService,
   ) {
     this.graceDays = config.get('ACCOUNT_ERASURE_GRACE_DAYS', { infer: true });
     this.reviewLink = config
@@ -204,30 +216,46 @@ export class DeletionService {
     return new Date(deletedAt.getTime() + this.graceDays * DAY_MS);
   }
 
-  /** AC-1, AC-2: recheck the password, then hand out a reauth token for `purpose`. */
+  /**
+   * AC-1, AC-2: recheck the password, then hand out a reauth token for `purpose`, bound to the
+   * caller's session. Spec 0013, AC-14, AC-14a: `profile` (the bearer route) takes
+   * `ACCOUNT_DELETION` from anyone and `ADMIN_ACTION` from an admin; `admin` (the portal's cookie
+   * route) takes `ADMIN_ACTION` from an admin and `TEMPORARY_ACCESS` from a suite admin. The
+   * standing is checked before the password, so a refused purpose never counts a try.
+   */
   async verifyPassword(
     caller: SelfCaller,
     password: unknown,
     purpose: unknown,
+    route: 'profile' | 'admin' = 'profile',
   ): Promise<{ reauthToken: string; expiresAt: string }> {
-    if (purpose !== ReauthPurpose.ACCOUNT_DELETION) {
-      throw validationFailed('purpose must be ACCOUNT_DELETION');
+    const allowed: ReauthPurpose[] =
+      route === 'profile'
+        ? [ReauthPurpose.ACCOUNT_DELETION, ReauthPurpose.ADMIN_ACTION]
+        : [ReauthPurpose.ADMIN_ACTION, ReauthPurpose.TEMPORARY_ACCESS];
+    if (!allowed.includes(purpose as ReauthPurpose)) {
+      throw validationFailed(`purpose must be ${allowed.join(' or ')}`);
     }
+    const chosen = purpose as ReauthPurpose;
     if (typeof password !== 'string' || password.length === 0) {
       throw validationFailed('password is required');
+    }
+    if (chosen !== ReauthPurpose.ACCOUNT_DELETION) {
+      const standing = await this.admins.standing(caller.sub);
+      if (chosen === ReauthPurpose.TEMPORARY_ACCESS) {
+        if (!standing.suiteAdmin) throw notSuiteAdmin();
+      } else if (!isAdmin(standing)) {
+        throw notAnAdmin();
+      }
     }
     await this.passwords.verifyOwnPassword({
       userId: caller.sub,
       password,
-      reason: PasswordCheckReason.ACCOUNT_DELETION,
+      reason: PasswordCheckReason[chosen],
       sid: caller.sid,
       meta: caller.meta,
     });
-    return this.passwords.issueReauthToken(
-      caller.sub,
-      caller.sid,
-      ReauthPurpose.ACCOUNT_DELETION,
-    );
+    return this.passwords.issueReauthToken(caller.sub, caller.sid, chosen);
   }
 
   /**
@@ -247,6 +275,10 @@ export class DeletionService {
         await lockAccount(tx, userId);
         const person = await this.person(tx, userId);
         if (!person) throw new NotFoundException('User not found');
+        // Spec 0013, AC-3: before the reauth token is used
+        if ((await this.admins.standing(userId, tx)).suiteAdmin) {
+          throw isSuiteAdmin();
+        }
         const pending = await tx.accountDeletionRequest.findFirst({
           where: { userId, status: DeletionRequestStatus.PENDING },
           select: { id: true },
@@ -343,7 +375,7 @@ export class DeletionService {
 
   /** AC-9: pending requests, or accounts in grace, of people holding a role in `system`. */
   async list(
-    system: SystemType,
+    system: SystemType | null,
     query: { view?: unknown; cursor?: unknown; limit?: unknown },
   ): Promise<Page<DeletionRequestView> | Page<GraceItem>> {
     const view = parseView(query.view);
@@ -351,6 +383,7 @@ export class DeletionService {
     if (query.cursor !== undefined && typeof query.cursor !== 'string') {
       throw validationFailed('cursor must be text');
     }
+    if (system === null) return this.listSuite(view, limit, query.cursor);
     const after = query.cursor
       ? decodeDeletionCursor(query.cursor, view)
       : null;
@@ -451,7 +484,7 @@ export class DeletionService {
    * AC-10, AC-11: soft deletes the account as an admin delete does, without `assertNotShared`
    * (the request is the person's consent), and closes the request as APPROVED.
    */
-  async approve(id: string, actor: AdminCaller): Promise<DeletionRequestView> {
+  async approve(id: string, actor: AccountScope): Promise<DeletionRequestView> {
     const done = await this.prisma.$transaction(async (tx) => {
       const { person, userId } = await this.lockForDecision(tx, id, actor);
       if (person.isActive) {
@@ -483,7 +516,7 @@ export class DeletionService {
       );
       await this.sessions.endAllForUser(tx, userId, SessionEndReason.DELETED, {
         endedById: actor.id,
-        system: actor.system,
+        system: actor.system ?? undefined,
         ip: actor.meta?.ip,
       });
       const row = await tx.accountDeletionRequest.findUniqueOrThrow({
@@ -498,6 +531,17 @@ export class DeletionService {
       done.deletedAt,
       actor,
     );
+    // Spec 0013, AC-13: an approved deletion removes the person's admin roles
+    const admins = await this.catalog.adminRoles();
+    await this.alerts.send(
+      actor.id,
+      adminSystems(done.person.roles, admins).map((system) => ({
+        kind: 'ADMIN_ROLE_REMOVED' as const,
+        targetId: done.row.userId,
+        systems: [system],
+        roleSystem: system,
+      })),
+    );
     return this.withUser(this.view(done.row, done.deletedAt), done.person);
   }
 
@@ -505,7 +549,7 @@ export class DeletionService {
   async reject(
     id: string,
     rawNote: unknown,
-    actor: AdminCaller,
+    actor: AccountScope,
   ): Promise<DeletionRequestView> {
     const note = cleanNote(rawNote);
     const done = await this.prisma.$transaction(async (tx) => {
@@ -524,7 +568,7 @@ export class DeletionService {
       await this.events.record(
         tx,
         change(userId, actor, AccountEventType.DELETION_REJECTED, {
-          system: actor.system,
+          system: actor.system ?? undefined,
         }),
       );
       const row = await tx.accountDeletionRequest.findUniqueOrThrow({
@@ -555,7 +599,7 @@ export class DeletionService {
       roles: { system: SystemType }[];
     },
     deletedAt: Date,
-    actor: AdminCaller,
+    actor: AccountScope,
   ): Promise<void> {
     const eraseAfter = this.eraseAfter(deletedAt);
     await this.send(person.id, 'ACCOUNT_CLOSED', person.email, () =>
@@ -583,7 +627,7 @@ export class DeletionService {
   }
 
   /** AC-13: the AC-10 emails after `DELETE /auth/users/:id`, read after its commit. */
-  async notifyAdminDelete(userId: string, actor: AdminCaller): Promise<void> {
+  async notifyAdminDelete(userId: string, actor: AccountScope): Promise<void> {
     const person = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -611,13 +655,145 @@ export class DeletionService {
   }
 
   /**
+   * Spec 0013, AC-21: every pending request or account in grace, suite wide, each with `orphan`,
+   * orphans first, then oldest first. The lists are short, so they are read whole (up to
+   * `SUITE_LIST_MAX`) and paged by position.
+   */
+  private async listSuite(
+    view: View,
+    limit: number,
+    cursor: unknown,
+  ): Promise<Page<DeletionRequestView> | Page<GraceItem>> {
+    let offset = 0;
+    if (typeof cursor === 'string' && cursor) {
+      const parsed = /^o(\d{1,6})$/.exec(
+        Buffer.from(cursor, 'base64url').toString('utf8'),
+      );
+      if (!parsed) {
+        throw coded(
+          HttpStatus.BAD_REQUEST,
+          'INVALID_CURSOR',
+          'The cursor is not valid',
+        );
+      }
+      offset = Number(parsed[1]);
+    }
+    const nextCursor = (total: number) =>
+      offset + limit < total
+        ? Buffer.from(`o${offset + limit}`).toString('base64url')
+        : null;
+
+    if (view === 'pending') {
+      const rows = await this.prisma.accountDeletionRequest.findMany({
+        where: {
+          status: DeletionRequestStatus.PENDING,
+          user: { deletedAt: null },
+        },
+        orderBy: [{ requestedAt: 'asc' }, { id: 'asc' }],
+        take: SUITE_LIST_MAX,
+        select: {
+          ...REQUEST_SELECT,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              roles: {
+                where: { temporaryGrantId: null },
+                select: { system: true },
+              },
+            },
+          },
+        },
+      });
+      const orphans = await this.orphans(rows.map((row) => row.user));
+      const sorted = orphansFirst(rows, (row) => orphans.has(row.user.id));
+      return {
+        data: sorted.slice(offset, offset + limit).map((row) => ({
+          ...this.view(row, null),
+          user: {
+            id: row.user.id,
+            name: row.user.name,
+            email: row.user.email,
+            systems: systemsOf(row.user.roles),
+          },
+          orphan: orphans.has(row.user.id),
+        })),
+        nextCursor: nextCursor(sorted.length),
+      };
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { deletedAt: { not: null }, erasedAt: null },
+      orderBy: [{ deletedAt: 'asc' }, { id: 'asc' }],
+      take: SUITE_LIST_MAX,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        deletedAt: true,
+        roles: { where: { temporaryGrantId: null }, select: { system: true } },
+        deletionRequests: {
+          where: { status: DeletionRequestStatus.APPROVED },
+          orderBy: { requestedAt: 'desc' },
+          take: 1,
+          select: { id: true },
+        },
+      },
+    });
+    const orphans = await this.orphans(users);
+    const sorted = orphansFirst(users, (user) => orphans.has(user.id));
+    return {
+      data: sorted.slice(offset, offset + limit).map((user) => ({
+        user: { id: user.id, name: user.name, email: user.email },
+        deletedAt: user.deletedAt!.toISOString(),
+        eraseAfter: this.eraseAfter(user.deletedAt!).toISOString(),
+        requestId: user.deletionRequests[0]?.id ?? null,
+        orphan: orphans.has(user.id),
+      })),
+      nextCursor: nextCursor(sorted.length),
+    };
+  }
+
+  /**
+   * Spec 0013, Value sourcing "orphan": the person holds no role now, or no system they hold has
+   * an active, not deleted admin other than them.
+   */
+  async orphans(
+    people: { id: string; roles: { system: SystemType }[] }[],
+  ): Promise<Set<string>> {
+    const holders = await this.prisma.userRoleAssignment.findMany({
+      where: {
+        temporaryGrantId: null,
+        systemRole: { isSystemAdmin: true },
+        user: { isActive: true, deletedAt: null },
+      },
+      select: { userId: true, system: true },
+    });
+    const bySystem = new Map<SystemType, Set<string>>();
+    for (const h of holders) {
+      const set = bySystem.get(h.system) ?? new Set<string>();
+      set.add(h.userId);
+      bySystem.set(h.system, set);
+    }
+    const result = new Set<string>();
+    for (const person of people) {
+      const covered = person.roles.some((role) =>
+        [...(bySystem.get(role.system) ?? [])].some((id) => id !== person.id),
+      );
+      if (!covered) result.add(person.id);
+    }
+    return result;
+  }
+
+  /**
    * AC-11: the request's person, then their row lock, then the request row lock. 404 for a person
    * outside the admin's system (or no such request), 403 on your own, 409 when not pending.
    */
   private async lockForDecision(
     tx: Tx,
     id: string,
-    actor: AdminCaller,
+    actor: AccountScope,
   ): Promise<{ person: Person; userId: string }> {
     const head = await tx.accountDeletionRequest.findUnique({
       where: { id },
@@ -628,7 +804,7 @@ export class DeletionService {
     const [row] = await tx.$queryRaw<{ status: DeletionRequestStatus }[]>`
       SELECT "status" FROM "account_deletion_requests" WHERE "id" = ${id}::uuid FOR UPDATE`;
     const person = await this.person(tx, head.userId, true);
-    assertInSystem(person, actor.system);
+    assertInScope(person, actor.system);
     if (head.userId === actor.id) throw selfDecision();
     if (row?.status !== DeletionRequestStatus.PENDING) throw notPending();
     return { person, userId: head.userId };
@@ -743,4 +919,9 @@ type Person = Prisma.UserGetPayload<{ select: typeof PERSON_SELECT }>;
 /** Each system once, sorted. */
 export function systemsOf(roles: { system: SystemType }[]): SystemType[] {
   return [...new Set(roles.map((r) => r.system))].sort();
+}
+
+/** Stable: orphans first, each group keeps its order (oldest first). */
+function orphansFirst<T>(rows: T[], isOrphan: (row: T) => boolean): T[] {
+  return [...rows.filter(isOrphan), ...rows.filter((row) => !isOrphan(row))];
 }

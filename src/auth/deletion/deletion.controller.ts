@@ -34,11 +34,37 @@ import {
 /** AC-2: verify password takes at most 10 calls a minute per user. */
 export const VERIFY_PASSWORD_LIMIT = { limit: 10, ttlMs: 60_000 };
 
+/** AC-2: counts one password check for `userId` (both route families, spec 0013), or 429. */
+export async function countPasswordCheck(
+  storage: ThrottlerStorage,
+  userId: string,
+  res: Response,
+): Promise<void> {
+  const hit = await storage.increment(
+    `verify-password:${userId}`,
+    VERIFY_PASSWORD_LIMIT.ttlMs,
+    VERIFY_PASSWORD_LIMIT.limit,
+    0,
+    'verify-password',
+  );
+  if (hit.totalHits > VERIFY_PASSWORD_LIMIT.limit) {
+    res.setHeader(
+      'Retry-After',
+      String(Math.max(1, Math.ceil(hit.timeToExpire))),
+    );
+    throw coded(
+      HttpStatus.TOO_MANY_REQUESTS,
+      'RATE_LIMITED',
+      'Too many password checks. Wait a minute and try again.',
+    );
+  }
+}
+
 type SelfRequest = Pick<Request, 'ip' | 'headers'> & {
   user: { sub: string; sid: string };
 };
 type AdminRequest = Pick<Request, 'ip' | 'headers'> & {
-  user: { sub: string; email: string; system: SystemType };
+  user: { sub: string; email: string; system: SystemType; sid: string };
 };
 
 const self = (req: SelfRequest): SelfCaller => ({
@@ -51,6 +77,7 @@ const admin = (req: AdminRequest) => ({
   id: req.user.sub,
   email: req.user.email,
   system: req.user.system,
+  sid: req.user.sid,
   meta: requestMeta(req),
 });
 
@@ -73,24 +100,7 @@ export class DeletionController {
     @Body() dto: VerifyPasswordDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const hit = await this.storage.increment(
-      `verify-password:${req.user.sub}`,
-      VERIFY_PASSWORD_LIMIT.ttlMs,
-      VERIFY_PASSWORD_LIMIT.limit,
-      0,
-      'verify-password',
-    );
-    if (hit.totalHits > VERIFY_PASSWORD_LIMIT.limit) {
-      res.setHeader(
-        'Retry-After',
-        String(Math.max(1, Math.ceil(hit.timeToExpire))),
-      );
-      throw coded(
-        HttpStatus.TOO_MANY_REQUESTS,
-        'RATE_LIMITED',
-        'Too many password checks. Wait a minute and try again.',
-      );
-    }
+    await countPasswordCheck(this.storage, req.user.sub, res);
     return this.deletion.verifyPassword(self(req), dto.password, dto.purpose);
   }
 

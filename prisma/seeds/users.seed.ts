@@ -34,6 +34,8 @@ export async function resetUsers(tx: Prisma.TransactionClient) {
   // Spec 0009, AC-16 (they also cascade with their users; cleared first to be explicit)
   await tx.verificationCode.deleteMany({});
   await tx.userRoleAssignment.deleteMany({});
+  // Spec 0013: its user key is Restrict, so it goes before users
+  await tx.suiteAdmin.deleteMany({});
   await tx.user.deleteMany({});
 }
 
@@ -132,6 +134,18 @@ export async function seedPeople(
         data: listed.map((r) => ({ userId: person.id, ...r })),
         skipDuplicates: true,
       });
+    }
+
+    // Spec 0013, AC-33: the seed's suite admin row has no granter and no reason. A row added
+    // later (by a suite admin or the recovery script) keeps its own granter and reason.
+    if (person.suiteAdmin === true) {
+      await tx.suiteAdmin.upsert({
+        where: { userId: person.id },
+        create: { userId: person.id, grantedById: null, reason: null },
+        update: {},
+      });
+    } else {
+      await tx.suiteAdmin.deleteMany({ where: { userId: person.id } });
     }
   }
 }

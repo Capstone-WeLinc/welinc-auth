@@ -37,7 +37,12 @@ export type ManifestPerson = {
   password: string;
   contact: string | null;
   roles: ManifestRole[];
+  /** Spec 0013, AC-33: a suite admin (no roles allowed); left out means false. */
+  suiteAdmin?: boolean;
 };
+
+/** Spec 0013, AC-1: never more than this many suite admins. */
+export const MAX_SUITE_ADMINS = 3;
 
 export type Manifest = {
   version: number;
@@ -159,9 +164,17 @@ export function checkManifest(
       problems.push(`${who}: contact must be a string or null`);
     }
 
+    if (p.suiteAdmin !== undefined && typeof p.suiteAdmin !== 'boolean') {
+      problems.push(`${who}: suiteAdmin must be true or false`);
+    }
+
     if (!Array.isArray(p.roles)) {
       problems.push(`${who}: roles is not a list`);
       return;
+    }
+    // Spec 0013, AC-3, AC-33: a suite admin holds no system role
+    if (p.suiteAdmin === true && p.roles.length > 0) {
+      problems.push(`${who}: is a suite admin, so roles must be empty`);
     }
     const perSystem = new Map<string, number>();
     const seenRoles = new Set<string>();
@@ -198,6 +211,12 @@ export function checkManifest(
       problems.push(`${who}: is the admin in every system`);
     }
   });
+  const suiteAdmins = manifest.people.filter((p) => p.suiteAdmin === true);
+  if (suiteAdmins.length > MAX_SUITE_ADMINS) {
+    problems.push(
+      `${suiteAdmins.length} people are suite admins, more than the limit of ${MAX_SUITE_ADMINS}`,
+    );
+  }
   return problems;
 }
 

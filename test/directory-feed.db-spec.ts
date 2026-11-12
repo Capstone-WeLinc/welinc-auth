@@ -188,8 +188,9 @@ const SAFE_FEED = `
         });
         const rows = await rowsOf(id);
         expect(rows.map((r) => r.type)).toEqual(['created', 'roles_changed']);
+        // Spec 0013, AC-11: each role says whether it is temporary access
         expect(rows[1].snapshot.roles).toEqual([
-          { system: 'VRMS', role: 'CHIEF_MECHANIC' },
+          { system: 'VRMS', role: 'CHIEF_MECHANIC', temporary: false },
         ]);
       });
 

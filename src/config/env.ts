@@ -38,6 +38,15 @@ const flag = z
       .default('false'),
   )
   .transform((v) => v === 'true');
+/** A flag that is on unless set to `false`. */
+const flagOn = z
+  .preprocess(
+    blank,
+    z
+      .enum(['true', 'false'], { error: 'must be true or false' })
+      .default('true'),
+  )
+  .transform((v) => v === 'true');
 /** "a, b," → ['a', 'b']; each entry must be a bare origin (no path, no trailing slash). */
 const originList = required.transform((v, ctx) => {
   const items = v
@@ -92,6 +101,8 @@ export const envSchema = z.object({
   MAX_SESSIONS_PER_USER: whole(1, 100, 10),
   SESSION_RETENTION_DAYS: whole(1, 3650, 90),
   SSO_COOKIE_SECURE: flag,
+  // Spec 0013, AC-8: admins confirm each portal sign in with an emailed code; false is local only
+  ADMIN_SIGN_IN_CODE: flagOn,
 
   // Spec 0011: sign in, session and code events are kept this long; account changes forever
   ACCOUNT_EVENT_RETENTION_DAYS: whole(30, 3650, 365),
@@ -157,6 +168,10 @@ function productionIssues(raw: Record<string, unknown>): string[] {
   }
   if (text(raw, 'SSO_COOKIE_SECURE') !== 'true') {
     lines.push('SSO_COOKIE_SECURE: must be true in production');
+  }
+  // Spec 0013, AC-8
+  if (text(raw, 'ADMIN_SIGN_IN_CODE') === 'false') {
+    lines.push('ADMIN_SIGN_IN_CODE: must not be false in production');
   }
   const hops = text(raw, 'TRUST_PROXY_HOPS');
   if (hops === undefined || Number(hops) === 0) {

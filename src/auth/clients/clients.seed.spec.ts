@@ -62,7 +62,8 @@ describe('seedClients', () => {
       system: 'VRMS',
       grants: ['authorization_code', 'refresh_token', 'client_credentials'],
       userAudiences: ['VRMS'],
-      serviceScopes: { AUTH: ['directory.read'] },
+      // Spec 0013, AC-26: VRMS also reads its permission matrix
+      serviceScopes: { AUTH: ['directory.read', 'permissions.read'] },
       allowedRoles: {},
       webAddress: 'http://localhost:8001',
       redirectUris: ['http://localhost:3000/vrms/session/callback'],

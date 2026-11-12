@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { RoleAssignmentDto } from './role-assignment.dto';
@@ -35,4 +36,10 @@ export class CreateUserDto {
   @IsOptional()
   @IsBoolean()
   attachExisting?: boolean;
+
+  /** Spec 0013, AC-14a, AC-14b: the actor's ADMIN_ACTION reauth token, when the change needs it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reauthToken?: string;
 }

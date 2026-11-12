@@ -6,11 +6,13 @@ const LISTED_GROUPS = new Set(['office', 'multi', 'state']);
 const SYSTEM_ORDER = ['VRMS', 'VMMS', 'BMS'];
 
 function roleText(p: ManifestPerson) {
+  if (p.suiteAdmin === true) return 'suite admin, no system role';
   return p.roles.map((r) => `${r.system} ${r.role}`).join(', ');
 }
 
 /** The system a person is listed under: their first system in suite order, or "Multi system". */
 function heading(p: ManifestPerson) {
+  if (p.suiteAdmin === true) return 'Suite admin';
   if (p.group === 'multi') return 'Multi system';
   if (p.group === 'state') return 'Broken state accounts';
   const systems = new Set(p.roles.map((r) => r.system));
@@ -28,7 +30,12 @@ export function summaryLines(
     const h = heading(p);
     groups.set(h, [...(groups.get(h) ?? []), p]);
   }
-  const order = [...SYSTEM_ORDER, 'Multi system', 'Broken state accounts'];
+  const order = [
+    'Suite admin',
+    ...SYSTEM_ORDER,
+    'Multi system',
+    'Broken state accounts',
+  ];
   for (const h of order) {
     const rows = groups
       .get(h)

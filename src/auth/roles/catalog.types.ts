@@ -28,4 +28,26 @@ export type SystemDefinition = {
   maxRolesPerUser: number | null;
   /** Display order and power order: the first is the most powerful (AC-1). */
   roles: RoleDefinition[];
+  /**
+   * Spec 0013, AC-25: the system's permission keys in display order, copied into
+   * `system_permissions` by `catalog:sync`. Left out: the system has no matrix yet.
+   */
+  permissions?: PermissionDefinition[];
+};
+
+/** The shape of a permission key: dotted lower case words, such as `ticket.costs.view`. */
+export const PERMISSION_KEY_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+
+export type PermissionDefinition = {
+  key: string;
+  /** 1 to 100 characters, shown in the matrix. */
+  label: string;
+  /** 1 to 40 characters, the matrix section the key sits in. */
+  group: string;
+  /** 1 to 300 characters. */
+  description: string;
+  /** Every role of the system, on or off. A new cell starts with this value. */
+  defaults: Record<RoleCode, boolean>;
+  /** Roles whose cell always equals its default: no edit changes it, the sync resets it. */
+  lockedRoles?: RoleCode[];
 };

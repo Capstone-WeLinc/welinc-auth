@@ -1,3 +1,4 @@
+import { fakeAdminAlerts, fakeAdminStanding } from './testing/admin.fake';
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- the faked database is untyped on purpose */
 import {
   describe,
@@ -42,6 +43,7 @@ const actor = {
   id: ADMIN_ID,
   email: 'admin@welinc.com',
   system: SystemType.VRMS,
+  sid: 'sid-admin',
 };
 
 type Fn = jest.Mock<(...args: any[]) => any>;
@@ -155,6 +157,8 @@ function build(env: Record<string, string | undefined> = {}) {
       db as unknown as PrismaService,
       new AccountEventsService(db as unknown as PrismaService, noGeo),
     ),
+    fakeAdminStanding(),
+    fakeAdminAlerts(),
   );
   return { service, db, sendMail, sessions, endAllForUser, codes, codeRow };
 }
@@ -980,6 +984,7 @@ describe('AuthService password links and reset', () => {
     const vrmsAdmin = {
       sub: ADMIN_ID,
       email: 'admin@welinc.com',
+      sid: 'sid-admin',
       roles: [{ role: 'ADMIN', system: SystemType.VRMS }],
     };
 
