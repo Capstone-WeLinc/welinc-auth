@@ -76,7 +76,7 @@ npx prisma migrate dev   # asks first, see root rules
 ## Gotchas
 
 - There is no `JWT_SECRET`. A missing or bad `AUTH_SIGNING_KEYS` stops startup; run `npm run keys:dev` once locally. `AUTH_ISSUER` must be the same string in every service, or every check fails.
-- A locked account (5 failed logins) stays locked until an admin calls `PATCH /auth/users/:id/unlock`. The lock blocks new logins only: live sessions keep working, and `/auth/session` still answers 200 (spec 0003).
+- A locked account (5 failed logins) stays locked until an admin calls `PATCH /auth/users/:id/unlock`. The lock blocks new logins, and since spec 0012 every user route (`verify-password`, `/auth/me`, the profile and password routes) answers 403 `ACCOUNT_LOCKED`. Live sessions are not ended, and `/auth/session` still answers 200 (spec 0003).
 - To test login with curl, send `Origin: http://localhost:8000` and `Content-Type: application/json`, or `/auth/login` answers 403 `CSRF_REJECTED`. It takes `email` and `password` (sending `system` gets 400) and answers the launcher list, the same body as `GET /auth/sso`. For an unverified account it answers the code step body (read the code from the log when `SMTP_*` is blank). It answers no token: get one through `GET /vrms/session/start` and the callback, then `POST /vrms/session/refresh`.
 - `src/common/*` and the folders under `src/shared/` (garages, mechanics, notifications, vehicles) are empty placeholders.
 - `npm run lint` fixes files in place, so check `git diff` afterwards.
