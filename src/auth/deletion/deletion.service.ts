@@ -34,6 +34,9 @@ import {
   lockAccount,
 } from '../user-changes';
 import { assertInSystem, type AdminCaller } from '../user-scope';
+import { notAnAdmin, notSuiteAdmin } from '../admin/admin-errors';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { AdminStandingService, isAdmin } from '../admin/admin-standing.service';
 import {
   decodeDeletionCursor,
   encodeDeletionCursor,
@@ -192,6 +195,8 @@ export class DeletionService {
     private readonly passwords: PasswordCheckService,
     private readonly mail: MailService,
     config: ConfigService<Env, true>,
+    private readonly admins: AdminStandingService,
+    private readonly alerts: AdminAlertsService,
   ) {
     this.graceDays = config.get('ACCOUNT_ERASURE_GRACE_DAYS', { infer: true });
     this.reviewLink = config
@@ -204,30 +209,46 @@ export class DeletionService {
     return new Date(deletedAt.getTime() + this.graceDays * DAY_MS);
   }
 
-  /** AC-1, AC-2: recheck the password, then hand out a reauth token for `purpose`. */
+  /**
+   * AC-1, AC-2: recheck the password, then hand out a reauth token for `purpose`, bound to the
+   * caller's session. Spec 0013, AC-14, AC-14a: `profile` (the bearer route) takes
+   * `ACCOUNT_DELETION` from anyone and `ADMIN_ACTION` from an admin; `admin` (the portal's cookie
+   * route) takes `ADMIN_ACTION` from an admin and `TEMPORARY_ACCESS` from a suite admin. The
+   * standing is checked before the password, so a refused purpose never counts a try.
+   */
   async verifyPassword(
     caller: SelfCaller,
     password: unknown,
     purpose: unknown,
+    route: 'profile' | 'admin' = 'profile',
   ): Promise<{ reauthToken: string; expiresAt: string }> {
-    if (purpose !== ReauthPurpose.ACCOUNT_DELETION) {
-      throw validationFailed('purpose must be ACCOUNT_DELETION');
+    const allowed: ReauthPurpose[] =
+      route === 'profile'
+        ? [ReauthPurpose.ACCOUNT_DELETION, ReauthPurpose.ADMIN_ACTION]
+        : [ReauthPurpose.ADMIN_ACTION, ReauthPurpose.TEMPORARY_ACCESS];
+    if (!allowed.includes(purpose as ReauthPurpose)) {
+      throw validationFailed(`purpose must be ${allowed.join(' or ')}`);
     }
+    const chosen = purpose as ReauthPurpose;
     if (typeof password !== 'string' || password.length === 0) {
       throw validationFailed('password is required');
+    }
+    if (chosen !== ReauthPurpose.ACCOUNT_DELETION) {
+      const standing = await this.admins.standing(caller.sub);
+      if (chosen === ReauthPurpose.TEMPORARY_ACCESS) {
+        if (!standing.suiteAdmin) throw notSuiteAdmin();
+      } else if (!isAdmin(standing)) {
+        throw notAnAdmin();
+      }
     }
     await this.passwords.verifyOwnPassword({
       userId: caller.sub,
       password,
-      reason: PasswordCheckReason.ACCOUNT_DELETION,
+      reason: PasswordCheckReason[chosen],
       sid: caller.sid,
       meta: caller.meta,
     });
-    return this.passwords.issueReauthToken(
-      caller.sub,
-      caller.sid,
-      ReauthPurpose.ACCOUNT_DELETION,
-    );
+    return this.passwords.issueReauthToken(caller.sub, caller.sid, chosen);
   }
 
   /**
@@ -497,6 +518,17 @@ export class DeletionService {
       { ...done.person, id: done.row.userId },
       done.deletedAt,
       actor,
+    );
+    // Spec 0013, AC-13: an approved deletion removes the person's admin roles
+    const admins = await this.catalog.adminRoles();
+    await this.alerts.send(
+      actor.id,
+      adminSystems(done.person.roles, admins).map((system) => ({
+        kind: 'ADMIN_ROLE_REMOVED' as const,
+        targetId: done.row.userId,
+        systems: [system],
+        roleSystem: system,
+      })),
     );
     return this.withUser(this.view(done.row, done.deletedAt), done.person);
   }

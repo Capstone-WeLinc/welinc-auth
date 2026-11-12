@@ -19,6 +19,14 @@ export function isAdmin(standing: AdminStanding): boolean {
 }
 
 /**
+ * AC-13, AC-14b: whose admins hear about an action on this person's account: every system for
+ * a suite admin, else each system they admin.
+ */
+export function alertSystemsOf(standing: AdminStanding): SystemType[] | 'ALL' {
+  return standing.suiteAdmin ? 'ALL' : standing.adminOf;
+}
+
+/**
  * Spec 0013: who counts as an admin, read per call (no cache, like `@SystemAdmin()`), and
  * whether admins must confirm their sign in with a code (`ADMIN_SIGN_IN_CODE`, AC-8).
  */

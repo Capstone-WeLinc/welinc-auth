@@ -12,8 +12,12 @@ import type { RoleAssignment } from './roles/catalog.types';
 
 // Spec 0011, AC-26 to AC-30: admin user endpoints act only inside the caller's system.
 
-/** The signed in admin plus the system their request resolved to (spec 0009, AC-24). */
-export type AdminCaller = Actor & { system: SystemType };
+/**
+ * The scope every admin account action runs in (spec 0013, AC-16): the signed in admin, the
+ * system their request resolved to (the token's `aud` on bearer routes, the checked `system`
+ * input on `/auth/admin/*`), and their session, which a reauth token is bound to (AC-14).
+ */
+export type AdminCaller = Actor & { system: SystemType; sid: string };
 
 /** Lookups each admin may run per minute (AC-29). */
 export const LOOKUP_PER_MINUTE = 30;

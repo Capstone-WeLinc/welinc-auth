@@ -1,3 +1,4 @@
+import { fakeAdminAlerts, fakeAdminStanding } from './testing/admin.fake';
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- the faked database is untyped on purpose */
 import { describe, it, expect, jest } from '@jest/globals';
 import {
@@ -30,6 +31,7 @@ const vrmsAdmin = {
   id: ADMIN_ID,
   email: 'admin@welinc.com',
   system: SystemType.VRMS,
+  sid: 'sid-admin',
 };
 
 const role = (r: RoleCode, system: SystemType) => ({ role: r, system });
@@ -100,6 +102,8 @@ function build() {
       db as unknown as PrismaService,
       new AccountEventsService(db as unknown as PrismaService, noGeo),
     ),
+    fakeAdminStanding(),
+    fakeAdminAlerts(),
   );
   return { service, db };
 }

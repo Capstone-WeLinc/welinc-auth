@@ -34,6 +34,32 @@ export const FEED_LIMIT = { limit: 60, ttlMs: 60_000 };
 const CATALOG_BODY = JSON.stringify(EVENT_CATALOG);
 const CATALOG_ETAG = etagOf(CATALOG_BODY);
 
+/** AC-13: counts one feed call for `adminId` (both route families, spec 0013), or 429. */
+export async function countFeedCall(
+  storage: ThrottlerStorage,
+  adminId: string,
+  res: Response,
+): Promise<void> {
+  const hit = await storage.increment(
+    `activity-feed:${adminId}`,
+    FEED_LIMIT.ttlMs,
+    FEED_LIMIT.limit,
+    0,
+    'activity-feed',
+  );
+  if (hit.totalHits > FEED_LIMIT.limit) {
+    res.setHeader(
+      'Retry-After',
+      String(Math.max(1, Math.ceil(hit.timeToExpire))),
+    );
+    throw coded(
+      HttpStatus.TOO_MANY_REQUESTS,
+      'RATE_LIMITED',
+      'Too many activity searches. Wait a minute and try again.',
+    );
+  }
+}
+
 /**
  * Spec 0011: account activity. A user token of any system reads its own events; a service token
  * gets 403 `WRONG_TOKEN_USE` from `JwtAuthGuard` (AC-14).
@@ -77,24 +103,7 @@ export class ActivityController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    const hit = await this.storage.increment(
-      `activity-feed:${req.user.sub}`,
-      FEED_LIMIT.ttlMs,
-      FEED_LIMIT.limit,
-      0,
-      'activity-feed',
-    );
-    if (hit.totalHits > FEED_LIMIT.limit) {
-      res.setHeader(
-        'Retry-After',
-        String(Math.max(1, Math.ceil(hit.timeToExpire))),
-      );
-      throw coded(
-        HttpStatus.TOO_MANY_REQUESTS,
-        'RATE_LIMITED',
-        'Too many activity searches. Wait a minute and try again.',
-      );
-    }
+    await countFeedCall(this.storage, req.user.sub, res);
     const filters = parseActivityQuery(query, {
       type: true,
       dates: true,

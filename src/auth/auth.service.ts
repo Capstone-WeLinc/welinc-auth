@@ -20,6 +20,7 @@ import {
   AccountEventType,
   DeletionRequestStatus,
   Prisma,
+  ReauthPurpose,
   SessionEndReason,
   SystemType,
   VerificationPurpose,
@@ -37,6 +38,24 @@ import {
 } from './deletion/deletion-steps';
 import { notRestorable } from './deletion/deletion.service';
 import { NO_META, type RequestMeta } from './events/request-meta';
+import {
+  AdminAlertsService,
+  type AdminAlert,
+} from './admin/admin-alerts.service';
+import {
+  AdminStandingService,
+  alertSystemsOf,
+  isAdmin,
+} from './admin/admin-standing.service';
+import { suiteAdminSelfOnly } from './admin/admin-errors';
+import {
+  afterCursor,
+  decodePeopleCursor,
+  encodePeopleCursor,
+  parsePeopleLimit,
+  statusWhere,
+  type PeopleStatus,
+} from './admin/people-page';
 
 /** Who sent a code and from where (spec 0011, AC-5); the user themselves when left out. */
 type CodeSender = { actorId?: string; meta?: RequestMeta };
@@ -209,6 +228,7 @@ const MANAGED_USER_SELECT = {
 export type OptionalCaller = {
   sub: string;
   email: string;
+  sid: string;
   roles: RoleAssignment[];
 } | null;
 
@@ -292,6 +312,8 @@ export class AuthService {
     private readonly codes: CodeService,
     private readonly events: AccountEventsService,
     private readonly passwords: PasswordCheckService,
+    private readonly admins: AdminStandingService,
+    private readonly alerts: AdminAlertsService,
   ) {
     // PORTAL_URL is required and checked at boot (spec 0010)
     const portalUrl = config.get('PORTAL_URL', { infer: true });
@@ -523,11 +545,64 @@ export class AuthService {
     }
   }
 
+  /**
+   * Spec 0013, AC-14a, AC-14b: uses the actor's `ADMIN_ACTION` reauth token inside `tx` (a
+   * rollback leaves it unused), or 403 `REAUTH_REQUIRED`.
+   */
+  private useAdminAction(
+    tx: Prisma.TransactionClient,
+    actor: AdminCaller,
+    reauthToken: unknown,
+  ): Promise<void> {
+    return this.passwords.consumeReauthToken(
+      tx,
+      typeof reauthToken === 'string' ? reauthToken : undefined,
+      actor.id,
+      actor.sid,
+      ReauthPurpose.ADMIN_ACTION,
+    );
+  }
+
+  /** AC-13: one alert per system whose admin role `before` and `after` differ on. */
+  private async adminRoleAlerts(
+    userId: string,
+    before: RoleAssignment[],
+    after: RoleAssignment[],
+    db: Prisma.TransactionClient,
+  ): Promise<AdminAlert[]> {
+    const admins = await this.catalog.adminRoles(db);
+    const was = new Set(adminSystems(before, admins));
+    const now = new Set(adminSystems(after, admins));
+    const alerts: AdminAlert[] = [];
+    for (const system of now) {
+      if (!was.has(system)) {
+        alerts.push({
+          kind: 'ADMIN_ROLE_ADDED',
+          targetId: userId,
+          systems: [system],
+          roleSystem: system,
+        });
+      }
+    }
+    for (const system of was) {
+      if (!now.has(system)) {
+        alerts.push({
+          kind: 'ADMIN_ROLE_REMOVED',
+          targetId: userId,
+          systems: [system],
+          roleSystem: system,
+        });
+      }
+    }
+    return alerts;
+  }
+
   async unlockUser(
     userId: string,
     actor: AdminCaller,
+    reauthToken?: unknown,
   ): Promise<ScopedUserResponse> {
-    const user = await this.prisma.$transaction(async (tx) => {
+    const { user, alerts } = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.user.findFirst({
         where: { id: userId, deletedAt: null },
         select: {
@@ -536,13 +611,19 @@ export class AuthService {
         },
       });
       assertInSystem(existing, actor.system);
-      // Not locked: nothing changes, so no change row
+      // Not locked: nothing changes, so no change row, no recheck and no alert
       if (existing.lockedAt === null) {
-        return tx.user.findUniqueOrThrow({
-          where: { id: userId },
-          select: MANAGED_USER_SELECT,
-        });
+        return {
+          user: await tx.user.findUniqueOrThrow({
+            where: { id: userId },
+            select: MANAGED_USER_SELECT,
+          }),
+          alerts: [] as AdminAlert[],
+        };
       }
+      // Spec 0013, AC-14b: unlocking an admin account needs the actor's password again
+      const target = await this.admins.standing(userId, tx);
+      if (isAdmin(target)) await this.useAdminAction(tx, actor, reauthToken);
       const updated = await tx.user.update({
         where: { id: userId },
         data: { lockedAt: null, failedLoginAttempts: 0 },
@@ -552,10 +633,77 @@ export class AuthService {
         tx,
         change(userId, actor, AccountEventType.UNLOCKED),
       );
-      return updated;
+      const unlockAlerts: AdminAlert[] = isAdmin(target)
+        ? [
+            {
+              kind: 'ADMIN_UNLOCKED',
+              targetId: userId,
+              systems: alertSystemsOf(target),
+            },
+          ]
+        : [];
+      return { user: updated, alerts: unlockAlerts };
     });
 
+    await this.alerts.send(actor.id, alerts);
     return this.mapScopedUser(user, actor.system);
+  }
+
+  /**
+   * Spec 0013, AC-16: an admin sends a reset code (a setup code while setup is pending) to a
+   * person of their system, by id. 409 `NOT_ACTIVE` for an inactive account; the code limits
+   * answer 429 `CODE_SEND_LIMIT` and a failed email 503 `MAIL_FAILED`. An admin account needs
+   * the actor's recheck and alerts (AC-14b).
+   */
+  async sendPasswordCode(
+    userId: string,
+    actor: AdminCaller,
+    reauthToken?: unknown,
+  ): Promise<void> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isActive: true,
+        passwordSet: true,
+        roles: { select: { role: true, system: true } },
+      },
+    });
+    assertInSystem(user, actor.system);
+    if (!user.isActive) {
+      throw coded(
+        HttpStatus.CONFLICT,
+        'NOT_ACTIVE',
+        'Activate this account before sending it a code',
+      );
+    }
+    const target = await this.admins.standing(userId);
+    if (isAdmin(target)) {
+      await this.prisma.$transaction((tx) =>
+        this.useAdminAction(tx, actor, reauthToken),
+      );
+    }
+    const purpose = user.passwordSet
+      ? VerificationPurpose.PASSWORD_RESET
+      : VerificationPurpose.PASSWORD_SETUP;
+    const result = await this.issuePasswordCode(user, purpose, {
+      actorId: actor.id,
+      meta: actor.meta,
+    });
+    if (result.kind === 'limited') {
+      throw new CodeSendLimitError(result.retryAfter);
+    }
+    if (isAdmin(target)) {
+      await this.alerts.send(actor.id, [
+        {
+          kind: 'ADMIN_CODE_SENT',
+          targetId: userId,
+          systems: alertSystemsOf(target),
+        },
+      ]);
+    }
   }
 
   /**
@@ -600,6 +748,111 @@ export class AuthService {
     }));
   }
 
+  /**
+   * Spec 0013, AC-16, AC-23: the portal's People list for one system, the same scope as
+   * `listUsers` (people holding a role in it, not deleted), searched by name or email, filtered
+   * by status, keyset paged by name then id.
+   */
+  async listPeople(
+    query: {
+      q?: string;
+      status?: PeopleStatus;
+      role?: string;
+      cursor?: string;
+      limit?: string;
+    },
+    caller: Pick<AdminCaller, 'system'>,
+  ): Promise<{
+    items: (ScopedUserResponse & { pendingDeletion: boolean })[];
+    next: string | null;
+  }> {
+    if (query.role !== undefined) {
+      await this.catalog.assertKnownRole(caller.system, query.role);
+    }
+    const limit = parsePeopleLimit(query.limit);
+    const cursor = query.cursor ? decodePeopleCursor(query.cursor) : null;
+    const q = query.q?.trim();
+    const rows = await this.prisma.user.findMany({
+      where: {
+        AND: [
+          { deletedAt: null },
+          {
+            roles: {
+              some: {
+                system: caller.system,
+                ...(query.role !== undefined ? { role: query.role } : {}),
+              },
+            },
+          },
+          q
+            ? {
+                OR: [
+                  { name: { contains: q, mode: 'insensitive' } },
+                  { email: { contains: q, mode: 'insensitive' } },
+                ],
+              }
+            : {},
+          query.status ? statusWhere(query.status) : {},
+          afterCursor(cursor),
+        ],
+      },
+      select: {
+        ...MANAGED_USER_SELECT,
+        deletionRequests: {
+          where: { status: DeletionRequestStatus.PENDING },
+          select: { id: true },
+          take: 1,
+        },
+      },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: limit + 1,
+    });
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map(({ deletionRequests, ...user }) => ({
+        ...this.mapScopedUser(user, caller.system),
+        pendingDeletion: deletionRequests.length > 0,
+      })),
+      next:
+        rows.length > limit && last
+          ? encodePeopleCursor({ name: last.name, id: last.id })
+          : null,
+    };
+  }
+
+  /**
+   * Spec 0013, AC-23: one person for the portal's person page, in the admin's system. A soft
+   * deleted account in its grace period is shown too (with `deletedAt`, so the page offers
+   * Restore); an erased one answers 404 like anyone outside the system.
+   */
+  async getPerson(
+    userId: string,
+    caller: Pick<AdminCaller, 'system'>,
+  ): Promise<
+    ScopedUserResponse & { pendingDeletion: boolean; deletedAt: string | null }
+  > {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, erasedAt: null },
+      select: {
+        ...MANAGED_USER_SELECT,
+        deletedAt: true,
+        deletionRequests: {
+          where: { status: DeletionRequestStatus.PENDING },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+    assertInSystem(user, caller.system);
+    const { deletionRequests, deletedAt, ...rest } = user;
+    return {
+      ...this.mapScopedUser(rest, caller.system),
+      pendingDeletion: deletionRequests.length > 0,
+      deletedAt: deletedAt ? deletedAt.toISOString() : null,
+    };
+  }
+
   /** Spec 0011, AC-29: active accounts outside the caller's system, to attach a role to. */
   async lookupUsers(
     q: string,
@@ -642,6 +895,12 @@ export class AuthService {
     assertOwnSystemRoles(roleAssignments, actor.system);
     // Spec 0004, AC-10: 400, 403, then UNKNOWN_ROLE, then ROLE_LIMIT
     await this.catalog.assertRoleRules(roleAssignments, actor.system);
+    // Spec 0013, AC-14a: giving the admin role needs the actor's password again
+    const givesAdmin = holdsAdmin(
+      roleAssignments,
+      actor.system,
+      await this.catalog.adminRoles(),
+    );
 
     // Spec 0011, AC-30: an email that already has an account outside this system can be attached
     const existing = await this.prisma.user.findFirst({
@@ -674,6 +933,7 @@ export class AuthService {
         existing.id,
         roleAssignments,
         actor,
+        givesAdmin ? dto.reauthToken : null,
       );
       return { ...attached, setupEmailSent: false };
     }
@@ -688,6 +948,7 @@ export class AuthService {
     let user: Prisma.UserGetPayload<{ select: typeof MANAGED_USER_SELECT }>;
     try {
       user = await this.prisma.$transaction(async (tx) => {
+        if (givesAdmin) await this.useAdminAction(tx, actor, dto.reauthToken);
         const created = await tx.user.create({
           data: {
             name: dto.name.trim(),
@@ -713,6 +974,17 @@ export class AuthService {
       });
     } catch (error) {
       this.handlePrismaError(error);
+    }
+
+    if (givesAdmin) {
+      await this.alerts.send(actor.id, [
+        {
+          kind: 'ADMIN_ROLE_ADDED',
+          targetId: user.id,
+          systems: [actor.system],
+          roleSystem: actor.system,
+        },
+      ]);
     }
 
     // The user is saved: a failed or refused send only sets setupEmailSent to false. An inactive
@@ -807,15 +1079,23 @@ export class AuthService {
     );
   }
 
-  /** Adds the caller's system roles only; password, name and other roles stay (AC-30). */
+  /**
+   * Adds the caller's system roles only; password, name and other roles stay (AC-30).
+   * `adminAction` is the reauth token to use when the roles give the admin role (spec 0013,
+   * AC-14a), or null when they don't.
+   */
   private async attachExistingAccount(
     userId: string,
     roleAssignments: RoleAssignment[],
     actor: AdminCaller,
+    adminAction: unknown,
   ): Promise<ScopedUserResponse> {
     const user = await this.prisma.$transaction(async (tx) => {
       // Spec 0004, AC-13: the account row first, then everything is decided from a fresh read
       await lockAccount(tx, userId);
+      if (adminAction !== null) {
+        await this.useAdminAction(tx, actor, adminAction);
+      }
       // Decided again inside the transaction, so a deactivate or attach in between wins
       const current = await tx.user.findUnique({
         where: { id: userId },
@@ -849,6 +1129,16 @@ export class AuthService {
       });
     });
 
+    if (adminAction !== null) {
+      await this.alerts.send(actor.id, [
+        {
+          kind: 'ADMIN_ROLE_ADDED',
+          targetId: userId,
+          systems: [actor.system],
+          roleSystem: actor.system,
+        },
+      ]);
+    }
     return this.mapScopedUser(user, actor.system);
   }
 
@@ -909,129 +1199,175 @@ export class AuthService {
     }
 
     try {
-      const { user, oldEmail } = await this.prisma.$transaction(async (tx) => {
-        // Spec 0004, AC-13: lock the account, then read its roles again
-        await lockAccount(tx, userId);
-        const existingUser = await tx.user.findUnique({
-          where: { id: userId },
-          select: userSelect,
-        });
-        if (!existingUser || existingUser.deletedAt) {
-          throw new NotFoundException('User not found');
-        }
-        assertInSystem(existingUser, actor.system);
+      const { user, oldEmail, alerts } = await this.prisma.$transaction(
+        async (tx) => {
+          // Spec 0004, AC-13: lock the account, then read its roles again
+          await lockAccount(tx, userId);
+          const existingUser = await tx.user.findUnique({
+            where: { id: userId },
+            select: userSelect,
+          });
+          if (!existingUser || existingUser.deletedAt) {
+            throw new NotFoundException('User not found');
+          }
+          assertInSystem(existingUser, actor.system);
 
-        const isEmailChanging = !!(
-          newEmail && newEmail !== existingUser.email.toLowerCase()
-        );
-        const admins = await this.catalog.adminRoles(tx);
-        // Another system's admin keeps their own sign in details (spec 0011, AC-28)
-        if (isEmailChanging) {
-          assertNotAdminElsewhere(existingUser.roles, actor.system, admins);
-        }
-        const isNameChanging = !!newName && newName !== existingUser.name;
-        const roleAssignments = requestedRoles
-          ? replaceSystemRoles(existingUser.roles, requestedRoles, actor.system)
-          : undefined;
-        if (roleAssignments) {
-          await this.catalog.assertWithinLimit(
-            roleAssignments,
-            actor.system,
-            tx,
+          const isEmailChanging = !!(
+            newEmail && newEmail !== existingUser.email.toLowerCase()
           );
-        }
-        const areRolesChanging =
-          !!roleAssignments &&
-          rolesKey(roleAssignments) !== rolesKey(existingUser.roles);
-        const isActiveChanging =
-          typeof dto.isActive === 'boolean' &&
-          dto.isActive !== existingUser.isActive;
-
-        if (actor.id === userId) {
-          if (areRolesChanging) throw new ConflictException(SELF_ROLE);
-          if (isActiveChanging && !dto.isActive) {
-            throw new ConflictException(SELF_DEACTIVATE);
+          const admins = await this.catalog.adminRoles(tx);
+          const target = await this.admins.standing(userId, tx);
+          // Spec 0013, AC-14b: a suite admin's email changes only through their own inbox
+          if (isEmailChanging && target.suiteAdmin) throw suiteAdminSelfOnly();
+          // Another system's admin keeps their own sign in details (spec 0011, AC-28)
+          if (isEmailChanging) {
+            assertNotAdminElsewhere(existingUser.roles, actor.system, admins);
           }
-        }
-
-        // An active admin who stops being one, by role or deactivation, must not be the last
-        if (existingUser.isActive) {
-          for (const system of adminSystems(existingUser.roles, admins)) {
-            const losesAdmin =
-              (isActiveChanging && dto.isActive === false) ||
-              (areRolesChanging &&
-                !holdsAdmin(roleAssignments, system, admins));
-            if (losesAdmin) await assertAnotherAdmin(tx, userId, system);
+          const isNameChanging = !!newName && newName !== existingUser.name;
+          const roleAssignments = requestedRoles
+            ? replaceSystemRoles(
+                existingUser.roles,
+                requestedRoles,
+                actor.system,
+              )
+            : undefined;
+          if (roleAssignments) {
+            await this.catalog.assertWithinLimit(
+              roleAssignments,
+              actor.system,
+              tx,
+            );
           }
-        }
+          const areRolesChanging =
+            !!roleAssignments &&
+            rolesKey(roleAssignments) !== rolesKey(existingUser.roles);
+          const isActiveChanging =
+            typeof dto.isActive === 'boolean' &&
+            dto.isActive !== existingUser.isActive;
 
-        const updated = await tx.user.update({
-          where: { id: userId },
-          data: {
-            ...(isNameChanging ? { name: newName } : {}),
-            // Confirmed at their next sign in (spec 0009, AC-21)
-            ...(isEmailChanging
-              ? { email: newEmail, emailVerified: false }
-              : {}),
-            ...(isActiveChanging ? { isActive: dto.isActive } : {}),
-            ...(areRolesChanging
-              ? {
-                  roles: {
-                    deleteMany: {},
-                    create: roleAssignments,
+          if (actor.id === userId) {
+            if (areRolesChanging) throw new ConflictException(SELF_ROLE);
+            if (isActiveChanging && !dto.isActive) {
+              throw new ConflictException(SELF_DEACTIVATE);
+            }
+          }
+
+          // An active admin who stops being one, by role or deactivation, must not be the last
+          if (existingUser.isActive) {
+            for (const system of adminSystems(existingUser.roles, admins)) {
+              const losesAdmin =
+                (isActiveChanging && dto.isActive === false) ||
+                (areRolesChanging &&
+                  !holdsAdmin(roleAssignments, system, admins));
+              if (losesAdmin) await assertAnotherAdmin(tx, userId, system);
+            }
+          }
+
+          // Spec 0013, AC-14a, AC-14b: one recheck covers giving the admin role and editing an
+          // admin's email; the token is used once whatever the edit holds
+          const roleAlerts = areRolesChanging
+            ? await this.adminRoleAlerts(
+                userId,
+                existingUser.roles,
+                roleAssignments,
+                tx,
+              )
+            : [];
+          const givesAdmin = roleAlerts.some(
+            (a) => a.kind === 'ADMIN_ROLE_ADDED',
+          );
+          const emailOnAdmin = isEmailChanging && isAdmin(target);
+          if (givesAdmin || emailOnAdmin) {
+            await this.useAdminAction(tx, actor, dto.reauthToken);
+          }
+          const editAlerts: AdminAlert[] = [
+            ...roleAlerts,
+            ...(emailOnAdmin
+              ? [
+                  {
+                    kind: 'ADMIN_EMAIL_CHANGED' as const,
+                    targetId: userId,
+                    systems: alertSystemsOf(target),
                   },
-                }
-              : {}),
-          },
-          select: MANAGED_USER_SELECT,
-        });
+                ]
+              : []),
+          ];
 
-        const changes: EventInput[] = [];
-        if (isNameChanging) {
-          changes.push(
-            change(userId, actor, AccountEventType.UPDATED, {
-              field: 'name',
-              oldValue: existingUser.name,
-              newValue: newName,
-            }),
-          );
-        }
-        if (isEmailChanging) {
-          changes.push(
-            change(userId, actor, AccountEventType.UPDATED, {
-              field: 'email',
-              oldValue: existingUser.email,
-              newValue: newEmail,
-            }),
-          );
-        }
-        if (areRolesChanging) {
-          changes.push(
-            ...roleChanges(userId, actor, existingUser.roles, roleAssignments),
-          );
-        }
-        if (isActiveChanging) {
-          changes.push(
-            change(
-              userId,
-              actor,
-              dto.isActive
-                ? AccountEventType.ACTIVATED
-                : AccountEventType.DEACTIVATED,
-            ),
-          );
-        }
-        await this.events.recordMany(tx, changes);
-        if (isEmailChanging) {
-          // AC-2: every live code of the user dies with the old address
-          await this.codes.retireAll(tx, userId);
-        }
-        return {
-          user: updated,
-          oldEmail: isEmailChanging ? existingUser.email : null,
-        };
-      });
+          const updated = await tx.user.update({
+            where: { id: userId },
+            data: {
+              ...(isNameChanging ? { name: newName } : {}),
+              // Confirmed at their next sign in (spec 0009, AC-21)
+              ...(isEmailChanging
+                ? { email: newEmail, emailVerified: false }
+                : {}),
+              ...(isActiveChanging ? { isActive: dto.isActive } : {}),
+              ...(areRolesChanging
+                ? {
+                    roles: {
+                      deleteMany: {},
+                      create: roleAssignments,
+                    },
+                  }
+                : {}),
+            },
+            select: MANAGED_USER_SELECT,
+          });
 
+          const changes: EventInput[] = [];
+          if (isNameChanging) {
+            changes.push(
+              change(userId, actor, AccountEventType.UPDATED, {
+                field: 'name',
+                oldValue: existingUser.name,
+                newValue: newName,
+              }),
+            );
+          }
+          if (isEmailChanging) {
+            changes.push(
+              change(userId, actor, AccountEventType.UPDATED, {
+                field: 'email',
+                oldValue: existingUser.email,
+                newValue: newEmail,
+              }),
+            );
+          }
+          if (areRolesChanging) {
+            changes.push(
+              ...roleChanges(
+                userId,
+                actor,
+                existingUser.roles,
+                roleAssignments,
+              ),
+            );
+          }
+          if (isActiveChanging) {
+            changes.push(
+              change(
+                userId,
+                actor,
+                dto.isActive
+                  ? AccountEventType.ACTIVATED
+                  : AccountEventType.DEACTIVATED,
+              ),
+            );
+          }
+          await this.events.recordMany(tx, changes);
+          if (isEmailChanging) {
+            // AC-2: every live code of the user dies with the old address
+            await this.codes.retireAll(tx, userId);
+          }
+          return {
+            user: updated,
+            oldEmail: isEmailChanging ? existingUser.email : null,
+            alerts: editAlerts,
+          };
+        },
+      );
+
+      await this.alerts.send(actor.id, alerts);
       const answer = this.mapScopedUser(user, actor.system);
       if (oldEmail === null) return answer;
 
@@ -1137,7 +1473,7 @@ export class AuthService {
   ): Promise<{ id: string }> {
     if (actor.id === userId) throw new ConflictException(SELF_DELETE);
 
-    await this.prisma.$transaction(async (tx) => {
+    const alerts = await this.prisma.$transaction(async (tx) => {
       // The account row before any admin role rows (spec 0004, AC-13 lock order)
       await lockAccount(tx, userId);
       const existing = await tx.user.findFirst({
@@ -1181,8 +1517,11 @@ export class AuthService {
         system: actor.system,
         ip: actor.meta?.ip,
       });
+      // Spec 0013, AC-13: deleting an admin removes their admin role in each system
+      return this.adminRoleAlerts(userId, existing.roles, [], tx);
     });
 
+    await this.alerts.send(actor.id, alerts);
     return { id: userId };
   }
 
@@ -1194,7 +1533,7 @@ export class AuthService {
     userId: string,
     actor: AdminCaller,
   ): Promise<ScopedUserResponse> {
-    const user = await this.prisma.$transaction(async (tx) => {
+    const { user, alerts } = await this.prisma.$transaction(async (tx) => {
       await lockAccount(tx, userId);
       const existing = await tx.user.findFirst({
         where: { id: userId },
@@ -1218,8 +1557,13 @@ export class AuthService {
         tx,
         change(userId, actor, AccountEventType.RESTORED),
       );
-      return updated;
+      // Spec 0013, AC-13: a restored admin holds their admin role again
+      return {
+        user: updated,
+        alerts: await this.adminRoleAlerts(userId, [], existing.roles, tx),
+      };
     });
+    await this.alerts.send(actor.id, alerts);
     return this.mapScopedUser(user, actor.system);
   }
 
@@ -1233,6 +1577,7 @@ export class AuthService {
     email: string,
     caller: OptionalCaller = null,
     meta: RequestMeta = NO_META,
+    reauthToken?: unknown,
   ): Promise<{ message: string }> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
@@ -1259,8 +1604,23 @@ export class AuthService {
       user.roles.some((target) =>
         holdsAdmin(caller.roles, target.system, admins),
       )
-        ? { id: caller.sub, email: caller.email }
+        ? { id: caller.sub, email: caller.email, sid: caller.sid }
         : null;
+
+    // Spec 0013, AC-14b: an admin sending a code to an admin account rechecks their password
+    const target = admin ? await this.admins.standing(user.id) : null;
+    const onAdmin = target !== null && isAdmin(target);
+    if (admin && onAdmin) {
+      await this.prisma.$transaction((tx) =>
+        this.passwords.consumeReauthToken(
+          tx,
+          typeof reauthToken === 'string' ? reauthToken : undefined,
+          admin.id,
+          admin.sid,
+          ReauthPurpose.ADMIN_ACTION,
+        ),
+      );
+    }
 
     const purpose = user.passwordSet
       ? VerificationPurpose.PASSWORD_RESET
@@ -1281,6 +1641,15 @@ export class AuthService {
     if (result.kind === 'limited') {
       if (admin) throw new CodeSendLimitError(result.retryAfter);
       return { message: FORGOT_PASSWORD_MESSAGE };
+    }
+    if (admin && onAdmin && target) {
+      await this.alerts.send(admin.id, [
+        {
+          kind: 'ADMIN_CODE_SENT',
+          targetId: user.id,
+          systems: alertSystemsOf(target),
+        },
+      ]);
     }
     return { message: FORGOT_PASSWORD_MESSAGE };
   }

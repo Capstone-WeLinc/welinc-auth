@@ -36,6 +36,8 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { requestMeta } from './events/request-meta';
+import { ReauthBodyDto } from './dto/reauth-body.dto';
+import type { AdminCaller } from './user-scope';
 import {
   StartEmailChangeDto,
   VerifyEmailChangeDto,
@@ -51,16 +53,17 @@ import type { Caller } from './guards/request-authenticator';
  * system their request resolved to, which scopes every admin user endpoint (spec 0011, AC-26).
  */
 type AdminRequest = Pick<Request, 'ip' | 'headers'> & {
-  user: { sub: string; email: string; system: SystemType };
+  user: { sub: string; email: string; system: SystemType; sid: string };
 };
 /** A signed in person acting on their own account, with where the request came from. */
 type SelfRequest = Pick<Request, 'ip' | 'headers'> & { user: { sub: string } };
 
 /** Spec 0011, AC-3: the admin's address and device go on every change event they make. */
-const actorOf = (req: AdminRequest) => ({
+const actorOf = (req: AdminRequest): AdminCaller => ({
   id: req.user.sub,
   email: req.user.email,
   system: req.user.system,
+  sid: req.user.sid,
   meta: requestMeta(req),
 });
 
@@ -87,6 +90,7 @@ export class AuthController {
       dto.email,
       req.user ?? null,
       requestMeta(req),
+      dto.reauthToken,
     );
   }
 
@@ -190,10 +194,15 @@ export class AuthController {
     return user;
   }
 
+  // Spec 0013, AC-14b: an admin account needs `reauthToken` in the body
   @SystemAdmin()
   @Patch('users/:id/unlock')
-  unlockUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
-    return this.authService.unlockUser(id, actorOf(req));
+  unlockUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AdminRequest,
+    @Body() dto: ReauthBodyDto,
+  ) {
+    return this.authService.unlockUser(id, actorOf(req), dto.reauthToken);
   }
 
   @UseGuards(JwtAuthGuard)

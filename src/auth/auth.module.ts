@@ -51,6 +51,9 @@ import { AdminStandingService } from './admin/admin-standing.service';
 import { AdminSessionGuard } from './admin/admin-session.guard';
 import { AdminController } from './admin/admin.controller';
 import { AdminRecoveryService } from './admin/admin-recovery.service';
+import { AdminAlertsService } from './admin/admin-alerts.service';
+import { AccountSessionsService } from './admin/account-sessions.service';
+import { AdminAccountsController } from './admin/admin-accounts.controller';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -95,6 +98,9 @@ import { AdminRecoveryService } from './admin/admin-recovery.service';
     AdminStandingService,
     AdminSessionGuard,
     AdminRecoveryService,
+    // Spec 0013 slice 2: admin alerts and the one sessions service for both route families
+    AdminAlertsService,
+    AccountSessionsService,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
@@ -110,6 +116,7 @@ import { AdminRecoveryService } from './admin/admin-recovery.service';
     ActivityController,
     DeletionController,
     AdminController,
+    AdminAccountsController,
   ],
 })
 export default class AuthModule {}

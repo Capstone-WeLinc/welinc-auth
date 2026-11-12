@@ -66,6 +66,9 @@ export const PasswordCheckReason = {
   ACCOUNT_DELETION: 'ACCOUNT_DELETION',
   EMAIL_CHANGE: 'EMAIL_CHANGE',
   PASSWORD_CHANGE: 'PASSWORD_CHANGE',
+  // Spec 0013, AC-14
+  ADMIN_ACTION: 'ADMIN_ACTION',
+  TEMPORARY_ACCESS: 'TEMPORARY_ACCESS',
 } as const;
 export type PasswordCheckReason =
   (typeof PasswordCheckReason)[keyof typeof PasswordCheckReason];
@@ -191,6 +194,8 @@ const REASON_LABELS: Record<string, string> = {
   // Spec 0012 (ACCOUNT_LOCKED above doubles as the locked recheck reason)
   [PasswordCheckReason.ACCOUNT_DELETION]: 'Account deletion',
   [PasswordCheckReason.PASSWORD_CHANGE]: 'Password change',
+  [PasswordCheckReason.ADMIN_ACTION]: 'Admin action',
+  [PasswordCheckReason.TEMPORARY_ACCESS]: 'Temporary access',
   [DELETION_REQUEST_REASON]: 'The person asked for it',
 };
 

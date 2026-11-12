@@ -30,3 +30,23 @@ export const codeNotRequired = () =>
     'CODE_NOT_REQUIRED',
     'Admin sign in codes are turned off here',
   );
+
+/** AC-16: a system admin passed a system they are not the admin of. */
+export const notAdminOfSystem = () =>
+  coded(
+    HttpStatus.FORBIDDEN,
+    'NOT_ADMIN_OF_SYSTEM',
+    "You aren't an admin of that system",
+  );
+
+/** AC-9, AC-14, AC-27: a suite admin only action. */
+export const notSuiteAdmin = () =>
+  coded(HttpStatus.FORBIDDEN, 'NOT_SUITE_ADMIN', 'This needs a suite admin');
+
+/** AC-14b: only the suite admin changes their own email, through their profile. */
+export const suiteAdminSelfOnly = () =>
+  coded(
+    HttpStatus.FORBIDDEN,
+    'SUITE_ADMIN_SELF_ONLY',
+    "A suite admin's email is changed only by that person, from their profile",
+  );

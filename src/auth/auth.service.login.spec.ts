@@ -1,3 +1,4 @@
+import { fakeAdminAlerts, fakeAdminStanding } from './testing/admin.fake';
 import { describe, it, expect, beforeAll, jest } from '@jest/globals';
 import { fakeConfig } from '../config/fake-config.setup';
 import type { ForbiddenException } from '@nestjs/common';
@@ -98,6 +99,8 @@ describe('AuthService.checkCredentials', () => {
       fakeCodes(),
       new AccountEventsService(prisma, noGeo),
       new PasswordCheckService(prisma, new AccountEventsService(prisma, noGeo)),
+      fakeAdminStanding(),
+      fakeAdminAlerts(),
     );
     return { service, events, account };
   }
