@@ -51,6 +51,7 @@ npm run keys:dev     # local signing key plus the VRMS client key pair, written 
 npm run db:deploy    # prisma migrate deploy, then catalog:sync; use it instead of a bare migrate deploy
 npm run catalog:sync # makes systems, system_roles and the permission keys and cells match prisma/catalog/ (--dry-run to preview); refuses unsafe changes
 npm run permissions:import -- <SYSTEM> <file>  # one time (spec 0013, AC-28): a system's matrix and history from backend-vrms's permissions:export; refuses once anyone edited the matrix here or it was imported already
+npm run admin:recover  # spec 0013: makes a person a suite admin when no suite admin can sign in (needs a reason; see src/auth/admin/AGENTS.md)
 npm run geo:fetch    # downloads the DB-IP Lite country and ASN files into geo/ (git ignored; --soft warns instead of failing); the Docker build and setup.sh run it with --soft
 npm run seed:clients # applies the client registry and the CLIENT_*_JWKS public keys (after db:deploy)
 npm run keys:rotate -- <env file> <add|promote|remove> [--now] [<kid>]
@@ -90,5 +91,9 @@ npx prisma migrate dev   # asks first, see root rules
 
 - [nestjs-best-practices](../.claude/skills/nestjs-best-practices/): `kadajett/agent-nestjs-skills`, modules, DI and security
 - [prisma-client-api](../.claude/skills/prisma-client-api/), [prisma-cli](../.claude/skills/prisma-cli/): `prisma/skills`, Prisma 7 queries and CLI
+
+## Context files
+
+- [src/auth/admin/AGENTS.md](src/auth/admin/AGENTS.md): the cookie based `/auth/admin/*` API (suite spec 0013): admin code step up, suite admins, temporary access, recovery, alerts and the report
 
 _Drafted by /audit from the repo, worth a quick human pass. Edit freely: once a line stops matching this draft, later runs treat it as curated and will flag rather than overwrite it._
