@@ -17,6 +17,7 @@ import {
 } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../shared/prisma.service';
+import { AdminStandingService } from '../admin/admin-standing.service';
 import { AuthService, type SignInUser } from '../auth.service';
 import { countCodeCall } from '../codes/address-limit';
 import {
@@ -73,6 +74,7 @@ export class SsoController {
     private readonly prisma: PrismaService,
     private readonly launcher: LauncherService,
     private readonly signInStep: SignInStepService,
+    private readonly admins: AdminStandingService,
     @Inject(SESSION_SETTINGS) private readonly settings: SessionSettings,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
@@ -115,8 +117,12 @@ export class SsoController {
     const meta = requestMeta(req);
     const { user } = await this.auth.checkCredentials(dto, meta);
     const answer = await this.answerFor(user, meta);
+    // One code only, even for an unverified admin (spec 0013, AC-5)
     if (!user.emailVerified) return this.signInStep.start(user, meta);
-    return this.finishLogin(user, answer, meta, req, res);
+    if (await this.admins.asksCodeAtLogin(user.id)) {
+      return this.signInStep.start(user, meta, 'SIGN_IN_CODE_REQUIRED');
+    }
+    return this.finishLogin(user, answer, meta, req, res, false);
   }
 
   /**
@@ -146,7 +152,7 @@ export class SsoController {
       meta,
     );
     const { user, answer } = found!;
-    return this.finishLogin(user, answer, meta, req, res);
+    return this.finishLogin(user, answer, meta, req, res, true);
   }
 
   /** Spec 0009, AC-10: a new code on the same ticket. */
@@ -170,18 +176,26 @@ export class SsoController {
     );
   }
 
-  /** The one way a portal login ends (AC-9 step 5): a web session and the `welinc_sso` cookie. */
+  /**
+   * The one way a portal login ends (AC-9 step 5): a web session and the `welinc_sso` cookie.
+   * A login through the code step starts its session with `sign_in_code_at`, admin or not, and
+   * an admin's also writes `ADMIN_CODE_PASSED` (spec 0013, AC-5, AC-7).
+   */
   private async finishLogin(
     user: SignInUser,
     answer: LauncherAnswer,
     meta: RequestMeta,
     req: Request,
     res: Response,
+    throughCode: boolean,
   ): Promise<LauncherAnswer> {
     const { session, handle } = await this.sessions.createWeb({
       userId: user.id,
       meta,
       previousHandle: readSsoCookie(req, this.settings),
+      codePassed: throughCode
+        ? { admin: await this.admins.asksCodeAtLogin(user.id) }
+        : undefined,
     });
     setSsoCookie(res, this.settings, handle, session.absoluteExpiresAt!);
     return answer;

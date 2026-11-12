@@ -7,9 +7,17 @@ import { signInCodeEmail } from './code-emails';
 import { CodeSendLimitError, codeExpired, invalidCode } from './code-errors';
 import { CodeService } from './code.service';
 
-/** The `/auth/login` and `/auth/mobile/login` answer for an unverified email (AC-7, AC-11). */
+/**
+ * Why a right password still needs a code: an unverified email (spec 0009), or an admin's
+ * portal sign in (spec 0013, AC-5). The ticket is the same either way and carries no admin flag.
+ */
+export type SignInStepStatus =
+  | 'EMAIL_VERIFICATION_REQUIRED'
+  | 'SIGN_IN_CODE_REQUIRED';
+
+/** The `/auth/login` and `/auth/mobile/login` answer when a code is needed (AC-7, AC-11). */
 export type EmailVerificationStep = {
-  status: 'EMAIL_VERIFICATION_REQUIRED';
+  status: SignInStepStatus;
   challengeId: string;
   email: string;
   resendAfter: number;
@@ -42,6 +50,7 @@ export class SignInStepService {
       email: string;
     },
     meta: RequestMeta = NO_META,
+    status: SignInStepStatus = 'EMAIL_VERIFICATION_REQUIRED',
   ): Promise<EmailVerificationStep> {
     const ticket = newOpaque();
     const challengeHash = hashOpaque(ticket);
@@ -68,7 +77,7 @@ export class SignInStepService {
       throw new CodeSendLimitError(result.retryAfter);
     }
     return {
-      status: 'EMAIL_VERIFICATION_REQUIRED',
+      status,
       challengeId: ticket,
       email: user.email,
       resendAfter: result.resendAfter,

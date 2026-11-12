@@ -58,6 +58,14 @@ enum AccountEventType {
   DELETION_REJECTED
   RESTORED
   ERASED
+  // Spec 0013: ACCOUNT (kept forever)
+  SUITE_ADMIN_ACTIONED
+  SUITE_ADMIN_REMOVED
+  TEMP_ACCESS_STARTED
+  TEMP_ACCESS_ENDED
+  ADMIN_RECOVERY
+  // Spec 0013: SIGN_IN
+  ADMIN_CODE_PASSED
 }
 
 // Spec 0003: a login is a session that welinc-auth tracks on the server.
@@ -78,6 +86,8 @@ enum SessionEndReason {
   REFRESH_REUSE
   CODE_REUSE
   MAX_SESSIONS
+  // Spec 0013, AC-10: a temporary grant ended, so the holder's sessions in that system end
+  TEMP_ACCESS_ENDED
 }
 
 model User {
@@ -108,6 +118,8 @@ model User {
   deletionsDecided    AccountDeletionRequest[] @relation("DeletionDecidedBy")
   deletionsRestored   AccountDeletionRequest[] @relation("DeletionRestoredBy")
   reauthTokens        ReauthToken[]
+  suiteAdmin          SuiteAdmin?              @relation("SuiteAdmin")
+  suiteAdminsGranted  SuiteAdmin[]             @relation("SuiteAdminGrantedBy")
 
   @@index([deletedAt])
   @@map("users")
@@ -218,8 +230,10 @@ model Session {
   endedAt           DateTime?         @map("ended_at") @db.Timestamptz(6)
   endReason         SessionEndReason? @map("end_reason")
   endedById         String?           @map("ended_by_id") @db.Uuid
+  // Spec 0013, AC-5 to AC-7: when this session passed an emailed code (login or step up); never cleared
+  signInCodeAt      DateTime?         @map("sign_in_code_at") @db.Timestamptz(6)
 
-  user               User                @relation("UserSessions", fields: [userId], references: [id], onDelete: NoAction)
+  user             User                @relation("UserSessions", fields: [userId], references: [id], onDelete: NoAction)
   endedBy            User?               @relation("SessionsEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
   loginClient        OAuthClient         @relation("SessionLoginClient", fields: [loginClientId], references: [id])
   refreshTokens      RefreshToken[]
@@ -454,6 +468,25 @@ model AccountDeletionRequest {
 // Spec 0012: what a reauth token may be used for.
 enum ReauthPurpose {
   ACCOUNT_DELETION
+  // Spec 0013, AC-14
+  ADMIN_ACTION
+  TEMPORARY_ACCESS
+}
+
+// Spec 0013, AC-1 to AC-4: the suite admins, 1 to 3 people who hold no permanent system role
+// (a deferred trigger in the migration SQL enforces that once user_roles can hold temporary rows).
+model SuiteAdmin {
+  userId      String    @id @map("user_id") @db.Uuid
+  // Null: the seed or the recovery script
+  grantedById String?   @map("granted_by_id") @db.Uuid
+  grantedAt   DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  // Null only for the seed
+  reason      String?   @db.VarChar(500)
+
+  user      User  @relation("SuiteAdmin", fields: [userId], references: [id], onDelete: Restrict)
+  grantedBy User? @relation("SuiteAdminGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@map("suite_admins")
 }
 
 // Spec 0012, AC-1, AC-3: a one use token from `POST /auth/profile/verify-password`, bound to the

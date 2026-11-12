@@ -34,6 +34,7 @@
     "db:deploy": "prisma migrate deploy && npm run catalog:sync",
     "keys:rotate": "ts-node scripts/keys-rotate.ts",
     "keys:client": "ts-node scripts/keys-client.ts",
+    "admin:recover": "ts-node -r tsconfig-paths/register scripts/admin-recover.ts",
     "geo:fetch": "node scripts/geo-fetch.mjs"
   },
   "dependencies": {

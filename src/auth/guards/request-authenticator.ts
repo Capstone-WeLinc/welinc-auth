@@ -22,6 +22,8 @@ export type UserCaller = {
   system: SystemType;
   /** The token's session (spec 0003): what a password change keeps, and `current` in lists. */
   sid: string;
+  /** Spec 0013, AC-6: when the token's session passed an emailed code, read on each request. */
+  signInCodeAt: Date | null;
 };
 
 /** A backend calling with its own service token (spec 0002, AC-19). */
@@ -163,6 +165,7 @@ export class RequestAuthenticator {
       roles: user.roles,
       system,
       sid: session.id,
+      signInCodeAt: session.signInCodeAt,
     };
   }
 }

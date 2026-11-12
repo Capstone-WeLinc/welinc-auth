@@ -139,6 +139,33 @@ describe('checkManifest', () => {
     });
     expect(checkManifest(manifest([two]), catalog)).toEqual([]);
   });
+
+  // covers: spec 0013 AC-33
+  it('accepts a suite admin with no roles, refuses one with roles and a fourth', () => {
+    const suite = (n: number, roles: ManifestPerson['roles'] = []) =>
+      person(n, { roles, suiteAdmin: true });
+    expect(checkManifest(manifest([suite(1), suite(2)]), catalog)).toEqual([]);
+    expect(
+      checkManifest(
+        manifest([suite(1, [{ system: 'VRMS', role: 'MECHANIC' }])]),
+        catalog,
+      ),
+    ).toEqual([expect.stringContaining('roles must be empty')]);
+    expect(
+      checkManifest(
+        manifest([suite(1), suite(2), suite(3), suite(4)]),
+        catalog,
+      ),
+    ).toEqual([expect.stringContaining('more than the limit of 3')]);
+  });
+
+  it('holds the seed suite admin at id 9001 with no roles', () => {
+    const m = loadManifest();
+    const suite = m.people.filter((p) => p.suiteAdmin === true);
+    expect(suite.map((p) => [p.id, p.email, p.roles])).toEqual([
+      [id(9001), 'suite.admin@welinc.com', []],
+    ]);
+  });
 });
 
 // covers: spec 0006 AC-5

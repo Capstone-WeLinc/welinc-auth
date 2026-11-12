@@ -15,6 +15,7 @@ import { Reflector } from '@nestjs/core';
 import { SystemType } from '@prisma/client';
 import type { Request } from 'express';
 import type { PrismaService } from '../../shared/prisma.service';
+import type { AdminStandingService } from '../admin/admin-standing.service';
 import { SERVICE_SCOPE_KEY } from '../decorators/service-scope.decorator';
 import type { RoleAssignment } from '../roles/catalog.types';
 import { FakeCatalogService } from '../testing/catalog.fake';
@@ -100,7 +101,11 @@ describe('welinc-auth guards', () => {
     findClient = jest.fn<(args: unknown) => Promise<ClientRow | null>>();
     findClient.mockResolvedValue({ isActive: true, system: SystemType.VRMS });
     liveSession = jest.fn<(sid: string) => Promise<unknown>>();
-    liveSession.mockResolvedValue({ id: 'sid-1', userId: USER_ID });
+    liveSession.mockResolvedValue({
+      id: 'sid-1',
+      userId: USER_ID,
+      signInCodeAt: null,
+    });
     authenticator = new RequestAuthenticator(
       tokens,
       {
@@ -123,6 +128,7 @@ describe('welinc-auth guards', () => {
         roles: row().roles,
         system: 'VRMS',
         sid: 'sid-1',
+        signInCodeAt: null,
       });
     });
 
@@ -278,19 +284,59 @@ describe('welinc-auth guards', () => {
   // covers: spec 0004 AC-14
   describe('SystemAdminGuard', () => {
     const adminRoute = () => undefined;
+    const codes = (on: boolean) =>
+      ({ codeRequired: () => on }) as unknown as AdminStandingService;
     const guard = new SystemAdminGuard(
       new Reflector(),
       new FakeCatalogService(),
+      codes(true),
     );
     const withUser = (user: Caller, route: () => void = adminRoute) =>
       context({ user } as Partial<Request>, route);
-    const person = (system: SystemType, roles = row().roles): Caller => ({
+    const person = (
+      system: SystemType,
+      roles = row().roles,
+      signInCodeAt: Date | null = new Date(),
+    ): Caller => ({
       kind: 'user',
       sub: USER_ID,
       email: 'e',
       roles,
       system,
       sid: 'sid-1',
+      signInCodeAt,
+    });
+
+    // covers: spec 0013 AC-6, AC-8
+    it('answers 403 ADMIN_CODE_REQUIRED for an admin whose session passed no code', async () => {
+      const error = await guard
+        .canActivate(withUser(person(SystemType.VRMS, row().roles, null)))
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(error).toBeInstanceOf(HttpException);
+      expect((error as HttpException).getStatus()).toBe(403);
+      expect(
+        ((error as HttpException).getResponse() as { code: string }).code,
+      ).toBe('ADMIN_CODE_REQUIRED');
+    });
+
+    it('lets the same session in when ADMIN_SIGN_IN_CODE is off', async () => {
+      const off = new SystemAdminGuard(
+        new Reflector(),
+        new FakeCatalogService(),
+        codes(false),
+      );
+      await expect(
+        off.canActivate(withUser(person(SystemType.VRMS, row().roles, null))),
+      ).resolves.toBe(true);
+    });
+
+    it('answers false, not the code error, for someone who is not an admin', async () => {
+      await expect(
+        guard.canActivate(withUser(person(SystemType.BMS, row().roles, null))),
+      ).resolves.toBe(false);
     });
 
     it('checks the admin role in the token system only', async () => {
@@ -317,6 +363,7 @@ describe('welinc-auth guards', () => {
       const movedGuard = new SystemAdminGuard(
         new Reflector(),
         new FakeCatalogService(moved),
+        codes(true),
       );
 
       await expect(

@@ -47,6 +47,10 @@ import { PasswordCheckService } from './reauth/password-check.service';
 import { DeletionService } from './deletion/deletion.service';
 import { DeletionController } from './deletion/deletion.controller';
 import { ErasureService } from './deletion/erasure.service';
+import { AdminStandingService } from './admin/admin-standing.service';
+import { AdminSessionGuard } from './admin/admin-session.guard';
+import { AdminController } from './admin/admin.controller';
+import { AdminRecoveryService } from './admin/admin-recovery.service';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -87,6 +91,10 @@ import { ErasureService } from './deletion/erasure.service';
     PasswordCheckService,
     DeletionService,
     ErasureService,
+    // Spec 0013: who is an admin, and the cookie guard of /auth/admin/*
+    AdminStandingService,
+    AdminSessionGuard,
+    AdminRecoveryService,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
@@ -101,6 +109,7 @@ import { ErasureService } from './deletion/erasure.service';
     DirectoryController,
     ActivityController,
     DeletionController,
+    AdminController,
   ],
 })
 export default class AuthModule {}

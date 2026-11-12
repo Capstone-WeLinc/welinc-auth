@@ -41,6 +41,13 @@ export const TYPE_CATEGORY: Record<AccountEventType, AccountEventCategory> = {
   [T.DELETION_REJECTED]: C.ACCOUNT,
   [T.RESTORED]: C.ACCOUNT,
   [T.ERASED]: C.ACCOUNT,
+  // Spec 0013
+  [T.SUITE_ADMIN_ACTIONED]: C.ACCOUNT,
+  [T.SUITE_ADMIN_REMOVED]: C.ACCOUNT,
+  [T.TEMP_ACCESS_STARTED]: C.ACCOUNT,
+  [T.TEMP_ACCESS_ENDED]: C.ACCOUNT,
+  [T.ADMIN_RECOVERY]: C.ACCOUNT,
+  [T.ADMIN_CODE_PASSED]: C.SIGN_IN,
 };
 
 /** Why a sign in was refused (AC-1). */
@@ -141,6 +148,21 @@ const TYPE_LABELS: Record<
     labelAdmin: 'An admin restored your account',
   },
   [T.ERASED]: { label: 'Personal data erased' },
+  [T.SUITE_ADMIN_ACTIONED]: {
+    label: 'Made a suite admin',
+    labelAdmin: 'A suite admin made you a suite admin',
+  },
+  [T.SUITE_ADMIN_REMOVED]: {
+    label: 'No longer a suite admin',
+    labelAdmin: 'A suite admin removed you as suite admin',
+  },
+  [T.TEMP_ACCESS_STARTED]: { label: 'Temporary access started' },
+  [T.TEMP_ACCESS_ENDED]: {
+    label: 'Temporary access ended',
+    labelAdmin: 'An admin ended your temporary access',
+  },
+  [T.ADMIN_RECOVERY]: { label: 'Admin access recovered from the server' },
+  [T.ADMIN_CODE_PASSED]: { label: 'Admin sign in confirmed with a code' },
 };
 
 /** Every `reason` value: sign in fails, session end reasons and code purposes. */
@@ -161,6 +183,7 @@ const REASON_LABELS: Record<string, string> = {
   [SessionEndReason.REFRESH_REUSE]: 'An old sign in token was used again',
   [SessionEndReason.CODE_REUSE]: 'An old login code was used again',
   [SessionEndReason.MAX_SESSIONS]: 'Too many sessions at once',
+  [SessionEndReason.TEMP_ACCESS_ENDED]: 'Temporary access ended',
   [VerificationPurpose.PASSWORD_SETUP]: 'Password setup',
   [VerificationPurpose.PASSWORD_RESET]: 'Password reset',
   [VerificationPurpose.SIGN_IN]: 'Sign in',

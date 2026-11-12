@@ -120,18 +120,13 @@ export class LauncherService {
    * The launcher body for a user, or 403 `NO_SYSTEM_ACCESS` when no usable system is left
    * (AC-1 to AC-3). Read only: never touches the session.
    */
-  async answerFor(user: {
-    id: string;
-    name: string;
-    email: string;
-    profilePicture: string | null;
-  }): Promise<LauncherAnswer> {
+  async answerFor(user: LauncherInput): Promise<LauncherAnswer> {
     const held = await this.prisma.userRoleAssignment.findMany({
       where: { userId: user.id },
       select: { system: true, role: true },
     });
     const codes = launcherOrder(held);
-    if (codes.length === 0) throw noSystemAccess(user.email);
+    if (codes.length === 0) return this.noSystems(user);
 
     const [catalog, clients] = await Promise.all([
       this.prisma.system.findMany({
@@ -170,15 +165,36 @@ export class LauncherService {
         `${system} has more than one active confidential client with a web address; the oldest is used.`,
       );
     }
-    if (systems.length === 0) throw noSystemAccess(user.email);
-    return {
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        picture: user.profilePicture,
-      },
-      systems,
-    };
+    if (systems.length === 0) return this.noSystems(user);
+    return { user: launcherUser(user), systems };
   }
+
+  /**
+   * No usable system: 403 `NO_SYSTEM_ACCESS`, except for a suite admin, who holds no system by
+   * design and gets the empty list (spec 0013, AC-5).
+   */
+  private async noSystems(user: LauncherInput): Promise<LauncherAnswer> {
+    const suite = await this.prisma.suiteAdmin.findUnique({
+      where: { userId: user.id },
+      select: { userId: true },
+    });
+    if (!suite) throw noSystemAccess(user.email);
+    return { user: launcherUser(user), systems: [] };
+  }
+}
+
+type LauncherInput = {
+  id: string;
+  name: string;
+  email: string;
+  profilePicture: string | null;
+};
+
+function launcherUser(user: LauncherInput): LauncherAnswer['user'] {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    picture: user.profilePicture,
+  };
 }

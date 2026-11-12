@@ -2,6 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { PrismaService } from '../../shared/prisma.service';
+import type { AdminStandingService } from '../admin/admin-standing.service';
 import type { AuthService } from '../auth.service';
 import type { SignInStepService } from '../codes/sign-in-step.service';
 import type { TokenService } from '../tokens/token.service';
@@ -65,6 +66,7 @@ function build(hits = 1) {
     touch: fn(),
   };
   const launcher = { answerFor: fn().mockResolvedValue(ANSWER) };
+  const admins = { asksCodeAtLogin: fn().mockResolvedValue(false) };
   const storage = {
     increment: fn().mockResolvedValue({ totalHits: hits, timeToExpire: 42 }),
   };
@@ -76,6 +78,7 @@ function build(hits = 1) {
     {} as PrismaService,
     launcher as unknown as LauncherService,
     signInStep as unknown as SignInStepService,
+    admins as unknown as AdminStandingService,
     { ssoCookieSecure: false } as SessionSettings,
     storage,
   );
@@ -96,6 +99,7 @@ function build(hits = 1) {
     sessions,
     launcher,
     signInStep,
+    admins,
     storage,
     res,
     req,
@@ -267,6 +271,66 @@ describe('POST /auth/login', () => {
     expect(t.sessions.createWeb).not.toHaveBeenCalled();
     expect(t.cookie).not.toHaveBeenCalled();
   });
+});
+
+describe('the admin sign in code (suite spec 0013)', () => {
+  const login = (t: ReturnType<typeof build>) =>
+    t.controller.login({ email: 'm@welinc.com', password: 'x' }, t.req, t.res);
+
+  // covers: AC-5
+  it('answers SIGN_IN_CODE_REQUIRED for a verified admin, with no session and no cookie', async () => {
+    const t = build();
+    t.admins.asksCodeAtLogin.mockResolvedValue(true);
+    await login(t);
+    expect(t.admins.asksCodeAtLogin).toHaveBeenCalledWith('u1');
+    expect(t.signInStep.start).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'u1' }),
+      expect.objectContaining({ ip: '10.0.0.1' }),
+      'SIGN_IN_CODE_REQUIRED',
+    );
+    expect(t.sessions.createWeb).not.toHaveBeenCalled();
+    expect(t.cookie).not.toHaveBeenCalled();
+  });
+
+  // covers: AC-5 (one code only, even for an unverified admin)
+  it('asks the email code, not a second one, for an unverified admin', async () => {
+    const t = build();
+    t.admins.asksCodeAtLogin.mockResolvedValue(true);
+    t.auth.checkCredentials.mockResolvedValue({
+      user: { ...USER, emailVerified: false },
+    });
+    await login(t);
+    expect(t.signInStep.start).toHaveBeenCalledTimes(1);
+    expect(t.signInStep.start.mock.calls[0]).toHaveLength(2);
+  });
+
+  it('starts a session with no code mark after a plain password login', async () => {
+    const t = build();
+    await login(t);
+    expect(t.sessions.createWeb).toHaveBeenCalledWith(
+      expect.objectContaining({ codePassed: undefined }),
+    );
+  });
+
+  // covers: AC-5, AC-7 (sign_in_code_at on any code finish; ADMIN_CODE_PASSED only for an admin)
+  it.each([
+    [true, { admin: true }],
+    [false, { admin: false }],
+  ])(
+    'marks the session after the code step (admin %s)',
+    async (admin, codePassed) => {
+      const t = build();
+      t.admins.asksCodeAtLogin.mockResolvedValue(admin);
+      await t.controller.verifyEmail(
+        { challengeId: STEP.challengeId, code: '123456' },
+        t.req,
+        t.res,
+      );
+      expect(t.sessions.createWeb).toHaveBeenCalledWith(
+        expect.objectContaining({ codePassed }),
+      );
+    },
+  );
 });
 
 describe('the sign in step (suite spec 0009)', () => {

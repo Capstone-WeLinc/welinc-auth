@@ -266,6 +266,11 @@ export class SessionService {
     userId: string;
     meta: RequestMeta;
     previousHandle: unknown;
+    /**
+     * Spec 0013, AC-5, AC-7: the login finished through the code step, so the session starts
+     * with `sign_in_code_at`; `admin` also writes `ADMIN_CODE_PASSED`.
+     */
+    codePassed?: { admin: boolean };
   }): Promise<{ session: Session; handle: string }> {
     const { meta } = input;
     const handle = newOpaque();
@@ -300,6 +305,7 @@ export class SessionService {
           absoluteExpiresAt: new Date(
             now.getTime() + this.settings.webMaxHours * 3_600_000,
           ),
+          signInCodeAt: input.codePassed ? now : null,
         },
       });
       await this.events.record(tx, {
@@ -310,12 +316,50 @@ export class SessionService {
         clientId: 'portal',
         meta,
       });
+      if (input.codePassed?.admin) {
+        await this.events.record(tx, {
+          userId: input.userId,
+          actorId: input.userId,
+          type: AccountEventType.ADMIN_CODE_PASSED,
+          sessionId: created.id,
+          clientId: 'portal',
+          meta,
+        });
+      }
       return created;
     });
     this.logger.log(
       `session created sid=${session.id} user=${input.userId} kind=WEB client=portal`,
     );
     return { session, handle };
+  }
+
+  /**
+   * Spec 0013, AC-7: the step up. Sets `sign_in_code_at` on a live session that has none and
+   * writes `ADMIN_CODE_PASSED`, in one transaction. Answers false when nothing changed (already
+   * passed, or the session ended meanwhile). Never cleared afterwards.
+   */
+  async markCodePassed(
+    sessionId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.session.updateMany({
+        where: { id: sessionId, userId, endedAt: null, signInCodeAt: null },
+        data: { signInCodeAt: new Date() },
+      });
+      if (count === 0) return false;
+      await this.events.record(tx, {
+        userId,
+        actorId: userId,
+        type: AccountEventType.ADMIN_CODE_PASSED,
+        sessionId,
+        clientId: 'portal',
+        meta,
+      });
+      return true;
+    });
   }
 
   /**
