@@ -37,6 +37,7 @@ import { SessionSweeper } from './sessions/session-sweeper';
 import { DirectoryController } from './directory/directory.controller';
 import { DirectoryGuard } from './directory/directory.guard';
 import { DirectoryService } from './directory/directory.service';
+import { AdminPermissionsController } from './permissions/admin-permissions.controller';
 import { MatrixService } from './permissions/matrix.service';
 import { PermissionsController } from './permissions/permissions.controller';
 import { PermissionsReadGuard } from './permissions/permissions-read.guard';
@@ -132,6 +133,7 @@ import { AdminReportService } from './admin/admin-report.service';
     AdminAccountsController,
     SuiteAdminController,
     PermissionsController,
+    AdminPermissionsController,
   ],
 })
 export default class AuthModule {}

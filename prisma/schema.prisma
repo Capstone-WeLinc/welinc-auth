@@ -213,7 +213,8 @@ model PermissionChange {
   note       String?    @db.VarChar(500)
   // Copied from VRMS by permissions:import (AC-28)
   imported   Boolean    @default(false)
-  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Millisecond precision so keyset cursors match exactly (as account_events)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   actor      User?      @relation("PermissionChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([system, createdAt(sort: Desc), id(sort: Desc)])

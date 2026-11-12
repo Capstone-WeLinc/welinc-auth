@@ -15,7 +15,8 @@ import {
 /** One change to alert about (spec 0013, AC-13). */
 export type AdminAlert = {
   kind: AdminAlertKind;
-  targetId: string;
+  /** The person the change is about; null for a matrix edit (AC-27), which is about a system. */
+  targetId: string | null;
   /** Whose admins get it: the systems concerned, or `ALL` (a suite admin target). */
   systems: AlertSystems;
   /** For role lines: the system whose admin role was added or removed. */
@@ -27,6 +28,8 @@ export type AdminAlert = {
   /** The person the line is about gets it too, even when no longer an admin (AC-13). */
   notifyTarget?: boolean;
   reason?: string | null;
+  /** `PERMISSIONS_CHANGED`: how many cells the save changed. */
+  cells?: number;
 };
 
 type Recipient = {
@@ -86,7 +89,11 @@ export class AdminAlertsService {
       systems.find((s) => s.code === system)?.roles.find((r) => r.code === code)
         ?.name ?? code;
 
-    const targetIds = [...new Set(alerts.map((a) => a.targetId))];
+    const targetIds = [
+      ...new Set(
+        alerts.flatMap((a) => (a.targetId === null ? [] : [a.targetId])),
+      ),
+    ];
     const people = await this.prisma.user.findMany({
       where: { id: { in: [...targetIds, ...(actorId ? [actorId] : [])] } },
       select: { id: true, name: true, email: true },
@@ -94,7 +101,7 @@ export class AdminAlertsService {
     const byId = new Map(people.map((p) => [p.id, p]));
 
     const lines = alerts.map((alert) => {
-      const target = byId.get(alert.targetId);
+      const target = alert.targetId ? byId.get(alert.targetId) : undefined;
       const line: AlertLine = {
         kind: alert.kind,
         targetName: target?.name || 'Deleted user',
@@ -110,6 +117,7 @@ export class AdminAlertsService {
         until: alert.until ?? null,
         at,
         reason: alert.reason ?? null,
+        cells: alert.cells,
       };
       return { alert, line };
     });
@@ -117,7 +125,7 @@ export class AdminAlertsService {
     const recipients = await this.recipients(alerts, adminRole);
     // AC-13: a removed suite admin also hears about their own removal
     for (const alert of alerts) {
-      if (!alert.notifyTarget) continue;
+      if (!alert.notifyTarget || alert.targetId === null) continue;
       if (recipients.some((r) => r.id === alert.targetId)) continue;
       const target = byId.get(alert.targetId);
       if (!target) continue;
@@ -211,6 +219,10 @@ export class AdminAlertsService {
 
   /** The person page when the save was about one person, else the admin section. */
   private linkFor(recipient: Recipient, alerts: AdminAlert[]): string {
+    const matrix = alerts.find((a) => a.kind === 'PERMISSIONS_CHANGED');
+    if (matrix?.roleSystem) {
+      return `${this.portal}/admin/permissions?system=${matrix.roleSystem}`;
+    }
     const targets = new Set(alerts.map((a) => a.targetId));
     if (targets.size !== 1) return `${this.portal}/admin`;
     const [targetId] = targets;

@@ -6,7 +6,7 @@ import { escapeHtml, type Email } from '../codes/code-emails';
 
 const BRAND = 'WeLinc Logistics';
 
-/** What happened, in the alert's words (every AC-13 row but the matrix edit). */
+/** What happened, in the alert's words (every AC-13 row). */
 export type AdminAlertKind =
   | 'ADMIN_ROLE_ADDED'
   | 'ADMIN_ROLE_REMOVED'
@@ -20,7 +20,8 @@ export type AdminAlertKind =
   | 'TEMP_ACCESS_STARTED'
   | 'TEMP_ACCESS_ENDED_EARLY'
   | 'SUITE_ROLE_GIVEN'
-  | 'SUITE_ACCOUNT_CREATED';
+  | 'SUITE_ACCOUNT_CREATED'
+  | 'PERMISSIONS_CHANGED';
 
 /** One line of an alert, already resolved to names. */
 export type AlertLine = {
@@ -35,6 +36,8 @@ export type AlertLine = {
   until?: Date | null;
   at: Date;
   reason: string | null;
+  /** `PERMISSIONS_CHANGED`: how many cells the save changed. */
+  cells?: number;
 };
 
 /** "November 12, 2026, 3:04 PM" in Asia/Manila, as people in the suite read times. */
@@ -80,11 +83,18 @@ function what(line: AlertLine): string {
       return `was given the ${role} role by a suite admin`;
     case 'SUITE_ACCOUNT_CREATED':
       return `had a new account made for ${line.systemName ?? 'a system'} by a suite admin`;
+    case 'PERMISSIONS_CHANGED':
+      // Worded whole in alertSentence: the line is about a system, not a person
+      return 'changed permissions';
   }
 }
 
 /** The plain sentence for one line, also used in the log. */
 export function alertSentence(line: AlertLine): string {
+  if (line.kind === 'PERMISSIONS_CHANGED') {
+    const cells = line.cells ?? 0;
+    return `${cells} ${cells === 1 ? 'permission was' : 'permissions were'} changed in the ${line.systemName ?? 'system'} permission matrix.`;
+  }
   return `${line.targetName} (${line.targetEmail}) ${what(line)}.`;
 }
 
@@ -97,7 +107,9 @@ export function adminAlertEmail(input: {
   const first = input.lines[0];
   const subject =
     input.lines.length === 1
-      ? `${BRAND} - Admin change: ${first.targetName}`
+      ? first.kind === 'PERMISSIONS_CHANGED'
+        ? `${BRAND} - Permissions changed in ${first.systemName ?? 'a system'}`
+        : `${BRAND} - Admin change: ${first.targetName}`
       : `${BRAND} - ${input.lines.length} admin changes`;
   const details = (line: AlertLine) =>
     [

@@ -27,7 +27,8 @@ function setup(version = 4) {
     setHeader: (name: string, value: string) => {
       headers[name] = value;
     },
-    status: jest.fn(function (this: unknown) {
+    status: jest.fn((code: number) => {
+      void code;
       return res;
     }),
     json: jest.fn(),

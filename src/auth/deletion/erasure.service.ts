@@ -142,6 +142,13 @@ export class ErasureService {
                  "new_value" = CASE WHEN "field" = ANY(${PERSONAL_FIELDS}::text[]) THEN NULL ELSE "new_value" END
            WHERE "user_id" = ${userId}::uuid`;
 
+        // Suite spec 0013: matrix history keeps the row and the actor id, but not their name or
+        // email (the trigger allows only this under welinc.erasure; the portal shows "Deleted user")
+        await tx.$executeRaw`
+          UPDATE "permission_changes"
+             SET "actor_name" = NULL, "actor_email" = NULL
+           WHERE "actor_id" = ${userId}::uuid`;
+
         // AC-17: earlier feed snapshots get the erased values; erasedAt stays out of them, so the
         // commit time trigger writes exactly one `updated` row with erasedAt set
         await tx.$executeRaw`
