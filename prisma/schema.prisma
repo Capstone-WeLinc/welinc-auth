@@ -122,6 +122,8 @@ model User {
   suiteAdminsGranted   SuiteAdmin[]             @relation("SuiteAdminGrantedBy")
   temporaryGrants      TemporaryGrant[]         @relation("TemporaryGrants")
   temporaryGrantsEnded TemporaryGrant[]         @relation("TemporaryGrantsEnded")
+  permissionCells      RolePermission[]         @relation("RolePermissionUpdatedBy")
+  permissionChanges    PermissionChange[]       @relation("PermissionChangeActor")
 
   @@index([deletedAt])
   @@map("users")
@@ -139,8 +141,83 @@ model System {
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   roles           SystemRole[]
+  permissions     SystemPermission[]
+  matrix          PermissionMatrix?
 
   @@map("systems")
+}
+
+// Spec 0013, AC-25: a system's permission keys, written only by `npm run catalog:sync` from the
+// `permissions` list in prisma/catalog/<system>.ts. No route edits them.
+model SystemPermission {
+  system      SystemType
+  key         String           @db.VarChar(60)
+  label       String           @db.VarChar(100)
+  group       String           @db.VarChar(40)
+  description String           @db.VarChar(300)
+  // Position in the catalog file (display order)
+  sortOrder   Int              @map("sort_order")
+  // Roles whose cell always equals its default (AC-27 refuses edits, the sync resets them)
+  lockedRoles String[]         @map("locked_roles") @db.VarChar(40)
+  systemRef   System           @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  cells       RolePermission[]
+
+  @@id([system, key])
+  @@map("system_permissions")
+}
+
+// Spec 0013, AC-25 and AC-27: whether a role holds a permission. Inserted by catalog:sync with
+// the default, edited by suite admins; locked cells only by the sync.
+model RolePermission {
+  system      SystemType
+  role        String           @db.VarChar(40)
+  key         String           @db.VarChar(60)
+  allowed     Boolean
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedById String?          @map("updated_by_id") @db.Uuid
+  roleRef     SystemRole       @relation(fields: [system, role], references: [system, code], onDelete: Cascade, onUpdate: Restrict)
+  permission  SystemPermission @relation(fields: [system, key], references: [system, key], onDelete: Cascade, onUpdate: Restrict)
+  updatedBy   User?            @relation("RolePermissionUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@id([system, role, key])
+  @@map("role_permissions")
+}
+
+// Spec 0013, AC-26: one per system; `version` is the ETag systems poll with. Raised with
+// `version = version + 1` by every write that changes a cell.
+model PermissionMatrix {
+  system    SystemType @id
+  version   Int        @default(1)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  systemRef System     @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("permission_matrices")
+}
+
+// Spec 0013, AC-25, AC-27 and AC-28: one row per changed cell, append only by trigger (migration
+// SQL); erasure may blank actor_name and actor_email. No FK on role or key: history outlives the
+// catalog.
+model PermissionChange {
+  id         String     @id @default(uuid()) @db.Uuid
+  system     SystemType
+  role       String     @db.VarChar(40)
+  key        String     @db.VarChar(60)
+  // Null when the cell was created
+  before     Boolean?
+  // Null when the cell was removed
+  after      Boolean?
+  actorId    String?    @map("actor_id") @db.Uuid
+  // "Catalog sync" when the sync wrote it
+  actorName  String?    @map("actor_name") @db.VarChar(100)
+  actorEmail String?    @map("actor_email") @db.VarChar(255)
+  note       String?    @db.VarChar(500)
+  // Copied from VRMS by permissions:import (AC-28)
+  imported   Boolean    @default(false)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor      User?      @relation("PermissionChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([system, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("permission_changes")
 }
 
 model SystemRole {
@@ -158,6 +235,7 @@ model SystemRole {
   systemRef       System               @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
   assignments     UserRoleAssignment[]
   temporaryGrants TemporaryGrant[]
+  permissionCells RolePermission[]
 
   @@id([system, code])
   @@map("system_roles")
