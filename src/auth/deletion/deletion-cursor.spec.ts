@@ -1,8 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import {
-  decodeDeletionCursor,
-  encodeDeletionCursor,
-} from './deletion-cursor';
+import { decodeDeletionCursor, encodeDeletionCursor } from './deletion-cursor';
 
 // covers: spec 0012 AC-9 (keyset cursors for the pending and grace views)
 
