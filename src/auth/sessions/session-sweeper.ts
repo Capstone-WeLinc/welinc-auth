@@ -12,6 +12,8 @@ import { PrismaService } from '../../shared/prisma.service';
 import { AccountEventsService } from '../events/account-events.service';
 import { deviceLabel } from './device-label';
 import { CODE_RETENTION_MS } from '../codes/code-config';
+import { REAUTH_KEEP_MS } from '../reauth/password-check.service';
+import { ErasureService } from '../deletion/erasure.service';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 
 /** Rows changed per statement, so no single statement holds a large lock (AC-37). */
@@ -31,8 +33,13 @@ export type SweepCounts = {
   requestsDeleted: number;
   codesDeleted: number;
   verificationCodesDeleted: number;
+  /** Spec 0012: reauth tokens older than 24 hours. */
+  reauthTokensDeleted: number;
   /** Spec 0011, AC-9: sign in, session and code events past retention. */
   eventsDeleted: number;
+  /** Spec 0012, AC-15: accounts erased this run, and the ones that failed. */
+  erased: number;
+  erasureFailed: number;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -61,6 +68,7 @@ export class SessionSweeper {
     @Inject(SESSION_SETTINGS) private readonly settings: SessionSettings,
     private readonly events: AccountEventsService,
     private readonly config: ConfigService<Env, true>,
+    private readonly erasure: ErasureService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'session-sweep' })
@@ -115,6 +123,12 @@ export class SessionSweeper {
               DELETE FROM "verification_codes" WHERE "id" IN (SELECT "id" FROM "verification_codes"
                 WHERE "created_at" < ${new Date(now.getTime() - CODE_RETENTION_MS)} LIMIT ${limit})`,
           ),
+          // Spec 0012: used or not, a reauth token row goes after 24 hours
+          reauthTokensDeleted: await this.batches(
+            (limit) => tx.$executeRaw`
+              DELETE FROM "reauth_tokens" WHERE "id" IN (SELECT "id" FROM "reauth_tokens"
+                WHERE "created_at" < ${new Date(now.getTime() - REAUTH_KEEP_MS)} LIMIT ${limit})`,
+          ),
         };
       },
       { timeout: 120_000, maxWait: 10_000 },
@@ -122,10 +136,17 @@ export class SessionSweeper {
     if (counts) {
       // Only the replica that held the lock; each batch its own transaction (AC-9)
       const eventsDeleted = await this.sweepEvents(now);
+      // Spec 0012, AC-15: the same way, each person in their own transaction
+      const erasure = await this.erasure.sweep(now);
       this.logger.log(
-        `session sweep ended=${counts.ended} graces=${counts.gracesCleared} tokens=${counts.tokensDeleted} sessions=${counts.sessionsDeleted} requests=${counts.requestsDeleted} codes=${counts.codesDeleted} verificationCodes=${counts.verificationCodesDeleted} events=${eventsDeleted}`,
+        `session sweep ended=${counts.ended} graces=${counts.gracesCleared} tokens=${counts.tokensDeleted} sessions=${counts.sessionsDeleted} requests=${counts.requestsDeleted} codes=${counts.codesDeleted} verificationCodes=${counts.verificationCodesDeleted} reauthTokens=${counts.reauthTokensDeleted} events=${eventsDeleted} erased=${erasure.erased} erasureFailed=${erasure.failed}`,
       );
-      return { ...counts, eventsDeleted };
+      return {
+        ...counts,
+        eventsDeleted,
+        erased: erasure.erased,
+        erasureFailed: erasure.failed,
+      };
     } else {
       this.logger.log('session sweep skipped: another replica holds the lock');
     }

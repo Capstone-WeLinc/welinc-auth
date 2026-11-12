@@ -27,6 +27,7 @@ import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
 import { AccountEventsService } from './events/account-events.service';
+import { PasswordCheckService } from './reauth/password-check.service';
 import { noGeo } from './testing/geo.fake';
 import { SessionService } from './sessions/session.service';
 
@@ -78,9 +79,11 @@ function build(env: Record<string, string | undefined> = {}) {
       count: fn(),
     },
     accountEvent: { create: fn(), createMany: fn(), findMany: fn() },
+    accountDeletionRequest: { updateMany: fn() },
     $queryRaw: fn(),
     $transaction: fn(),
   };
+  db.accountDeletionRequest.updateMany.mockResolvedValue({ count: 0 });
   db.$transaction.mockImplementation((arg: unknown) =>
     typeof arg === 'function'
       ? (arg as (tx: typeof db) => unknown)(db)
@@ -148,6 +151,10 @@ function build(env: Record<string, string | undefined> = {}) {
     new FakeCatalogService(),
     codes as unknown as CodeService,
     new AccountEventsService(db as unknown as PrismaService, noGeo),
+    new PasswordCheckService(
+      db as unknown as PrismaService,
+      new AccountEventsService(db as unknown as PrismaService, noGeo),
+    ),
   );
   return { service, db, sendMail, sessions, endAllForUser, codes, codeRow };
 }

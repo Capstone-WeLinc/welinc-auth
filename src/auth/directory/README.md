@@ -12,7 +12,7 @@ All three take only a backend's own service token (`aud: AUTH`) holding `directo
 | `GET /auth/directory/changes?after&limit` | The changes after `after`, in order, as `{ changes, next, hasMore }` |
 | `POST /auth/directory/users/lookup` | `{ ids }` (1 to 200): `{ users, missing }`, current state, including people who once held a role in the caller's system |
 
-Roles in the answer are the caller's system's only. `phone` is filled only for a token that also holds `directory.contact`. `phoneVerified` stays `false` until S8.
+Roles in the answer are the caller's system's only. `phone` is filled only for a token that also holds `directory.contact`. There is no `phoneVerified` (spec 0012: no system verifies phones). `erased` is true once the person's personal data was replaced by "Deleted user" (spec 0012); the feed says it with an `updated` change.
 
 ## How the feed is written
 

@@ -24,6 +24,7 @@ import {
 import { SystemType } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { AuthService, type OptionalCaller } from './auth.service';
+import { DeletionService } from './deletion/deletion.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
 import { LookupUsersQueryDto } from './dto/lookup-users.query.dto';
@@ -67,6 +68,7 @@ const actorOf = (req: AdminRequest) => ({
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly deletion: DeletionService,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
@@ -164,8 +166,28 @@ export class AuthController {
 
   @SystemAdmin()
   @Delete('users/:id')
-  deleteUser(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
-    return this.authService.deleteUser(id, actorOf(req));
+  async deleteUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = actorOf(req);
+    const result = await this.authService.deleteUser(id, actor);
+    // Spec 0012, AC-13: the AC-10 emails, after the commit
+    await this.deletion.notifyAdminDelete(id, actor);
+    return result;
+  }
+
+  @SystemAdmin()
+  @Post('users/:id/restore')
+  @HttpCode(HttpStatus.OK)
+  async restoreUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AdminRequest,
+  ) {
+    // Spec 0012, AC-14: the person is told after the commit
+    const user = await this.authService.restoreUser(id, actorOf(req));
+    await this.deletion.notifyRestored(id);
+    return user;
   }
 
   @SystemAdmin()
@@ -188,10 +210,14 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('profile/email')
   @HttpCode(HttpStatus.OK)
-  startEmailChange(@Req() req: SelfRequest, @Body() dto: StartEmailChangeDto) {
+  startEmailChange(
+    @Req() req: SelfRequest & { user: { sid: string } },
+    @Body() dto: StartEmailChangeDto,
+  ) {
     return this.authService.startEmailChange(
       req.user.sub,
       dto,
+      req.user.sid,
       requestMeta(req),
     );
   }

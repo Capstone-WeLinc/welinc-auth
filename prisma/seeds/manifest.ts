@@ -141,13 +141,19 @@ export function checkManifest(
       problems.push(`${who}: name must be 1 to 100 characters`);
     }
     if (!PERSON_GROUPS.includes(p.group)) {
-      problems.push(`${who}: group ${String(p.group)} is not one of ${PERSON_GROUPS.join(', ')}`);
+      problems.push(
+        `${who}: group ${String(p.group)} is not one of ${PERSON_GROUPS.join(', ')}`,
+      );
     }
     if (!PERSON_STATES.includes(p.state)) {
-      problems.push(`${who}: state ${String(p.state)} is not one of ${PERSON_STATES.join(', ')}`);
+      problems.push(
+        `${who}: state ${String(p.state)} is not one of ${PERSON_STATES.join(', ')}`,
+      );
     }
     if (typeof p.password !== 'string' || !(p.password in passwords)) {
-      problems.push(`${who}: password ${String(p.password)} is not a key of passwords`);
+      problems.push(
+        `${who}: password ${String(p.password)} is not a key of passwords`,
+      );
     }
     if (p.contact !== null && typeof p.contact !== 'string') {
       problems.push(`${who}: contact must be a string or null`);
@@ -164,7 +170,9 @@ export function checkManifest(
       const key = roleKey(r.system, r.role);
       const def = roles.get(key);
       if (!def) {
-        problems.push(`${who}: role ${r.system} ${r.role} is not in the catalog`);
+        problems.push(
+          `${who}: role ${r.system} ${r.role} is not in the catalog`,
+        );
         continue;
       }
       if (seenRoles.has(key)) {
@@ -202,6 +210,8 @@ export type StateFields = {
   failedLoginAttempts: number;
   lockedAt: Date | null;
   deletedAt: Date | null;
+  /** Spec 0012: a seed person is never an erased one, so a rerun clears an erasure. */
+  erasedAt: Date | null;
 };
 
 /**
@@ -220,6 +230,7 @@ export function stateFields(
     failedLoginAttempts: 0,
     lockedAt: null,
     deletedAt: null,
+    erasedAt: null,
   };
   switch (state) {
     case 'active':

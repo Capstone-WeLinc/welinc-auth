@@ -43,6 +43,10 @@ import { SignInStepService } from './codes/sign-in-step.service';
 import { AccountEventsService } from './events/account-events.service';
 import { GeoService } from './events/geo.service';
 import { ActivityController } from './events/activity.controller';
+import { PasswordCheckService } from './reauth/password-check.service';
+import { DeletionService } from './deletion/deletion.service';
+import { DeletionController } from './deletion/deletion.controller';
+import { ErasureService } from './deletion/erasure.service';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -79,6 +83,10 @@ import { ActivityController } from './events/activity.controller';
     // Spec 0011: the one writer of account_events
     AccountEventsService,
     GeoService,
+    // Spec 0012: the password recheck, reauth tokens and deletion requests
+    PasswordCheckService,
+    DeletionService,
+    ErasureService,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
@@ -92,6 +100,7 @@ import { ActivityController } from './events/activity.controller';
     TokenController,
     DirectoryController,
     ActivityController,
+    DeletionController,
   ],
 })
 export default class AuthModule {}

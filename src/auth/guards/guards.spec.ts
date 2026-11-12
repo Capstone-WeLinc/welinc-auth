@@ -7,7 +7,6 @@ import {
   jest,
 } from '@jest/globals';
 import {
-  ForbiddenException,
   HttpException,
   UnauthorizedException,
   type ExecutionContext,
@@ -164,7 +163,10 @@ describe('welinc-auth guards', () => {
       findFirst.mockResolvedValueOnce(row({ lockedAt: new Date() }));
       await expect(
         authenticator.authenticate(request(await userToken())),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'ACCOUNT_LOCKED' },
+      });
       findFirst.mockResolvedValueOnce(
         row({ roles: [{ role: 'OPERATIONS', system: SystemType.BMS }] }),
       );

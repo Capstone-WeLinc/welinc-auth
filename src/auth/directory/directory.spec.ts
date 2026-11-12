@@ -1,6 +1,8 @@
 import { HttpException, type ExecutionContext } from '@nestjs/common';
 import { ThrottlerStorageService } from '@nestjs/throttler';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PrismaService } from '../../shared/prisma.service';
 import { testTokenService } from '../testing/test-keys';
 import type { TokenService } from '../tokens/token.service';
@@ -147,6 +149,7 @@ describe('DirectoryUser mapping', () => {
     profilePicture: '/uploads/profiles/u1.jpg',
     isActive: true,
     deletedAt: null,
+    erasedAt: null,
     updatedAt: new Date('2026-11-09T01:02:03.004Z'),
     roles: [
       { system: 'VRMS', role: 'MECHANIC' },
@@ -162,10 +165,10 @@ describe('DirectoryUser mapping', () => {
       name: 'Ana Cruz',
       email: 'ana@welinc.com',
       phone: null,
-      phoneVerified: false,
       picture: '/uploads/profiles/u1.jpg',
       isActive: true,
       deleted: false,
+      erased: false,
       roles: ['CHIEF_MECHANIC', 'MECHANIC'],
       updatedAt: '2026-11-09T01:02:03.004Z',
     });
@@ -185,9 +188,33 @@ describe('DirectoryUser mapping', () => {
     );
     expect(user).toMatchObject({
       deleted: true,
+      // A snapshot from before spec 0012 has no erasedAt: not erased
+      erased: false,
       roles: [],
       phone: null,
       updatedAt: '2026-11-09T01:02:03.004Z',
+    });
+    expect(user).not.toHaveProperty('phoneVerified');
+  });
+
+  // covers: spec 0012 AC-17
+  it('says erased when the snapshot carries erasedAt', () => {
+    const { erasedAt: _unused, ...plain } = row;
+    void _unused;
+    const user = fromSnapshot(
+      {
+        ...plain,
+        name: 'Deleted user',
+        deletedAt: '2026-10-01T05:00:00+00:00',
+        erasedAt: '2026-11-01T05:00:00+00:00',
+        updatedAt: '2026-11-01T05:00:00.000+00:00',
+      },
+      { system: 'VRMS', canSeePhone: false },
+    );
+    expect(user).toMatchObject({
+      erased: true,
+      deleted: true,
+      name: 'Deleted user',
     });
   });
 });
@@ -340,5 +367,21 @@ describe('GET /auth/users (AC-9)', () => {
     const scope: unknown = Reflect.getMetadata(SERVICE_SCOPE_KEY, handler);
     expect(handler).toBeDefined();
     expect(scope).toBeUndefined();
+  });
+});
+
+// Found by /check verify (spec 0012): `SELECT "txid"::text AS "txid" ... ORDER BY "txid"` sorts
+// by the text alias, so '9519' sorts above '10232' and the safe point sticks once ids pass 9999.
+describe('directory.service.ts feed queries', () => {
+  it('order by the real columns, never by the text alias of txid', () => {
+    const source = readFileSync(
+      join(__dirname, 'directory.service.ts'),
+      'utf8',
+    );
+    const orderBys = source.match(/ORDER BY [^`\n]*"txid"[^`\n]*/g) ?? [];
+    expect(orderBys.length).toBeGreaterThanOrEqual(2);
+    for (const clause of orderBys) {
+      expect(clause).toContain('"directory_changes"."txid"');
+    }
   });
 });

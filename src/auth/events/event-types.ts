@@ -33,6 +33,14 @@ export const TYPE_CATEGORY: Record<AccountEventType, AccountEventCategory> = {
   [T.SESSIONS_ENDED]: C.ACCOUNT,
   [T.PASSWORD_CHANGED]: C.ACCOUNT,
   [T.PICTURE_CHANGED]: C.ACCOUNT,
+  // Spec 0012
+  [T.PASSWORD_CONFIRMED]: C.SIGN_IN,
+  [T.PASSWORD_CONFIRM_FAILED]: C.SIGN_IN,
+  [T.DELETION_REQUESTED]: C.ACCOUNT,
+  [T.DELETION_CANCELLED]: C.ACCOUNT,
+  [T.DELETION_REJECTED]: C.ACCOUNT,
+  [T.RESTORED]: C.ACCOUNT,
+  [T.ERASED]: C.ACCOUNT,
 };
 
 /** Why a sign in was refused (AC-1). */
@@ -45,6 +53,18 @@ export const SignInFailReason = {
 } as const;
 export type SignInFailReason =
   (typeof SignInFailReason)[keyof typeof SignInFailReason];
+
+/** Spec 0012, AC-2: what a password recheck was for (the `reason` of PASSWORD_CONFIRM*). */
+export const PasswordCheckReason = {
+  ACCOUNT_DELETION: 'ACCOUNT_DELETION',
+  EMAIL_CHANGE: 'EMAIL_CHANGE',
+  PASSWORD_CHANGE: 'PASSWORD_CHANGE',
+} as const;
+export type PasswordCheckReason =
+  (typeof PasswordCheckReason)[keyof typeof PasswordCheckReason];
+
+/** Spec 0012, AC-10, AC-13: the `reason` of a DELETED that closed a person's own request. */
+export const DELETION_REQUEST_REASON = 'DELETION_REQUEST';
 
 const CATEGORY_LABELS: Record<AccountEventCategory, string> = {
   [C.SIGN_IN]: 'Sign in',
@@ -108,6 +128,19 @@ const TYPE_LABELS: Record<
   },
   [T.PASSWORD_CHANGED]: { label: 'Password changed' },
   [T.PICTURE_CHANGED]: { label: 'Profile picture changed' },
+  [T.PASSWORD_CONFIRMED]: { label: 'Password confirmed' },
+  [T.PASSWORD_CONFIRM_FAILED]: { label: 'Password confirmation failed' },
+  [T.DELETION_REQUESTED]: { label: 'Asked for account deletion' },
+  [T.DELETION_CANCELLED]: { label: 'Cancelled the deletion request' },
+  [T.DELETION_REJECTED]: {
+    label: 'Deletion request rejected',
+    labelAdmin: 'An admin rejected your deletion request',
+  },
+  [T.RESTORED]: {
+    label: 'Account restored',
+    labelAdmin: 'An admin restored your account',
+  },
+  [T.ERASED]: { label: 'Personal data erased' },
 };
 
 /** Every `reason` value: sign in fails, session end reasons and code purposes. */
@@ -132,6 +165,10 @@ const REASON_LABELS: Record<string, string> = {
   [VerificationPurpose.PASSWORD_RESET]: 'Password reset',
   [VerificationPurpose.SIGN_IN]: 'Sign in',
   [VerificationPurpose.EMAIL_CHANGE]: 'Email change',
+  // Spec 0012 (ACCOUNT_LOCKED above doubles as the locked recheck reason)
+  [PasswordCheckReason.ACCOUNT_DELETION]: 'Account deletion',
+  [PasswordCheckReason.PASSWORD_CHANGE]: 'Password change',
+  [DELETION_REQUEST_REASON]: 'The person asked for it',
 };
 
 export type EventCatalog = {

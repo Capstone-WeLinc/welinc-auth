@@ -1,9 +1,4 @@
-import {
-  ForbiddenException,
-  HttpStatus,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
 import { SystemType } from '@prisma/client';
 import type { RoleAssignment } from '../roles/catalog.types';
@@ -149,7 +144,9 @@ export class RequestAuthenticator {
       throw new UnauthorizedException('Invalid session');
     }
     if (user.lockedAt !== null) {
-      throw new ForbiddenException(
+      throw coded(
+        HttpStatus.FORBIDDEN,
+        'ACCOUNT_LOCKED',
         'Account is locked. Contact your Admin to unlock.',
       );
     }

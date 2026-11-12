@@ -17,6 +17,7 @@ import type { MailService } from '../shared/mail.service';
 import type { PrismaService } from '../shared/prisma.service';
 import { AuthService } from './auth.service';
 import { AccountEventsService } from './events/account-events.service';
+import { PasswordCheckService } from './reauth/password-check.service';
 import { noGeo } from './testing/geo.fake';
 import { SessionService } from './sessions/session.service';
 
@@ -95,6 +96,10 @@ function build() {
     new FakeCatalogService(),
     fakeCodes(),
     new AccountEventsService(db as unknown as PrismaService, noGeo),
+    new PasswordCheckService(
+      db as unknown as PrismaService,
+      new AccountEventsService(db as unknown as PrismaService, noGeo),
+    ),
   );
   return { service, db };
 }
@@ -124,11 +129,19 @@ describe('welinc-auth system scoping', () => {
     it('returns only VRMS roles plus the other systems by name', async () => {
       const { service, db } = build();
       db.user.findMany.mockResolvedValue([
-        managedRow([VRMS_MECHANIC, BMS_OPERATIONS, BMS_ADMIN, VMMS_ADMIN]),
-        managedRow([VRMS_MECHANIC]),
+        {
+          ...managedRow([VRMS_MECHANIC, BMS_OPERATIONS, BMS_ADMIN, VMMS_ADMIN]),
+          deletionRequests: [{ id: 'request-1' }],
+        },
+        { ...managedRow([VRMS_MECHANIC]), deletionRequests: [] },
       ]);
 
       const [shared, own] = await service.listUsers({}, vrmsAdmin);
+
+      // Spec 0012, AC-9: an EXISTS on a pending request, never the request itself
+      expect(shared.pendingDeletion).toBe(true);
+      expect(own.pendingDeletion).toBe(false);
+      expect(shared).not.toHaveProperty('deletionRequests');
 
       expect(shared.roles).toEqual([VRMS_MECHANIC]);
       expect(shared.otherSystems).toEqual([SystemType.BMS, SystemType.VMMS]);
