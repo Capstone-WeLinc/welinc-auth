@@ -75,7 +75,10 @@ describe('seedClients', () => {
       allowedRoles: { VMMS: ['ADMIN', 'OPERATIONS'] },
     });
     expect(calls.bms.update).toMatchObject({
-      serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+      serviceScopes: {
+        AUTH: ['directory.read', 'directory.contact'],
+        VMMS: ['fleet.read'],
+      },
       allowedRoles: { BMS: ['ADMIN', 'CUSTOMER_SUPPORT', 'OPERATIONS'] },
     });
     // Suite spec 0014, AC-6: only the VMMS app has shipped

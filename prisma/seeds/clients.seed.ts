@@ -78,7 +78,8 @@ export const CLIENTS: ClientDefinition[] = [
     system: SystemType.BMS,
     grants: SYSTEM_GRANTS,
     userAudiences: ['BMS'],
-    serviceScopes: DIRECTORY,
+    // Suite spec 0014, AC-10: BMS dispatch reads trucks and garages from the VMMS fleet API
+    serviceScopes: { ...DIRECTORY, VMMS: ['fleet.read'] },
     // Suite spec 0014, AC-1: the web app is for office roles; drivers and helpers use bms-mobile
     allowedRoles: { BMS: ['ADMIN', 'CUSTOMER_SUPPORT', 'OPERATIONS'] },
   },

@@ -23,6 +23,7 @@ import {
 } from '@nestjs/throttler';
 import { SystemType } from '@prisma/client';
 import type { Request, Response } from 'express';
+import { countLookupCall } from './lookup-limit';
 import { AuthService, type OptionalCaller } from './auth.service';
 import { DeletionService } from './deletion/deletion.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -136,9 +137,15 @@ export class AuthController {
     return this.authService.listUsers(query, { system: req.user.system });
   }
 
+  // Suite spec 0014, AC-9: 30 a minute per admin, one counter with the cookie route
   @SystemAdmin()
   @Get('users/lookup')
-  lookupUsers(@Query() query: LookupUsersQueryDto, @Req() req: AdminRequest) {
+  async lookupUsers(
+    @Query() query: LookupUsersQueryDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await countLookupCall(this.storage, req.user.sub, res);
     return this.authService.lookupUsers(query.q, actorOf(req));
   }
 
