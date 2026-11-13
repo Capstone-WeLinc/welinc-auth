@@ -31,6 +31,21 @@ const catalogNames = [
   { code: 'CHIEF_MECHANIC', name: 'Chief Mechanic' },
 ];
 
+const webClient = (system: SystemType, allowedRoles: object = {}) => ({
+  id: system.toLowerCase(),
+  kind: 'CONFIDENTIAL',
+  system,
+  webAddress: `https://${system.toLowerCase()}.test`,
+  allowedRoles,
+  appReleased: false,
+  createdAt: new Date(0),
+});
+const WEB_CLIENTS = [
+  webClient(SystemType.BMS),
+  webClient(SystemType.VMMS),
+  webClient(SystemType.VRMS),
+];
+
 function build(held: string[]) {
   const db = {
     userRoleAssignment: {
@@ -39,6 +54,8 @@ function build(held: string[]) {
       ),
     },
     systemRole: { findMany: fn().mockResolvedValue(catalogNames) },
+    // Every system's web client, none limited (suite spec 0014 limits them per test)
+    oAuthClient: { findMany: fn().mockResolvedValue(WEB_CLIENTS) },
   };
   const sessions = {
     settings: { graceSeconds: 30 },
@@ -158,6 +175,26 @@ describe('spec 0007 user.systems on user grants', () => {
     >;
     expect(signed).not.toHaveProperty('systems');
     expect(signed.roles).toEqual([
+      { role: 'MECHANIC', system: SystemType.VMMS },
+    ]);
+  });
+});
+
+// covers: suite spec 0014 AC-4 (user.systems holds web openable systems only)
+describe('spec 0014 user.systems leaves out phone only systems', () => {
+  it('drops VMMS for a mechanic when the vmms web client admits office roles only', async () => {
+    const { service, db } = build([]);
+    db.userRoleAssignment.findMany.mockResolvedValue([
+      { role: 'MECHANIC', system: SystemType.VRMS },
+      { role: 'MECHANIC', system: SystemType.VMMS },
+    ]);
+    db.oAuthClient.findMany.mockResolvedValue([
+      webClient(SystemType.VMMS, { VMMS: ['ADMIN', 'OPERATIONS'] }),
+      webClient(SystemType.VRMS),
+    ]);
+    const answer = await login(service);
+    expect(answer.user.systems).toEqual([SystemType.VRMS]);
+    expect(answer.user.roles).toEqual([
       { role: 'MECHANIC', system: SystemType.VMMS },
     ]);
   });

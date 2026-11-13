@@ -21,6 +21,11 @@ type ClientDefinition = {
    * of that system through. Authoritative: a rerun overwrites a hand edited value.
    */
   allowedRoles?: Partial<Record<SystemType, string[]>>;
+  /**
+   * Suite spec 0014, AC-6: the phone app has shipped, for the portal's phone only state ("on the
+   * mobile app" or "coming to"). Default false. Authoritative like `allowedRoles`.
+   */
+  appReleased?: boolean;
 };
 
 const SYSTEM_GRANTS = [
@@ -62,6 +67,8 @@ export const CLIENTS: ClientDefinition[] = [
     grants: SYSTEM_GRANTS,
     userAudiences: ['VMMS'],
     serviceScopes: DIRECTORY,
+    // Suite spec 0014, AC-1: the web app is for office roles; mechanics use vmms-mobile
+    allowedRoles: { VMMS: ['ADMIN', 'OPERATIONS'] },
   },
   {
     id: 'bms',
@@ -72,6 +79,8 @@ export const CLIENTS: ClientDefinition[] = [
     grants: SYSTEM_GRANTS,
     userAudiences: ['BMS'],
     serviceScopes: DIRECTORY,
+    // Suite spec 0014, AC-1: the web app is for office roles; drivers and helpers use bms-mobile
+    allowedRoles: { BMS: ['ADMIN', 'CUSTOMER_SUPPORT', 'OPERATIONS'] },
   },
   {
     id: 'vmms-mobile',
@@ -85,6 +94,7 @@ export const CLIENTS: ClientDefinition[] = [
       VMMS: ['MECHANIC', 'CHIEF_MECHANIC'],
       VRMS: ['MECHANIC', 'CHIEF_MECHANIC'],
     },
+    appReleased: true,
   },
   {
     // The BMS app for drivers and helpers in the field (spec 0004, AC-18)
@@ -95,6 +105,7 @@ export const CLIENTS: ClientDefinition[] = [
     userAudiences: ['BMS'],
     serviceScopes: {},
     allowedRoles: { BMS: ['DRIVER', 'HELPER'] },
+    appReleased: false,
   },
   {
     id: 'vmms-analytics',
@@ -224,6 +235,7 @@ export async function seedClients(
       userAudiences: client.userAudiences,
       serviceScopes: client.serviceScopes,
       allowedRoles: client.allowedRoles ?? {},
+      appReleased: client.appReleased ?? false,
       ...addressesFor(client, env),
     };
     await prisma.oAuthClient.upsert({

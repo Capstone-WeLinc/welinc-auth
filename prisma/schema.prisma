@@ -453,6 +453,8 @@ model OAuthClient {
   // Spec 0004, AC-18: { "<SYSTEM>": ["<role code>", ...] }. A system missing from it means every
   // role of that system may use this client. Set only by seed:clients
   allowedRoles  Json                 @default("{}") @map("allowed_roles")
+  // Suite spec 0014, AC-6: the phone app has shipped (PUBLIC_NATIVE clients). Set only by seed:clients
+  appReleased   Boolean              @default(false) @map("app_released")
   // { "keys": [public ES256 JWK with kid] }
   jwks          Json?
   isActive      Boolean              @default(true) @map("is_active")

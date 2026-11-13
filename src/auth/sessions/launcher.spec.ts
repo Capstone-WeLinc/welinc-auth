@@ -7,6 +7,9 @@ import {
   LauncherService,
   buildLauncherSystems,
   launcherOrder,
+  webSystemCodes,
+  webSystemsFor,
+  type LauncherClientRow,
 } from './launcher';
 
 // covers: spec 0007 AC-1, AC-2 (the launcher answer), AC-6 (launcher order)
@@ -42,10 +45,36 @@ const CATALOG = [
   },
 ];
 
-const client = (system: SystemType, webAddress: string | null, at = 0) => ({
+const client = (
+  system: SystemType,
+  webAddress: string | null,
+  at = 0,
+  extra: Partial<LauncherClientRow> = {},
+): LauncherClientRow => ({
+  id: system.toLowerCase(),
+  kind: ClientKind.CONFIDENTIAL,
   system,
   webAddress,
+  allowedRoles: {},
+  appReleased: false,
   createdAt: new Date(at),
+  ...extra,
+});
+
+/** A phone app client (suite spec 0014). */
+const app = (
+  id: string,
+  system: SystemType,
+  allowedRoles: Record<string, string[]>,
+  appReleased: boolean,
+): LauncherClientRow => ({
+  id,
+  kind: ClientKind.PUBLIC_NATIVE,
+  system,
+  webAddress: null,
+  allowedRoles,
+  appReleased,
+  createdAt: new Date(0),
 });
 
 describe('launcherOrder', () => {
@@ -158,7 +187,7 @@ describe('LauncherService.answerFor', () => {
 
   function build(
     held: { system: SystemType; role: string }[],
-    clients: ReturnType<typeof client>[],
+    clients: LauncherClientRow[],
     suiteAdmin = false,
   ) {
     const db = {
@@ -210,8 +239,10 @@ describe('LauncherService.answerFor', () => {
     expect(db.oAuthClient.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          kind: ClientKind.CONFIDENTIAL,
           isActive: true,
+          OR: expect.arrayContaining([
+            expect.objectContaining({ kind: ClientKind.CONFIDENTIAL }),
+          ]),
         }),
       }),
     );
@@ -262,5 +293,174 @@ describe('LauncherService.answerFor', () => {
     expect(line).toContain('BMS');
     expect(line).not.toContain('multi.lead');
     warn.mockRestore();
+  });
+});
+
+// covers: suite spec 0014 AC-4, AC-5 (web vs phone only systems)
+describe('spec 0014 the web and phone split', () => {
+  const VMMS_CATALOG = {
+    code: SystemType.VMMS,
+    name: 'Vehicle Maintenance Management System',
+    description: 'Vehicles, maintenance and fleet upkeep',
+    roles: [
+      { code: 'ADMIN', name: 'Admin', sortOrder: 0 },
+      { code: 'OPERATIONS', name: 'Operations', sortOrder: 1 },
+      { code: 'MECHANIC', name: 'Mechanic', sortOrder: 3 },
+    ],
+  };
+  const BMS_CATALOG = {
+    code: SystemType.BMS,
+    name: 'Booking Management System',
+    description: 'Bookings, dispatch and trips',
+    roles: [
+      { code: 'OPERATIONS', name: 'Operations', sortOrder: 1 },
+      { code: 'DRIVER', name: 'Driver', sortOrder: 3 },
+    ],
+  };
+  const catalog = [CATALOG[0], BMS_CATALOG, VMMS_CATALOG];
+  const clients = [
+    client(SystemType.VRMS, 'http://localhost:8001'),
+    client(SystemType.VMMS, 'http://localhost:8002', 0, {
+      allowedRoles: { VMMS: ['ADMIN', 'OPERATIONS'] },
+    }),
+    client(SystemType.BMS, 'http://localhost:8003', 0, {
+      allowedRoles: { BMS: ['ADMIN', 'CUSTOMER_SUPPORT', 'OPERATIONS'] },
+    }),
+    app('vmms-mobile', SystemType.VMMS, { VMMS: ['MECHANIC'] }, true),
+    app('bms-mobile', SystemType.BMS, { BMS: ['DRIVER', 'HELPER'] }, false),
+  ];
+
+  it('puts a mechanic VMMS in mobileSystems with the app and its release flag', () => {
+    const { systems, mobileSystems } = buildLauncherSystems(
+      [
+        { system: SystemType.VRMS, role: 'MECHANIC' },
+        { system: SystemType.VMMS, role: 'MECHANIC' },
+      ],
+      catalog,
+      clients,
+    );
+    expect(systems.map((s) => s.system)).toEqual(['VRMS']);
+    expect(mobileSystems).toEqual([
+      {
+        system: 'VMMS',
+        name: 'Vehicle Maintenance Management System',
+        description: 'Vehicles, maintenance and fleet upkeep',
+        roles: [{ code: 'MECHANIC', name: 'Mechanic' }],
+        app: { clientId: 'vmms-mobile', released: true },
+      },
+    ]);
+  });
+
+  it('keeps a system on the web when one of several roles passes the web client', () => {
+    const { systems, mobileSystems } = buildLauncherSystems(
+      [
+        { system: SystemType.BMS, role: 'DRIVER' },
+        { system: SystemType.BMS, role: 'OPERATIONS' },
+      ],
+      catalog,
+      clients,
+    );
+    expect(systems.map((s) => s.system)).toEqual(['BMS']);
+    expect(systems[0].roles.map((r) => r.code)).toEqual([
+      'OPERATIONS',
+      'DRIVER',
+    ]);
+    expect(mobileSystems).toEqual([]);
+  });
+
+  it('keeps launcher order in mobileSystems and leaves out a role no client admits', () => {
+    const { systems, mobileSystems } = buildLauncherSystems(
+      [
+        { system: SystemType.VMMS, role: 'MECHANIC' },
+        { system: SystemType.BMS, role: 'DRIVER' },
+      ],
+      catalog,
+      clients,
+    );
+    expect(systems).toEqual([]);
+    expect(mobileSystems.map((m) => [m.system, m.app.released])).toEqual([
+      ['BMS', false],
+      ['VMMS', true],
+    ]);
+
+    const none = buildLauncherSystems(
+      [{ system: SystemType.VMMS, role: 'CHIEF_MECHANIC' }],
+      [
+        {
+          ...VMMS_CATALOG,
+          roles: [{ code: 'CHIEF_MECHANIC', name: 'Chief', sortOrder: 2 }],
+        },
+      ],
+      clients,
+    );
+    expect(none.systems).toEqual([]);
+    expect(none.mobileSystems).toEqual([]);
+  });
+
+  it('a system left out of allowedRoles lets every role through on the web', () => {
+    expect(
+      webSystemCodes([{ system: SystemType.VRMS, role: 'MECHANIC' }], clients),
+    ).toEqual(['VRMS']);
+  });
+
+  it('webSystemsFor lists only web openable systems for user.systems', async () => {
+    const db = { oAuthClient: { findMany: fn().mockResolvedValue(clients) } };
+    expect(
+      await webSystemsFor(db as unknown as PrismaService, [
+        { system: SystemType.VRMS, role: 'MECHANIC' },
+        { system: SystemType.VMMS, role: 'MECHANIC' },
+        { system: SystemType.BMS, role: 'OPERATIONS' },
+      ]),
+    ).toEqual(['BMS', 'VRMS']);
+    expect(await webSystemsFor(db as unknown as PrismaService, [])).toEqual([]);
+  });
+
+  function service(
+    held: { system: SystemType; role: string }[],
+    suiteAdmin = false,
+  ) {
+    const db = {
+      suiteAdmin: {
+        findUnique: fn().mockResolvedValue(
+          suiteAdmin ? { userId: 'u1' } : null,
+        ),
+      },
+      userRoleAssignment: { findMany: fn().mockResolvedValue(held) },
+      system: { findMany: fn().mockResolvedValue(catalog) },
+      oAuthClient: { findMany: fn().mockResolvedValue(clients) },
+    };
+    return new LauncherService(db as unknown as PrismaService);
+  }
+  const USER = {
+    id: 'u1',
+    name: 'Vic Mech',
+    email: 'vmms.mech@welinc.com',
+    profilePicture: null,
+  };
+
+  it('answers a phone only person 200 with systems empty, never 403', async () => {
+    const answer = await service([
+      { system: SystemType.VMMS, role: 'MECHANIC' },
+    ]).answerFor(USER);
+    expect(answer.systems).toEqual([]);
+    expect(answer.mobileSystems.map((m) => m.system)).toEqual(['VMMS']);
+  });
+
+  it('answers 403 when the roles pass neither a web nor a phone client', async () => {
+    const error = await service([
+      { system: SystemType.VMMS, role: 'CHIEF_MECHANIC' },
+    ])
+      .answerFor(USER)
+      .catch((e: HttpException) => e);
+    expect((error as HttpException).getStatus()).toBe(403);
+  });
+
+  it('always sends mobileSystems, empty when there is none', async () => {
+    const answer = await service([
+      { system: SystemType.VRMS, role: 'MECHANIC' },
+    ]).answerFor(USER);
+    expect(answer.mobileSystems).toEqual([]);
+    const admin = await service([], true).answerFor(USER);
+    expect(admin).toMatchObject({ systems: [], mobileSystems: [] });
   });
 });

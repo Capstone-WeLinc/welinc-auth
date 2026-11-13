@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ClientKind, type OAuthClient } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
 import { logSafe } from '../clients/client-assertion';
+import { allowedCodes } from '../roles/allowed-roles';
 import {
   hashOpaque,
   isOpaqueShape,
@@ -133,15 +134,12 @@ export class AuthorizeService {
       };
     }
 
-    const role = await this.prisma.userRoleAssignment.findFirst({
-      where: {
-        userId: session.userId,
-        system: request.client.system!,
-        ...liveRoleWhere(),
-      },
-      select: { id: true },
+    const system = request.client.system!;
+    const held = await this.prisma.userRoleAssignment.findMany({
+      where: { userId: session.userId, system, ...liveRoleWhere() },
+      select: { role: true },
     });
-    if (!role) {
+    if (held.length === 0) {
       this.logger.log(
         `authorize denied client=${request.client.id} sid=${session.id} reason=no_system_access`,
       );
@@ -149,6 +147,22 @@ export class AuthorizeService {
         kind: 'redirect',
         location: withParams(request.redirectUri, {
           error: 'access_denied',
+          state: request.state,
+        }),
+      };
+    }
+    // Suite spec 0014, AC-2: roles held there, none of them allowed on this client (a mechanic
+    // opening the VMMS web app). No code; the app's callback sends the person to the portal
+    const allowed = allowedCodes(request.client.allowedRoles, system);
+    if (allowed !== null && !held.some((r) => allowed.includes(r.role))) {
+      this.logger.log(
+        `authorize denied client=${request.client.id} sid=${session.id} reason=app_not_allowed`,
+      );
+      return {
+        kind: 'redirect',
+        location: withParams(request.redirectUri, {
+          error: 'access_denied',
+          error_description: 'APP_NOT_ALLOWED',
           state: request.state,
         }),
       };

@@ -32,7 +32,7 @@ import {
   cutoffReason,
   sessionExpiresAt,
 } from './session.service';
-import { launcherOrder } from './launcher';
+import { webSystemsFor } from './launcher';
 
 /** The user grants answer (spec 0001 section 5), plus the absolute end a web cookie lives to. */
 export type UserTokenAnswer = {
@@ -464,7 +464,7 @@ export class UserGrantsService {
     const allowed = allowedCodes(client.allowedRoles, aud);
     const roles = filterAllowed(held, allowed);
     if (roles.length > 0)
-      return { kind: 'ok', roles, systems: launcherOrder(rows) };
+      return { kind: 'ok', roles, systems: await webSystemsFor(tx, rows) };
 
     // Names in the client's list order, from the catalog
     const named = await tx.systemRole.findMany({

@@ -65,15 +65,22 @@ describe('seedClients', () => {
       // Spec 0013, AC-26: VRMS also reads its permission matrix
       serviceScopes: { AUTH: ['directory.read', 'permissions.read'] },
       allowedRoles: {},
+      appReleased: false,
       webAddress: 'http://localhost:8001',
       redirectUris: ['http://localhost:3000/vrms/session/callback'],
     });
+    // Suite spec 0014, AC-1: the VMMS and BMS web apps admit office roles only
     expect(calls.vmms.update).toMatchObject({
       serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+      allowedRoles: { VMMS: ['ADMIN', 'OPERATIONS'] },
     });
     expect(calls.bms.update).toMatchObject({
       serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+      allowedRoles: { BMS: ['ADMIN', 'CUSTOMER_SUPPORT', 'OPERATIONS'] },
     });
+    // Suite spec 0014, AC-6: only the VMMS app has shipped
+    expect(calls['vmms-mobile'].update).toMatchObject({ appReleased: true });
+    expect(calls['bms-mobile'].update).toMatchObject({ appReleased: false });
     expect(calls['vmms-analytics'].update).toMatchObject({
       kind: 'SERVICE',
       serviceScopes: { AUTH: ['directory.read'] },
