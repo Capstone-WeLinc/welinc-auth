@@ -84,6 +84,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { StartEmailChangeDto } from './dto/email-verification.dto';
 import { coded } from './errors';
+import { DEV_EMAIL_DOMAINS } from '../shared/dev-email-domains';
 import {
   accountLocked,
   countWrongPassword,
@@ -165,13 +166,8 @@ const accountInactive = () =>
     'This account is deactivated. Ask your admin to turn it back on.',
   );
 
-/** Domains a development machine accepts without a DNS lookup. */
-export const DEV_EMAIL_DOMAINS = [
-  'welinc.com',
-  'localhost',
-  'test.com',
-  'example.com',
-];
+// Domains a development machine accepts without a DNS lookup (and logs instead of mailing)
+export { DEV_EMAIL_DOMAINS };
 
 export async function validateEmailDomain(
   email: string,

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Env } from '../config/env';
+import { isDevAddress } from './dev-email-domains';
 
 @Injectable()
 export class MailService {
@@ -34,10 +35,11 @@ export class MailService {
   }
 
   /**
-   * Sends the email, or throws when it can't be sent. Without SMTP it prints the whole email
-   * instead, in development only, so codes can be read locally: the one log allowed to hold a code
-   * or an address (spec 0009, AC-1). The boot check already requires SMTP in production; this
-   * throw is the second guard.
+   * Sends the email, or throws when it can't be sent. In development it prints the whole email
+   * instead when SMTP is off, or when the address is on a made up seed domain (`welinc.com` and the
+   * rest of `DEV_EMAIL_DOMAINS`), so seed accounts get their codes while real addresses still go
+   * through SMTP: the one log allowed to hold a code or an address (spec 0009, AC-1). The boot
+   * check already requires SMTP in production; this throw is the second guard.
    */
   async sendMail(options: {
     to: string;
@@ -47,6 +49,10 @@ export class MailService {
     /** What the log line names instead of the address: `user=<id> purpose=<kind>` (spec 0009, AC-1). */
     tag: string;
   }): Promise<void> {
+    if (!this.production && isDevAddress(options.to)) {
+      this.logFallback(options);
+      return;
+    }
     if (!this.transporter) {
       if (this.production) {
         throw new Error('SMTP is not configured');
