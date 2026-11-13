@@ -25,6 +25,7 @@ import { countPasswordCheck } from '../deletion/deletion.controller';
 import { DeletionService } from '../deletion/deletion.service';
 import { coded } from '../errors';
 import { countFeedCall } from '../events/activity.controller';
+import { countLookupCall } from '../lookup-limit';
 import { AccountEventsService } from '../events/account-events.service';
 import { parseActivityQuery } from '../events/activity-query';
 import { requestMeta } from '../events/request-meta';
@@ -165,12 +166,16 @@ export class AdminAccountsController {
   }
 
   // Declared before users/:id so "lookup" is never read as an id
+  // Suite spec 0014, AC-9: 30 a minute per admin, one counter with the bearer route
   @Get('users/lookup')
-  lookupUsers(@Query() query: AdminLookupQueryDto, @Req() req: AdminRequest) {
-    return this.authService.lookupUsers(
-      query.q,
-      systemScope(req, query.system),
-    );
+  async lookupUsers(
+    @Query() query: AdminLookupQueryDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const scope = systemScope(req, query.system);
+    await countLookupCall(this.storage, scope.id, res);
+    return this.authService.lookupUsers(query.q, scope);
   }
 
   @Get('users/:id')

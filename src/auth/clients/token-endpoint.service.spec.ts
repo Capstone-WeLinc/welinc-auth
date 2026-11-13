@@ -197,6 +197,45 @@ describe('TokenEndpointService', () => {
     expect(logs.join('\n')).not.toContain(assertion);
   });
 
+  // covers: suite spec 0014 AC-10 (a scope on an audience other than AUTH: bms reads the fleet)
+  it('issues bms a fleet.read token for VMMS, and refuses VMMS to a client without it', async () => {
+    const bms = await testClient('bms');
+    rows.bms = {
+      ...bms.row,
+      grants: ['client_credentials'],
+      serviceScopes: {
+        AUTH: ['directory.read', 'directory.contact'],
+        VMMS: ['fleet.read'],
+      },
+    };
+    const answer = await service.grant(
+      await form(bms, { audience: 'VMMS', scope: 'fleet.read' }),
+      'ip',
+    );
+    expect(decodeJwt(answer.access_token)).toMatchObject({
+      aud: 'VMMS',
+      token_use: 'service',
+      scope: 'fleet.read',
+      client_id: 'bms',
+    });
+    expect(
+      await oauth(
+        service.grant(
+          await form(vrms, { audience: 'VMMS', scope: 'fleet.read' }),
+          'ip',
+        ),
+      ),
+    ).toEqual({ status: 400, error: 'invalid_target' });
+    expect(
+      await oauth(
+        service.grant(
+          await form(bms, { audience: 'VMMS', scope: 'directory.read' }),
+          'ip',
+        ),
+      ),
+    ).toEqual({ status: 400, error: 'invalid_scope' });
+  });
+
   it('checks grant, then audience, then scope, all after the assertion', async () => {
     expect(
       await oauth(
