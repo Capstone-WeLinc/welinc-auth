@@ -10,6 +10,7 @@ import * as argon2 from 'argon2';
 import type { PrismaService } from '../shared/prisma.service';
 import type { MailService } from '../shared/mail.service';
 import { AuthService, emailDomain } from './auth.service';
+import { LOCK_MINUTES } from './lockout';
 import { AccountEventsService } from './events/account-events.service';
 import { PasswordCheckService } from './reauth/password-check.service';
 import { noGeo } from './testing/geo.fake';
@@ -102,7 +103,7 @@ describe('AuthService.checkCredentials', () => {
       fakeAdminStanding(),
       fakeAdminAlerts(),
     );
-    return { service, events, account };
+    return { service, events, account, update };
   }
 
   const both = [
@@ -164,6 +165,7 @@ describe('AuthService.checkCredentials', () => {
       code: 'ACCOUNT_LOCKED',
       isLocked: true,
       remainingAttempts: 0,
+      lockedUntil: expect.any(String),
     });
     expect(events).toEqual([
       expect.objectContaining({
@@ -173,14 +175,44 @@ describe('AuthService.checkCredentials', () => {
     ]);
   });
 
-  it('records an inactive account before the password is checked', async () => {
+  // covers: suite spec 0015 AC-4, AC-5 (deactivated: only the right password learns it)
+  it('treats a wrong password on a deactivated account like any wrong password', async () => {
     const { service, events } = build(both, { isActive: false });
     await expect(service.checkCredentials(wrong, meta)).rejects.toThrow(
       'Invalid credentials',
     );
     expect(events).toEqual([
+      expect.objectContaining({ reason: 'WRONG_PASSWORD', attemptsLeft: 4 }),
+    ]);
+  });
+
+  it('tells a deactivated account so after its right password, and records it', async () => {
+    const { service, events } = build(both, { isActive: false });
+    const error = await service
+      .checkCredentials(right, meta)
+      .catch((e: unknown) => e);
+    expect((error as ForbiddenException).getStatus()).toBe(403);
+    expect((error as ForbiddenException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_INACTIVE',
+    });
+    expect(events).toEqual([
       expect.objectContaining({ reason: 'ACCOUNT_INACTIVE' }),
     ]);
+  });
+
+  // covers: suite spec 0015 AC-1, AC-2 (the lock runs out on its own)
+  it('signs in once the lock ran out, and clears it', async () => {
+    const ranOut = new Date(Date.now() - (LOCK_MINUTES + 1) * 60_000);
+    const { service, update } = build(both, {
+      lockedAt: ranOut,
+      failedLoginAttempts: 5,
+    });
+    await expect(service.checkCredentials(right, meta)).resolves.toBeDefined();
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { failedLoginAttempts: 0, lockedAt: null },
+      }),
+    );
   });
 
   it('gives 4 to 1 tries left, then one LOCKED_OUT and no fifth SIGN_IN_FAILED (AC-1)', async () => {

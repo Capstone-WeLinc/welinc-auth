@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { PrismaService } from '../../shared/prisma.service';
-import { accountLocked } from '../reauth/password-check.service';
+import { accountLocked, lockActive } from '../lockout';
 import {
   SESSION_SETTINGS,
   type SessionSettings,
@@ -82,7 +82,9 @@ export class AdminSessionGuard implements CanActivate {
       where: { id: session.userId },
       select: { lockedAt: true },
     });
-    if (account?.lockedAt) throw accountLocked();
+    if (account && lockActive(account.lockedAt)) {
+      throw accountLocked(account.lockedAt);
+    }
 
     const standing = await this.admins.standing(session.userId);
     const codeRequired = this.admins.codeRequired();

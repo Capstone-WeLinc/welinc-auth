@@ -106,7 +106,12 @@ export class AdminController {
     if (!caller.codeRequired) throw codeNotRequired();
     if (caller.codePassed) return { passed: true };
     await countCodeCall(this.storage, 'code-signin', req, res);
-    const step = await this.signInStep.start(caller.user, requestMeta(req));
+    // The admin wording in the email; this route answers no status
+    const step = await this.signInStep.start(
+      caller.user,
+      requestMeta(req),
+      'SIGN_IN_CODE_REQUIRED',
+    );
     return {
       challengeId: step.challengeId,
       email: step.email,

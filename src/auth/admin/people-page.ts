@@ -1,6 +1,7 @@
 import { HttpStatus } from '@nestjs/common';
 import { DeletionRequestStatus, Prisma } from '@prisma/client';
 import { coded } from '../errors';
+import { lockRunning, notLocked } from '../lockout';
 
 // Spec 0013, AC-16, AC-23: the portal's People list. Keyset paged by name then id, filtered by
 // a search and the status the Users pages show (the first that applies: Inactive, Locked,
@@ -66,12 +67,12 @@ export function parsePeopleLimit(raw: string | undefined): number {
 
 /** The status filter as a where clause, in the same order the status is decided. */
 export function statusWhere(status: PeopleStatus): Prisma.UserWhereInput {
-  const usable = { isActive: true, lockedAt: null };
+  const usable = { isActive: true, ...notLocked() };
   switch (status) {
     case 'INACTIVE':
       return { isActive: false };
     case 'LOCKED':
-      return { isActive: true, lockedAt: { not: null } };
+      return { isActive: true, lockedAt: lockRunning() };
     case 'SETUP_PENDING':
       return { ...usable, passwordSet: false };
     case 'EMAIL_NOT_VERIFIED':

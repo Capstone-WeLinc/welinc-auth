@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -85,6 +84,13 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { StartEmailChangeDto } from './dto/email-verification.dto';
 import { coded } from './errors';
+import { DEV_EMAIL_DOMAINS } from '../shared/dev-email-domains';
+import {
+  accountLocked,
+  countWrongPassword,
+  lockActive,
+  MAX_FAILED_ATTEMPTS,
+} from './lockout';
 import { CodeService, type CheckResult } from './codes/code.service';
 import {
   CodeSendLimitError,
@@ -149,21 +155,19 @@ const isUniqueViolation = (error: unknown) =>
   'code' in error &&
   (error as { code?: string }).code === 'P2002';
 
-const accountLocked = () =>
-  new ForbiddenException({
-    code: 'ACCOUNT_LOCKED',
-    message: 'Account is locked. Contact your Admin to unlock.',
-    remainingAttempts: 0,
-    isLocked: true,
-  });
+/**
+ * Suite spec 0015: a deactivated account learns so only after its right password (and a code
+ * step, when one runs). Anyone without the password still gets the generic 401.
+ */
+const accountInactive = () =>
+  coded(
+    HttpStatus.FORBIDDEN,
+    'ACCOUNT_INACTIVE',
+    'This account is deactivated. Ask your admin to turn it back on.',
+  );
 
-/** Domains a development machine accepts without a DNS lookup. */
-export const DEV_EMAIL_DOMAINS = [
-  'welinc.com',
-  'localhost',
-  'test.com',
-  'example.com',
-];
+// Domains a development machine accepts without a DNS lookup (and logs instead of mailing)
+export { DEV_EMAIL_DOMAINS };
 
 export async function validateEmailDomain(
   email: string,
@@ -200,8 +204,6 @@ export async function validateEmailDomain(
     });
   });
 }
-
-const MAX_FAILED_ATTEMPTS = 5;
 
 /** The stable `code` of a coded error body (spec 0001 section 11), if any. */
 function errorCode(error: unknown): string | undefined {
@@ -389,16 +391,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Locked account check — must happen before password validation
-    if (user.lockedAt !== null) {
+    // A running lock is checked before the password, so a locked account tries nothing
+    if (lockActive(user.lockedAt)) {
       await this.recordFail(user.id, SignInFailReason.ACCOUNT_LOCKED, meta);
-      throw accountLocked();
-    }
-
-    // Deactivated account
-    if (!user.isActive) {
-      await this.recordFail(user.id, SignInFailReason.ACCOUNT_INACTIVE, meta);
-      throw new UnauthorizedException('Invalid credentials');
+      throw accountLocked(user.lockedAt);
     }
 
     const isPasswordValid = await argon2.verify(
@@ -424,10 +420,16 @@ export class AuthService {
       });
     }
 
-    // Successful login — reset failure counter
+    // Spec 0015: the right password on a deactivated account says so (the count is left alone)
+    if (!user.isActive) {
+      await this.recordFail(user.id, SignInFailReason.ACCOUNT_INACTIVE, meta);
+      throw accountInactive();
+    }
+
+    // Successful login: reset the counter, and clear a lock that ran out
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { failedLoginAttempts: 0 },
+      data: { failedLoginAttempts: 0, lockedAt: null },
     });
 
     return {
@@ -462,13 +464,14 @@ export class AuthService {
     });
     // A deleted account counts as no account: no row (spec 0011, AC-1)
     if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (user.lockedAt !== null) {
+    if (lockActive(user.lockedAt)) {
       await this.recordFail(user.id, SignInFailReason.ACCOUNT_LOCKED, meta);
-      throw accountLocked();
+      throw accountLocked(user.lockedAt);
     }
+    // The password was right before this step started, so the account may hear why
     if (!user.isActive) {
       await this.recordFail(user.id, SignInFailReason.ACCOUNT_INACTIVE, meta);
-      throw new UnauthorizedException('Invalid credentials');
+      throw accountInactive();
     }
     return {
       id: user.id,
@@ -516,13 +519,9 @@ export class AuthService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const [row] = await tx.$queryRaw<{ attempts: number; locked: boolean }[]>`
-        UPDATE users
-        SET failed_login_attempts = failed_login_attempts + 1,
-            locked_at = CASE WHEN failed_login_attempts + 1 >= ${MAX_FAILED_ATTEMPTS}
-                             THEN now() ELSE locked_at END
-        WHERE id = ${userId}::uuid AND locked_at IS NULL
-        RETURNING failed_login_attempts AS attempts, locked_at IS NOT NULL AS locked`;
+      const [row] = await tx.$queryRaw<{ attempts: number; locked: boolean }[]>(
+        countWrongPassword(userId),
+      );
       if (!row) {
         // Locked by a parallel try between the read and this update
         await fail(tx, SignInFailReason.ACCOUNT_LOCKED);
@@ -675,8 +674,8 @@ export class AuthService {
         },
       });
       assertInSystem(existing, actor.system);
-      // Not locked: nothing changes, so no change row, no recheck and no alert
-      if (existing.lockedAt === null) {
+      // Not locked (or the lock ran out): nothing changes, so no change row, no recheck and no alert
+      if (!lockActive(existing.lockedAt)) {
         return {
           user: await tx.user.findUniqueOrThrow({
             where: { id: userId },
@@ -2272,8 +2271,8 @@ export class AuthService {
       contact: user.contact,
       profilePicture: user.profilePicture,
       isActive: user.isActive,
-      isLocked: user.lockedAt !== null,
-      lockedAt: user.lockedAt ? user.lockedAt.toISOString() : null,
+      isLocked: lockActive(user.lockedAt),
+      lockedAt: lockActive(user.lockedAt) ? user.lockedAt!.toISOString() : null,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
       roles: user.roles.map((role) => ({

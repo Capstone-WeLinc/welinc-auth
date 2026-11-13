@@ -61,7 +61,12 @@ export class SignInStepService {
       meta,
       mail: {
         to: user.email,
-        build: (code) => signInCodeEmail({ name: user.name, code }),
+        build: (code) =>
+          signInCodeEmail({
+            name: user.name,
+            code,
+            admin: status === 'SIGN_IN_CODE_REQUIRED',
+          }),
       },
       // The previous ticket stops working: the live row now carries this one
       onLimited: async (tx, live) => {
@@ -143,6 +148,7 @@ export class SignInStepService {
             email: true,
             isActive: true,
             deletedAt: true,
+            emailVerified: true,
           },
         },
       },
@@ -156,7 +162,9 @@ export class SignInStepService {
       meta,
       mail: {
         to: user.email,
-        build: (code) => signInCodeEmail({ name: user.name, code }),
+        // A verified email here can only be an admin's code (sign in or step up)
+        build: (code) =>
+          signInCodeEmail({ name: user.name, code, admin: user.emailVerified }),
       },
     });
     if (result.kind === 'limited') {

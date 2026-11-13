@@ -44,8 +44,8 @@ export function passwordCodeEmail(input: {
   const action = setup ? 'Set up your password' : 'Reset your password';
   return {
     subject: setup
-      ? `${BRAND} - Account Setup`
-      : `${BRAND} - Password Reset Request`,
+      ? `${BRAND} - Set up your account`
+      : `${BRAND} - Reset your password`,
     text: `${greet(input.name)}
 
 ${intro}
@@ -64,22 +64,37 @@ This code expires in ${lifetime}. If you didn't ask for it, you can ignore this 
   };
 }
 
-/** AC-7: the code that finishes a sign in on an unverified email. */
-export function signInCodeEmail(input: { name: string; code: string }): Email {
+/**
+ * AC-7: the code that finishes a sign in on an unverified email. `admin` (spec 0013, AC-5 and the
+ * step up): the email is already verified, so the code only confirms it's them.
+ */
+export function signInCodeEmail(input: {
+  name: string;
+  code: string;
+  admin?: boolean;
+}): Email {
   const lifetime = lifetimeText(VerificationPurpose.SIGN_IN);
+  const ask = input.admin
+    ? "Type this code to confirm it's you:"
+    : 'Type this code to confirm your email and finish signing in:';
+  const after = input.admin
+    ? `It expires in ${lifetime}. If you didn't just sign in or open Admin, change your password and tell another admin right away.`
+    : `It expires in ${lifetime}. If you didn't just sign in, change your password.`;
   return {
-    subject: `${BRAND} - Your sign in code`,
+    subject: input.admin
+      ? `${BRAND} - Confirm it's you`
+      : `${BRAND} - Your sign in code`,
     text: `${greet(input.name)}
 
-Type this code to confirm your email and finish signing in:
+${ask}
 
 ${input.code}
 
-It expires in ${lifetime}. If you didn't just sign in, change your password.`,
+${after}`,
     html: `${greetHtml(input.name)}
-<p>Type this code to confirm your email and finish signing in:</p>
+<p>${escapeHtml(ask)}</p>
 <h2 style="${CODE_STYLE}">${input.code}</h2>
-<p>It expires in ${lifetime}. If you didn't just sign in, change your password.</p>`,
+<p>${escapeHtml(after)}</p>`,
   };
 }
 
