@@ -371,7 +371,7 @@ describe('AuthService admin writes', () => {
     it('clears the lock and records UNLOCKED', async () => {
       const { service, db } = build();
       db.user.findFirst.mockResolvedValue({
-        lockedAt: NOW,
+        lockedAt: new Date(),
         roles: VRMS_MECHANIC,
       });
       db.user.update.mockResolvedValue(managedRow());
@@ -1040,7 +1040,9 @@ describe('AuthService password links and reset', () => {
       expect(codes.issue.mock.calls[0][0]).toMatchObject({
         purpose: VerificationPurpose.PASSWORD_SETUP,
       });
-      expect(sendMail.mock.calls[0][0].subject).toContain('Account Setup');
+      expect(sendMail.mock.calls[0][0].subject).toContain(
+        'Set up your account',
+      );
       expect(sendMail.mock.calls[0][0].text).toContain('1 hour');
     });
 

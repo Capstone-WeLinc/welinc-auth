@@ -3,6 +3,7 @@
 // writing anything. Other systems copy people.json byte for byte (`npm run seed:check`).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { lockActive } from '../../src/auth/lockout';
 
 export const MANIFEST_PATH = join(__dirname, 'people.json');
 
@@ -258,7 +259,11 @@ export function stateFields(
       return {
         ...active,
         failedLoginAttempts: LOCKED_ATTEMPTS,
-        lockedAt: existing?.lockedAt ?? now,
+        // Suite spec 0015: a lock runs out after LOCK_MINUTES, so a reseed starts a fresh one
+        lockedAt:
+          existing?.lockedAt && lockActive(existing.lockedAt, now)
+            ? existing.lockedAt
+            : now,
       };
     case 'deactivated':
       return { ...active, isActive: false };

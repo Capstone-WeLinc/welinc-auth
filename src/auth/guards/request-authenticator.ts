@@ -6,6 +6,7 @@ import type { RoleAssignment } from '../roles/catalog.types';
 import { PrismaService } from '../../shared/prisma.service';
 import { SessionService } from '../sessions/session.service';
 import { coded } from '../errors';
+import { accountLocked, lockActive } from '../lockout';
 import {
   TokenRejectedError,
   TokenService,
@@ -150,13 +151,7 @@ export class RequestAuthenticator {
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Invalid session');
     }
-    if (user.lockedAt !== null) {
-      throw coded(
-        HttpStatus.FORBIDDEN,
-        'ACCOUNT_LOCKED',
-        'Account is locked. Contact your Admin to unlock.',
-      );
-    }
+    if (lockActive(user.lockedAt)) throw accountLocked(user.lockedAt);
     if (!user.roles.some((assignment) => assignment.system === system)) {
       throw new UnauthorizedException(
         'User does not have access to this system',

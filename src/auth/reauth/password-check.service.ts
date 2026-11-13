@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   HttpStatus,
   Injectable,
   NotFoundException,
@@ -13,9 +12,15 @@ import { AccountEventsService } from '../events/account-events.service';
 import { PasswordCheckReason, SignInFailReason } from '../events/event-types';
 import type { RequestMeta } from '../events/request-meta';
 import { hashOpaque, isOpaqueShape, newOpaque } from '../sessions/opaque';
+import {
+  accountLocked,
+  countWrongPassword,
+  lockActive,
+  MAX_FAILED_ATTEMPTS,
+} from '../lockout';
 
-/** The same 5 try lockout as sign in (spec 0012, AC-2). */
-export const MAX_FAILED_ATTEMPTS = 5;
+// The same lockout as sign in (spec 0012, AC-2; suite spec 0015)
+export { accountLocked, MAX_FAILED_ATTEMPTS } from '../lockout';
 
 /** Contract section 7: a reauth token is good for 5 minutes (AC-1). */
 export const REAUTH_TTL_MS = 5 * 60_000;
@@ -36,17 +41,6 @@ export type PasswordCheck = {
   sid: string;
   meta: RequestMeta;
 };
-
-/** 403 ACCOUNT_LOCKED, the same body as a locked sign in. */
-export const accountLocked = () =>
-  new ForbiddenException({
-    statusCode: HttpStatus.FORBIDDEN,
-    error: 'Forbidden',
-    code: 'ACCOUNT_LOCKED',
-    message: 'Account is locked. Contact your Admin to unlock.',
-    remainingAttempts: 0,
-    isLocked: true,
-  });
 
 /** 400 WRONG_PASSWORD with the tries left before the lock (AC-2). */
 export const wrongPassword = (attemptsLeft: number) =>
@@ -89,18 +83,17 @@ export class PasswordCheckService {
     });
     if (!user) throw new NotFoundException('User not found');
 
-    if (user.lockedAt !== null) {
+    if (lockActive(user.lockedAt)) {
       await this.prisma.$transaction((tx) =>
         this.failed(tx, check, SignInFailReason.ACCOUNT_LOCKED),
       );
-      throw accountLocked();
+      throw accountLocked(user.lockedAt);
     }
 
     // An unusable hash (the erased `!erased`) never matches and never counts
     if (!user.passwordHash.startsWith(ARGON2_PREFIX)) {
-      throw wrongPassword(
-        Math.max(0, MAX_FAILED_ATTEMPTS - user.failedLoginAttempts),
-      );
+      const counted = user.lockedAt === null ? user.failedLoginAttempts : 0;
+      throw wrongPassword(Math.max(0, MAX_FAILED_ATTEMPTS - counted));
     }
 
     let right = false;
@@ -114,7 +107,7 @@ export class PasswordCheckService {
       await this.prisma.$transaction(async (tx) => {
         await tx.user.update({
           where: { id: check.userId },
-          data: { failedLoginAttempts: 0 },
+          data: { failedLoginAttempts: 0, lockedAt: null },
         });
         await this.events.record(tx, {
           userId: check.userId,
@@ -129,13 +122,9 @@ export class PasswordCheckService {
     }
 
     const outcome = await this.prisma.$transaction(async (tx) => {
-      const [row] = await tx.$queryRaw<{ attempts: number; locked: boolean }[]>`
-        UPDATE users
-        SET failed_login_attempts = failed_login_attempts + 1,
-            locked_at = CASE WHEN failed_login_attempts + 1 >= ${MAX_FAILED_ATTEMPTS}
-                             THEN now() ELSE locked_at END
-        WHERE id = ${check.userId}::uuid AND locked_at IS NULL
-        RETURNING failed_login_attempts AS attempts, locked_at IS NOT NULL AS locked`;
+      const [row] = await tx.$queryRaw<{ attempts: number; locked: boolean }[]>(
+        countWrongPassword(check.userId),
+      );
       if (!row) {
         // Locked by a parallel try between the read and this update
         await this.failed(tx, check, SignInFailReason.ACCOUNT_LOCKED);

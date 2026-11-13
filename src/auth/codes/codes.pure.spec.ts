@@ -110,6 +110,15 @@ describe('code emails', () => {
     expect(mail.text).toContain('x<script>@a.com');
   });
 
+  it("words an admin's code as confirming it's them, not their email", () => {
+    const admin = signInCodeEmail({ name: 'P', code: '123456', admin: true });
+    expect(admin.subject).toContain("Confirm it's you");
+    expect(admin.text).not.toContain('confirm your email');
+    expect(admin.html).toContain('123456');
+    const verify = signInCodeEmail({ name: 'P', code: '123456' });
+    expect(verify.text).toContain('confirm your email');
+  });
+
   it('states the lifetime in every code email', () => {
     expect(signInCodeEmail({ name: 'P', code: '123456' }).text).toContain(
       '10 minutes',

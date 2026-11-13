@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../shared/prisma.service';
+import { lockRunning } from '../lockout';
 import { DeletionService } from '../deletion/deletion.service';
 import { CatalogService } from '../roles/catalog.service';
 import {
@@ -270,7 +271,7 @@ export class AdminReportService {
 
     const [locked, setupPending, emailNotVerified] = await Promise.all([
       list(
-        { ...ACTIVE, lockedAt: { not: null } },
+        { ...ACTIVE, lockedAt: lockRunning() },
         [{ lockedAt: 'asc' }, { id: 'asc' }],
         (row) => ({
           id: row.id,

@@ -187,15 +187,21 @@ describe('stateFields', () => {
     });
   });
 
-  it('locks with five attempts and keeps an existing lock time', () => {
+  // covers: suite spec 0015 AC-7 (a lock runs out, so a reseed starts a fresh one)
+  it('locks with five attempts, keeps a running lock time and renews one that ran out', () => {
     expect(stateFields('locked', undefined, now)).toMatchObject({
       failedLoginAttempts: 5,
       lockedAt: now,
     });
+    const running = new Date(now.getTime() - 5 * 60_000);
+    expect(
+      stateFields('locked', { lockedAt: running, deletedAt: null }, now)
+        .lockedAt,
+    ).toBe(running);
     expect(
       stateFields('locked', { lockedAt: earlier, deletedAt: null }, now)
         .lockedAt,
-    ).toBe(earlier);
+    ).toBe(now);
   });
 
   it('changes only isActive for deactivated and emailVerified for unverified', () => {
