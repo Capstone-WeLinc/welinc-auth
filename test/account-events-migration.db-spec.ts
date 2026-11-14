@@ -189,6 +189,16 @@ const ids = {
         [randomUUID(), ids.person, category, type],
       );
 
+    it('holds a 500 character written reason (spec 0013, AC-9)', async () => {
+      const reason = 'r'.repeat(500);
+      const { rows } = await db.query<{ reason: string }>(
+        `INSERT INTO "account_events" ("id", "user_id", "category", "type", "reason")
+         VALUES ($1, $2, 'ACCOUNT', 'TEMP_ACCESS_STARTED', $3) RETURNING "reason"`,
+        [randomUUID(), ids.person, reason],
+      );
+      expect(rows[0].reason).toBe(reason);
+    });
+
     it('refuses a type outside its category', async () => {
       await expect(insert('SIGN_IN', 'CREATED')).rejects.toThrow(
         /account_events_type_category_check/,
