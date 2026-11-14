@@ -399,8 +399,9 @@ model AccountEvent {
   actorId      String?              @map("actor_id") @db.Uuid
   category     AccountEventCategory
   type         AccountEventType
-  // Fail reason, session end reason, or code purpose
-  reason       String?              @db.VarChar(40)
+  // Fail reason, session end reason or code purpose (a catalog code), or the written reason
+  // of a suite admin change, temporary access or recovery (10 to 500 characters)
+  reason       String?              @db.VarChar(500)
   // The system the event belongs to; null means account wide
   system       SystemType?
   // Plain sid, no relation: sessions are purged after SESSION_RETENTION_DAYS
