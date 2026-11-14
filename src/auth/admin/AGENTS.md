@@ -2,7 +2,7 @@
 
 ## Overview
 
-The portal's admin API from suite spec 0013: suite admins, system admins, the admin sign in code (step up), temporary access, recovery and the suite report. Every route here is authenticated by the `welinc_sso` cookie, never a bearer token, and mirrors the older bearer `/auth/users*` routes (still alive for system admins, deprecated, 0013 AC-18). The matrix routes live next door in `src/auth/permissions/admin-permissions.controller.ts` and reuse this folder's guard and scope helpers.
+The portal's admin API from suite spec 0013: suite admins, system admins, the admin sign in code (step up), temporary access, recovery and the suite report. Every route here is authenticated by the `welinc_sso` cookie, never a bearer token, and mirrors the older bearer `/auth/users*` routes (deprecated, still used by system admins). The matrix routes live next door in `src/auth/permissions/admin-permissions.controller.ts` and reuse this folder's guard and scope helpers.
 
 ## Key files
 
@@ -10,22 +10,16 @@ The portal's admin API from suite spec 0013: suite admins, system admins, the ad
 |---|---|
 | `admin-session.guard.ts` | `AdminSessionGuard`: live cookie session, then `ACCOUNT_LOCKED`, then admin standing, then the code. `@AdminRoute(level)` lowers the default `admin-code` level to `admin` (the code routes) or `signed-in` (`GET me`); `portalAdmin(req)` reads the caller it stored |
 | `admin-standing.service.ts` | `AdminStanding` `{ suiteAdmin, adminOf }` from permanent roles only, read per request with no cache; `codeRequired()` reads `ADMIN_SIGN_IN_CODE` |
-| `admin-errors.ts` | Every coded error of the section (`NOT_SIGNED_IN` 401; `NOT_AN_ADMIN`, `ADMIN_CODE_REQUIRED`, `NOT_ADMIN_OF_SYSTEM`, `NOT_SUITE_ADMIN`, `SUITE_ADMIN_SELF_ONLY` 403; the 409s `SUITE_ADMIN_LIMIT`, `ALREADY_SUITE_ADMIN`, `HOLDS_SYSTEM_ROLES`, `NOT_ELIGIBLE`, `LAST_SUITE_ADMIN`, `SELF_ROLE`, `SUITE_ADMIN_NO_ROLES`, `IS_SUITE_ADMIN`, `GRANT_ACTIVE`, `TEMPORARY_ROLE`, `CODE_NOT_REQUIRED`). Some are thrown from `auth.service.ts` |
+| `admin-errors.ts` | Every coded error of the section; some are thrown from `auth.service.ts` |
 | `admin.controller.ts` | `GET me` (standing, code state, temporary grants for suite admins), `POST code` and `POST code/verify` (the step up; the ticket must belong to the caller) |
 | `admin-accounts.controller.ts`, `people-page.ts` | The portal people routes (`users`, `users/lookup`, `users/:id/*`, `activity`, `deletion-requests`) and their `systemScope` and `accountScope` helpers; the People status filter and keyset cursor |
 | `suite-admin.controller.ts`, `suite-admins.service.ts` | Suite admin list, add and remove; temporary grants routes; `GET report` |
-| `temporary-grants.service.ts` | Grant (suite admins, for themselves only), end early, `endInTx`, list, `liveFor`, and the minute expiry sweep |
+| `temporary-grants.service.ts` | Temporary grants: create (suite admins, for themselves only), end (`endInTx`), list, and the minute expiry sweep |
 | `admin-recovery.service.ts` | The `npm run admin:recover` logic (`scripts/admin-recover.ts`), `lockSuiteAdmins`, `reasonProblem` |
 | `admin-alerts.service.ts`, `admin-alert-emails.ts` | Alert emails to active suite admins plus active admins of the systems concerned |
 | `admin-report.service.ts` | The suite admin landing report (0013 AC-19) |
 | `account-sessions.service.ts` | An admin's view and end of one person's sessions |
 | `admin.dto.ts` | Request DTOs for the section |
-
-## Commands
-
-```bash
-npm run admin:recover   # makes a person a suite admin when none can sign in; needs a reason, ends their sessions, never resets a password
-```
 
 ## Conventions
 
@@ -45,7 +39,7 @@ npm run admin:recover   # makes a person a suite admin when none can sign in; ne
 - Nest runs the class level `AdminSessionGuard` before the method level `PortalCsrfGuard`, so a cookie with no session answers 401 before a CSRF 403.
 - Routes in `suite-admin.controller.ts` keep the `admin-code` level, so a system admin who owes the code gets `ADMIN_CODE_REQUIRED` before `NOT_SUITE_ADMIN`.
 - `GET users/lookup` is declared before `GET users/:id` on purpose; keep that order.
-- The expiry sweep runs every minute under `pg_try_advisory_xact_lock(3003013)`, 100 grants a batch, so only one replica works at a time. Role reads elsewhere also expire grants lazily.
+- Grant expiry: a minute sweep (one replica at a time) plus `roles/live-roles.ts`, which leaves out expired grants on every role read; a new `user_roles` read must go through it.
 - `@SystemAdmin()` on the bearer routes (`guards/system-admin.guard.ts`) enforces the same code, so the deprecated routes need it too.
 - Tests live outside the folder: `auth.service.admin.spec.ts`, `guards/guards.spec.ts`, `sessions/sso.controller.spec.ts`, `permissions/matrix.service.spec.ts`, with fakes in `testing/admin.fake.ts`.
 
