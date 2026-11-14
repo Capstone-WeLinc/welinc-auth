@@ -1,5 +1,8 @@
 // `npm run admin:recover -- --email <address> --reason "<text>"` (spec 0013, AC-12): makes an
 // account a suite admin again when nobody can sign in as one. Run it in the auth container shell.
+// `npm run admin:recover -- --create --email <address> --name "<full name>" --reason "<text>"`
+// (AC-12b): makes the first suite admin of an empty database and mails them a setup code. Flags
+// only, so a Container Apps job can run it (VRMS spec 0008, AC-15).
 // It boots the app's services without the web server, so the rules match the routes exactly.
 import 'dotenv/config';
 import { hostname, userInfo } from 'node:os';
@@ -11,8 +14,10 @@ import {
   RecoveryRefused,
 } from '../src/auth/admin/admin-recovery.service';
 
-const USAGE =
-  'Usage: npm run admin:recover -- --email <address> --reason "<why, 10 to 500 characters>"';
+const USAGE = [
+  'Usage: npm run admin:recover -- --email <address> --reason "<why, 10 to 500 characters>"',
+  '   or: npm run admin:recover -- --create --email <address> --name "<full name>" --reason "<why>"',
+].join('\n');
 
 function arg(name: string): string | undefined {
   const at = process.argv.indexOf(`--${name}`);
@@ -31,7 +36,9 @@ function osUser(): string {
 async function main(): Promise<number> {
   const email = arg('email');
   const reason = arg('reason');
-  if (!email || !reason) {
+  const create = process.argv.includes('--create');
+  const name = arg('name');
+  if (!email || !reason || (create && !name)) {
     console.error(USAGE);
     return 1;
   }
@@ -39,6 +46,22 @@ async function main(): Promise<number> {
     logger: ['error', 'warn'],
   });
   try {
+    if (create) {
+      const made = await app.get(AdminRecoveryService).create({
+        email,
+        name: name!,
+        reason,
+        host: hostname(),
+        osUser: osUser(),
+      });
+      console.log(`${made.name} (${made.email}) is the first suite admin.`);
+      console.log(
+        made.setupEmailSent
+          ? 'A setup code was emailed. Using it in the portal verifies the email and sets the password.'
+          : 'The setup code could not be sent (see the log). Use Forgot password in the portal once mail works.',
+      );
+      return 0;
+    }
     const result = await app.get(AdminRecoveryService).recover({
       email,
       reason,

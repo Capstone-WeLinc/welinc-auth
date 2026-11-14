@@ -84,6 +84,8 @@ export const envSchema = z.object({
   /** The portal: setup and reset links, and the one Origin the SSO cookie routes accept. */
   PORTAL_URL: url,
   DATABASE_URL: required,
+  /** The `pg.Pool` size (VRMS spec 0008, AC-21): 3 when hosted, where a server has about 35. */
+  DB_POOL_MAX: whole(1, 50, 5),
 
   // Tokens (spec 0002)
   /** An identifier compared character for character, never fetched, so not held to the URL rules. */

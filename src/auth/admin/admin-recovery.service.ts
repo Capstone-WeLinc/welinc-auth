@@ -1,5 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AccountEventType, Prisma, SessionEndReason } from '@prisma/client';
+import * as argon2 from 'argon2';
+import * as crypto from 'crypto';
+import type { Env } from '../../config/env';
+import { AuthService, validateEmailDomain } from '../auth.service';
 import { PrismaService } from '../../shared/prisma.service';
 import { AccountEventsService } from '../events/account-events.service';
 import { SessionService } from '../sessions/session.service';
@@ -42,6 +47,19 @@ export type RecoveryResult = {
   sessionsEnded: number;
 };
 
+export type CreateInput = RecoveryInput & { name: string };
+
+export type CreateResult = {
+  userId: string;
+  name: string;
+  email: string;
+  /** False when the setup code could not be sent (the limits or the mail failed). */
+  setupEmailSent: boolean;
+};
+
+/** `users.name` is `varchar(100)`. */
+const NAME_MAX = 100;
+
 /** A refusal: the script prints it and exits 1, nothing written. */
 export class RecoveryRefused extends Error {}
 
@@ -69,7 +87,104 @@ export class AdminRecoveryService {
     private readonly sessions: SessionService,
     private readonly events: AccountEventsService,
     private readonly alerts: AdminAlertsService,
+    private readonly auth: AuthService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
+
+  /**
+   * Suite spec 0013, AC-12b: `admin:recover --create`, the first suite admin of a database with
+   * nobody in it (a new hosted production, VRMS spec 0008 AC-15). Runs only while no suite admin
+   * exists. One transaction: the account (no roles, no password, email not verified), the suite
+   * admin row (granter null), `ADMIN_RECOVERY` and `SUITE_ADMIN_ACTIONED`. After the commit the
+   * setup code goes to the address; using it verifies the email and sets the password. No AC-13
+   * alert: the only suite admin is the person just made, and nobody else holds an admin role yet.
+   */
+  async create(input: CreateInput): Promise<CreateResult> {
+    const problem = reasonProblem(input.reason);
+    if (problem) throw new RecoveryRefused(problem);
+    const reason = input.reason.trim();
+    const name = input.name.trim();
+    if (name.length === 0 || name.length > NAME_MAX) {
+      throw new RecoveryRefused(`the name must be 1 to ${NAME_MAX} characters`);
+    }
+    const email = input.email.trim().toLowerCase();
+    const production =
+      this.config.get('NODE_ENV', { infer: true }) === 'production';
+    try {
+      await validateEmailDomain(email, production);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw new RecoveryRefused(
+          `${email} can't receive mail (${error.message}), so the setup code would never arrive`,
+        );
+      }
+      throw error;
+    }
+    // Nobody knows this password: the setup code is the only way in (spec 0009, AC-15)
+    const passwordHash = await argon2.hash(
+      crypto.randomBytes(32).toString('hex'),
+    );
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      await lockSuiteAdmins(tx);
+      if ((await tx.suiteAdmin.count()) > 0) {
+        throw new RecoveryRefused(
+          'a suite admin exists already; --create is only for a database with none. Use the plain form',
+        );
+      }
+      const existing = await tx.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new RecoveryRefused(
+          `an account with the email ${email} exists already; use the plain form without --create`,
+        );
+      }
+      const created = await tx.user.create({
+        data: {
+          name,
+          email,
+          passwordHash,
+          passwordSet: false,
+          emailVerified: false,
+          isActive: true,
+        },
+        select: { id: true, name: true, email: true },
+      });
+      await tx.suiteAdmin.create({
+        data: { userId: created.id, grantedById: null, reason },
+      });
+      await this.events.record(tx, {
+        userId: created.id,
+        actorId: null,
+        type: AccountEventType.ADMIN_RECOVERY,
+        reason,
+        newValue: JSON.stringify({
+          host: input.host,
+          osUser: input.osUser,
+          created: true,
+        }),
+      });
+      await this.events.record(tx, {
+        userId: created.id,
+        actorId: null,
+        type: AccountEventType.SUITE_ADMIN_ACTIONED,
+        reason,
+      });
+      return created;
+    });
+    this.logger.log(
+      `admin recovery user=${user.id} created=true host=${input.host}`,
+    );
+    const setupEmailSent = await this.auth.sendSetupCode(user);
+    return {
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+      setupEmailSent,
+    };
+  }
 
   async recover(input: RecoveryInput): Promise<RecoveryResult> {
     const problem = reasonProblem(input.reason);

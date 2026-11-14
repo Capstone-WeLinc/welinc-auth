@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { join } from 'path';
+import { resolve } from 'path';
 import type { ServerResponse } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
@@ -30,7 +30,8 @@ async function bootstrap() {
   // The portal's SSO cookie (spec 0003, AC-11); unsigned, it holds an opaque handle
   app.use(cookieParser());
 
-  app.useStaticAssets(join(__dirname, '..', 'uploads'), {
+  // The same folder the profile upload writes to (relative to the working directory, /app)
+  app.useStaticAssets(resolve('uploads'), {
     prefix: '/uploads/',
     setHeaders: (res: ServerResponse) => {
       res.setHeader('Cache-Control', 'public, max-age=86400');
