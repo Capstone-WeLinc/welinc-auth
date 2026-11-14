@@ -55,10 +55,15 @@ async function main(): Promise<number> {
         osUser: osUser(),
       });
       console.log(`${made.name} (${made.email}) is the first suite admin.`);
+      if (!made.setupEmailSent) {
+        // AC-12b: the account stays made, but the job fails so the deploy shows mail is broken
+        console.error(
+          'The setup code could not be sent (see the log). Fix mail, then use Forgot password in the portal. A second --create refuses, since a suite admin exists now.',
+        );
+        return 1;
+      }
       console.log(
-        made.setupEmailSent
-          ? 'A setup code was emailed. Using it in the portal verifies the email and sets the password.'
-          : 'The setup code could not be sent (see the log). Use Forgot password in the portal once mail works.',
+        'A setup code was emailed. Using it in the portal verifies the email and sets the password.',
       );
       return 0;
     }

@@ -149,5 +149,15 @@ const where = { host: 'job-host', osUser: 'node' };
       );
       expect(await prisma.suiteAdmin.count()).toBe(0);
     });
+
+    it('keeps the account made when the setup code fails, and says so', async () => {
+      // The script exits 1 on this result (AC-12b); the person uses Forgot password later
+      sendSetupCode.mockResolvedValueOnce(false);
+      const made = await create('mail.down@welinc.com', 'Mail Down');
+      expect(made.setupEmailSent).toBe(false);
+      expect(
+        await prisma.suiteAdmin.findUnique({ where: { userId: made.userId } }),
+      ).not.toBeNull();
+    });
   },
 );
