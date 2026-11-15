@@ -26,8 +26,7 @@ export type AuthorizeRequest = {
 
 /** Where `/auth/authorize` sends the browser, or the error page it shows instead. */
 export type AuthorizeResult =
-  | { kind: 'redirect'; location: string }
-  | { kind: 'error'; message: string };
+  { kind: 'redirect'; location: string } | { kind: 'error'; message: string };
 
 function single(query: Record<string, unknown>, name: string): string | null {
   const value = query[name];

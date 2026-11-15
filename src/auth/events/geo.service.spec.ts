@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unnecessary-type-assertion -- test doubles */
+/* eslint-disable @typescript-eslint/require-await -- test doubles */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
 import maxmind from 'maxmind';

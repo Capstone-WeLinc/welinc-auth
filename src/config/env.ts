@@ -198,9 +198,7 @@ function productionIssues(raw: Record<string, unknown>): string[] {
 }
 
 type NumberName =
-  | 'ACCESS_TOKEN_MINUTES'
-  | 'WEB_SESSION_IDLE_MINUTES'
-  | 'WEB_SESSION_MAX_HOURS';
+  'ACCESS_TOKEN_MINUTES' | 'WEB_SESSION_IDLE_MINUTES' | 'WEB_SESSION_MAX_HOURS';
 
 /** Session limits that only make sense together. Skipped for a value that failed its own rule. */
 function crossIssues(raw: Record<string, unknown>): string[] {

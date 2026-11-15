@@ -12,8 +12,7 @@ import { CodeService } from './code.service';
  * portal sign in (spec 0013, AC-5). The ticket is the same either way and carries no admin flag.
  */
 export type SignInStepStatus =
-  | 'EMAIL_VERIFICATION_REQUIRED'
-  | 'SIGN_IN_CODE_REQUIRED';
+  'EMAIL_VERIFICATION_REQUIRED' | 'SIGN_IN_CODE_REQUIRED';
 
 /** The `/auth/login` and `/auth/mobile/login` answer when a code is needed (AC-7, AC-11). */
 export type EmailVerificationStep = {

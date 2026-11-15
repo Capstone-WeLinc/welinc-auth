@@ -21,6 +21,10 @@ updates:
       # The types follow the Node version we run (24, from .nvmrc), not the newest Node
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # 0.45 dropped the prebuilt binary for Intel Macs (darwin-x64), so npm install has to
+      # compile it and fails on a Mac without full C++ build tools; stay on 0.44
+      - dependency-name: "argon2"
+        versions: [">=0.45.0"]
   # Keeps actions/checkout and actions/setup-node current in ci.yml
   - package-ecosystem: github-actions
     directory: /

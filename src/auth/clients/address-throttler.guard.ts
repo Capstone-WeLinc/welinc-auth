@@ -18,8 +18,7 @@ export class AddressThrottlerGuard extends ThrottlerGuard {
    */
   protected shouldSkip(context: ExecutionContext): Promise<boolean> {
     const body = context.switchToHttp().getRequest<Request>().body as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     return Promise.resolve(typeof body?.['client_assertion'] === 'string');
   }
 

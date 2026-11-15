@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unnecessary-type-assertion -- test doubles */
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars -- test doubles */
 import { describe, expect, it, jest } from '@jest/globals';
 import type { ThrottlerStorage } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
