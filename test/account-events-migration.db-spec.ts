@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import { dropTestDatabase } from './drop-test-database';
 
 // Spec 0011, AC-8 and AC-10: the account events migration against a real database. It makes a
 // throwaway database, applies every migration before 0011, inserts user_changes rows of each
@@ -103,7 +104,7 @@ const ids = {
     afterAll(async () => {
       await db?.end();
       if (admin) {
-        await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+        await dropTestDatabase(admin, dbName);
         await admin.end();
       }
     });

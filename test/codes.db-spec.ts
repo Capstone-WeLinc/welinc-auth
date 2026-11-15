@@ -20,6 +20,7 @@ import { noGeo } from '../src/auth/testing/geo.fake';
 import { MailFailedError } from '../src/auth/codes/code-errors';
 import type { MailService } from '../src/shared/mail.service';
 import type { PrismaService } from '../src/shared/prisma.service';
+import { dropTestDatabase } from './drop-test-database';
 
 // Suite spec 0009, AC-1 to AC-5: the code service against a real database, since its rules live
 // in row locks, transactions and timestamps. A throwaway database gets every migration; each test
@@ -110,7 +111,7 @@ const MINUTE = 60_000;
   afterAll(async () => {
     await prisma?.$disconnect();
     await pool?.end();
-    await admin?.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+    if (admin) await dropTestDatabase(admin, dbName);
     await admin?.end();
   });
 

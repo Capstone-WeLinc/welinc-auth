@@ -13,6 +13,7 @@ import { SessionSweeper } from '../src/auth/sessions/session-sweeper';
 import type { SessionSettings } from '../src/auth/sessions/session-config';
 import { noGeo } from '../src/auth/testing/geo.fake';
 import type { PrismaService } from '../src/shared/prisma.service';
+import { dropTestDatabase } from './drop-test-database';
 
 // Spec 0011, AC-4 and AC-9 against a real database: the hourly sweep deletes only non ACCOUNT
 // events past retention, through the append only trigger, and ends idle sessions with one
@@ -81,7 +82,7 @@ const DAY = 86_400_000;
     await prisma?.$disconnect();
     await pool?.end();
     if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+      await dropTestDatabase(admin, dbName);
       await admin.end();
     }
   });

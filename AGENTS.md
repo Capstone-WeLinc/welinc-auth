@@ -43,7 +43,7 @@ npm run build
 npm run env:check    # checks the environment without starting the app (after a build); exits 1 with the list
 npm run test         # Jest unit tests
 npm run test:e2e
-npm run test:db      # migration tests on a throwaway database; locally: docker exec welinc_auth_service npm run test:db
+npm run test:db      # migration tests on a throwaway database; locally: docker exec welinc_auth_service npm run test:db (CI runs them too, the `db` job)
 npm run seed         # upserts the people.json roster, then the clients; --reset (local only) removes every user first
 npm run seed:check -- <path>  # does a system's copy of people.json match the manifest
 npm run studio       # Prisma Studio on 5555

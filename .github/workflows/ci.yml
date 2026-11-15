@@ -18,15 +18,46 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # Fails on a known high or critical hole in what ships; dev tools are left out
+      - run: npm audit --omit=dev --audit-level=high
       # The Prisma client must exist before lint and build can see its types.
       - run: npx prisma generate
       # lint:ci checks only. npm run lint would fix files in place.
       - run: npm run lint:ci
       - run: npm run build
       - run: npm test
+
+  # The tests in test/*.db-spec.ts: each one makes its own throwaway database on this server and
+  # runs every migration into it, so rules that live in row locks and transactions get checked.
+  db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run test:db

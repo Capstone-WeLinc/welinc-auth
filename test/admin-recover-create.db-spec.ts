@@ -12,6 +12,7 @@ import {
 import { AccountEventsService } from '../src/auth/events/account-events.service';
 import { noGeo } from '../src/auth/testing/geo.fake';
 import type { PrismaService } from '../src/shared/prisma.service';
+import { dropTestDatabase } from './drop-test-database';
 
 // Suite spec 0013, AC-12b (from VRMS spec 0008, AC-15): `admin:recover --create` against a real
 // database, the first suite admin of a hosted production that starts with nobody in it. It makes
@@ -71,7 +72,7 @@ const where = { host: 'job-host', osUser: 'node' };
     afterAll(async () => {
       await prisma?.$disconnect();
       await pool?.end();
-      await admin?.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+      if (admin) await dropTestDatabase(admin, dbName);
       await admin?.end();
     });
 
