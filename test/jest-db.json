@@ -15,6 +15,7 @@
       }
     ]
   },
+  "transformIgnorePatterns": ["/node_modules/(?!jose/)"],
   "testEnvironment": "node",
   "testTimeout": 60000
 }

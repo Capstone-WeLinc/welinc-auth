@@ -1,3 +1,8 @@
+# Hosted image (VRMS spec 0008). Two targets from one build:
+#   docker build -f Dockerfile.prod .                 the runner (the default, last stage)
+#   docker build -f Dockerfile.prod --target seed .   the full source image every job runs from
+#                                                     (migrations, seeds, admin:recover)
+
 FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
@@ -5,14 +10,34 @@ RUN npm ci
 COPY . .
 RUN npx prisma generate
 RUN npm run build
+# Spec 0011: the DB-IP Lite location files (CC BY 4.0). --soft: a failed download leaves an
+# empty geo/ and places stay empty. Rebuild the image monthly to refresh them.
+RUN npm run geo:fetch -- --soft
+
+# Jobs: ts-node needs src/, scripts/, prisma/, tsconfig.json and prisma.config.ts, and
+# env:check reads dist/. Started with a command, so the default below only checks the settings.
+FROM builder AS seed
+ENV NODE_ENV=production
+RUN chown -R node:node /app
+USER node
+CMD ["npm", "run", "env:check"]
+
+FROM builder AS prod-deps
+RUN npm prune --omit=dev
 
 FROM node:24-alpine AS runner
 WORKDIR /app
 # Spec 0010: the boot check holds a hosted build to the production rules
 ENV NODE_ENV=production
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/prisma ./prisma
+ENV PORT=3001
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
-EXPOSE 3000
-CMD ["node", "dist/main"]
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
+COPY --from=builder /app/geo ./geo
+# Profile pictures; hosted, an Azure Files share is mounted here (AC-14)
+RUN mkdir -p uploads && chown node:node uploads
+USER node
+EXPOSE 3001
+CMD ["node", "dist/src/main"]

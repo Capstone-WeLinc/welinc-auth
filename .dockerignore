@@ -1,4 +1,9 @@
 node_modules
 dist
-.env
+coverage
+uploads
 geo
+.git
+.env
+.env.*
+!.env.example

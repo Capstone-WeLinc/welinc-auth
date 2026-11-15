@@ -1078,6 +1078,18 @@ export class AuthService {
   }
 
   /**
+   * Suite spec 0013, AC-12b: the setup code for an account made outside the admin routes (the
+   * `admin:recover --create` bootstrap). True when sent.
+   */
+  sendSetupCode(user: {
+    id: string;
+    name: string;
+    email: string;
+  }): Promise<boolean> {
+    return this.trySendPasswordCode(user, VerificationPurpose.PASSWORD_SETUP);
+  }
+
+  /**
    * Issues a setup or reset code and emails it. True when sent; false when the limits refused it
    * or the email failed (both already logged without the address).
    */
