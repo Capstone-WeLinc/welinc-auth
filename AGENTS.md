@@ -78,6 +78,7 @@ npx prisma migrate dev   # creates the migration folder; ask before running
 
 ## Gotchas
 
+- `argon2` stays on 0.44 (`dependabot.yml` skips 0.45 and up): 0.45 ships no prebuilt binary for Intel Macs, so `npm install` has to compile it and fails on a Mac without full C++ build tools.
 - There is no `JWT_SECRET`. A missing or bad `AUTH_SIGNING_KEYS` stops startup; run `npm run keys:dev` once locally. `AUTH_ISSUER` must be the same string in every service, or every check fails.
 - In development, mail to an address on `DEV_EMAIL_DOMAINS` (`src/shared/dev-email-domains.ts`: `welinc.com`, `localhost`, `test.com`, `example.com`) is printed to the log, never sent, even with `SMTP_*` set; real addresses still use SMTP. Read a seed account's code with `docker logs welinc_auth_service`.
 - The right password on a deactivated account answers 403 `ACCOUNT_INACTIVE`; a wrong one stays the generic 401, so an inactive account is never revealed without its password.
