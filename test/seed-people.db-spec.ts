@@ -12,6 +12,7 @@ import {
   SeedConflictError,
   seedPeople,
 } from '../prisma/seeds/users.seed';
+import { dropTestDatabase } from './drop-test-database';
 
 // Spec 0006, AC-7, AC-8 and AC-9: the people seed against a real database. It makes a throwaway
 // database on the server DATABASE_URL points at, applies every migration, then runs the seed's
@@ -100,7 +101,7 @@ const hashes = new Map([['admin', 'hash-for-tests']]);
     afterAll(async () => {
       await prisma?.$disconnect();
       await pool?.end();
-      await admin?.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+      if (admin) await dropTestDatabase(admin, dbName);
       await admin?.end();
     });
 

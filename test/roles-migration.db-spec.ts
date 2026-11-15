@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import { dropTestDatabase } from './drop-test-database';
 
 // Spec 0004, AC-7 and AC-8: the roles per system migration against a real database. It makes a
 // throwaway database on the server DATABASE_URL points at, applies every migration before 0004,
@@ -87,7 +88,7 @@ type RoleRow = { user_id: string; system: string; role: string };
     afterAll(async () => {
       await db?.end();
       if (admin) {
-        await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+        await dropTestDatabase(admin, dbName);
         await admin.end();
       }
     });

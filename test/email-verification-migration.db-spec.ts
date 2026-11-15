@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import { dropTestDatabase } from './drop-test-database';
 
 // Spec 0009, AC-1 and AC-16: the email verification migration against a real database. It makes
 // a throwaway database, applies every migration before 0009, inserts users in each setup state,
@@ -85,7 +86,7 @@ const ids = {
     afterAll(async () => {
       await db?.end();
       if (admin) {
-        await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+        await dropTestDatabase(admin, dbName);
         await admin.end();
       }
     });

@@ -13,6 +13,7 @@ import { AccountEventsService } from '../src/auth/events/account-events.service'
 import { noGeo } from '../src/auth/testing/geo.fake';
 import type { MailService } from '../src/shared/mail.service';
 import type { PrismaService } from '../src/shared/prisma.service';
+import { dropTestDatabase } from './drop-test-database';
 
 // Spec 0012, AC-15 to AC-19 against a real database: the erasure transaction, the narrow
 // account_events trigger exception, the directory feed rewrite and the one pending index.
@@ -91,7 +92,7 @@ const GRACE_DAYS = 30;
     await prisma?.$disconnect();
     await pool?.end();
     if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+      await dropTestDatabase(admin, dbName);
       await admin.end();
     }
   });
