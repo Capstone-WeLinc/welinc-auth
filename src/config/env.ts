@@ -68,6 +68,8 @@ function isOrigin(value: string): boolean {
   return URL.canParse(value) && new URL(value).origin === value;
 }
 
+export const SENTRY_ENVIRONMENTS = ['staging', 'production'] as const;
+
 export const envSchema = z.object({
   NODE_ENV: z.preprocess(
     blank,
@@ -134,6 +136,16 @@ export const envSchema = z.object({
     blank,
     z.string().trim().default('WeLinc Logistics <no-reply@welinc.com>'),
   ),
+
+  // Error monitoring (VRMS spec 0025): blank DSN means off; the pairing rules are in sentryIssues
+  SENTRY_DSN: optional(httpUrl),
+  SENTRY_ENVIRONMENT: optional(
+    z.enum(SENTRY_ENVIRONMENTS, { error: 'must be staging or production' }),
+  ),
+  /** The commit SHA, baked into the hosted image from GIT_SHA (spec 0008). */
+  SENTRY_RELEASE: optional(z.string().trim()),
+  /** Staging only: POST /auth/admin/debug/sentry-test. Refused with SENTRY_ENVIRONMENT=production. */
+  SENTRY_TEST_ROUTES: flag,
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -228,6 +240,27 @@ function crossIssues(raw: Record<string, unknown>): string[] {
   return lines;
 }
 
+/** VRMS spec 0025, AC-15: the Sentry pairing rules, on the raw values like the production rules. */
+function sentryIssues(raw: Record<string, unknown>): string[] {
+  const environment = text(raw, 'SENTRY_ENVIRONMENT');
+  const lines: string[] = [];
+  if (
+    text(raw, 'SENTRY_DSN') &&
+    !SENTRY_ENVIRONMENTS.some((name) => name === environment)
+  ) {
+    lines.push(
+      'SENTRY_ENVIRONMENT: must be staging or production when SENTRY_DSN is set',
+    );
+  }
+  if (
+    text(raw, 'SENTRY_TEST_ROUTES') === 'true' &&
+    environment === 'production'
+  ) {
+    lines.push('SENTRY_TEST_ROUTES: must not be true in production');
+  }
+  return lines;
+}
+
 /** ConfigModule's validate hook. Throws one Error listing every problem; never includes a value. */
 export function validateEnv(raw: Record<string, unknown>): Env {
   const result = envSchema.safeParse(raw);
@@ -237,6 +270,7 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       : result.error.issues.map((i) => `${String(i.path[0])}: ${i.message}`)),
     ...crossIssues(raw),
     ...productionIssues(raw),
+    ...sentryIssues(raw),
   ];
   if (lines.length) {
     const unique = [...new Set(lines)];
@@ -249,18 +283,51 @@ export function validateEnv(raw: Record<string, unknown>): Env {
 export function envWarnings(
   get: <K extends keyof Env>(key: K) => Env[K],
 ): string[] {
+  const lines: string[] = [];
   const missing = SMTP_NAMES.filter((name) => !get(name));
   if (missing.length === SMTP_NAMES.length) {
-    return [
+    lines.push(
       'Mail is off: SMTP_HOST, SMTP_USER and SMTP_PASS are not set, so emails are logged instead of sent',
-    ];
-  }
-  if (missing.length) {
-    return [
+    );
+  } else if (missing.length) {
+    lines.push(
       `Mail is off: SMTP is only partly set, missing ${missing.join(', ')}, so emails are logged instead of sent`,
-    ];
+    );
   }
-  return [];
+  // VRMS spec 0025, AC-15
+  if (get('SENTRY_ENVIRONMENT') === 'production' && !get('SENTRY_DSN')) {
+    lines.push(
+      'Error monitoring is off: SENTRY_DSN is not set, so production errors reach no one',
+    );
+  }
+  return lines;
+}
+
+/** What `src/instrument.ts` needs, read before Nest starts; null means monitoring stays off. */
+export type SentrySettings = {
+  dsn: string;
+  environment: (typeof SENTRY_ENVIRONMENTS)[number];
+  release?: string;
+};
+
+/**
+ * VRMS spec 0025, AC-14: Sentry starts before Nest, so before `validateEnv`. Anything short of a
+ * valid DSN plus environment leaves it off here, and the boot check then names the problem.
+ */
+export function sentrySettings(
+  raw: Record<string, unknown> = process.env,
+): SentrySettings | null {
+  const parsed = envSchema
+    .pick({ SENTRY_DSN: true, SENTRY_ENVIRONMENT: true, SENTRY_RELEASE: true })
+    .safeParse(raw);
+  if (!parsed.success) return null;
+  const { SENTRY_DSN, SENTRY_ENVIRONMENT, SENTRY_RELEASE } = parsed.data;
+  if (!SENTRY_DSN || !SENTRY_ENVIRONMENT) return null;
+  return {
+    dsn: SENTRY_DSN,
+    environment: SENTRY_ENVIRONMENT,
+    release: SENTRY_RELEASE,
+  };
 }
 
 /** VRMS spec 0026, AC-2: whether the docs routes are served; a blank switch follows `NODE_ENV`. */

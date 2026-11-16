@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import * as Sentry from '@sentry/nestjs';
 import type { Response } from 'express';
 import { coded } from '../errors';
 
@@ -50,7 +51,11 @@ export class MailFailedError extends Error {
   }
 }
 
-/** Maps the two errors above for every controller (registered as an app filter in AuthModule). */
+/**
+ * Maps the two errors above for every controller (registered as an app filter in AuthModule).
+ * Nest runs this instead of Sentry's catch all filter for them, so the 503 reports itself
+ * (VRMS spec 0025, AC-1); the 429 is expected and never reported (AC-2).
+ */
 @Catch(CodeSendLimitError, MailFailedError)
 export class CodeErrorFilter implements ExceptionFilter {
   catch(error: CodeSendLimitError | MailFailedError, host: ArgumentsHost) {
@@ -69,6 +74,9 @@ export class CodeErrorFilter implements ExceptionFilter {
         );
       return;
     }
+    Sentry.captureException(error, {
+      mechanism: { handled: false, type: 'auto.http.nestjs.code_error_filter' },
+    });
     res
       .status(HttpStatus.SERVICE_UNAVAILABLE)
       .json(

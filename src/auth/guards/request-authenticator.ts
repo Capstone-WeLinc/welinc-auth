@@ -6,6 +6,7 @@ import type { RoleAssignment } from '../roles/catalog.types';
 import { PrismaService } from '../../shared/prisma.service';
 import { SessionService } from '../sessions/session.service';
 import { coded } from '../errors';
+import { setSentryUser } from '../../monitoring/user-context';
 import { accountLocked, lockActive } from '../lockout';
 import {
   TokenRejectedError,
@@ -158,7 +159,7 @@ export class RequestAuthenticator {
       );
     }
 
-    return {
+    const caller: UserCaller = {
       kind: 'user',
       sub: user.id,
       email: user.email,
@@ -167,5 +168,8 @@ export class RequestAuthenticator {
       sid: session.id,
       signInCodeAt: session.signInCodeAt,
     };
+    // VRMS spec 0025, AC-1: the id and this system's role names on any event from this request
+    setSentryUser(caller);
+    return caller;
   }
 }

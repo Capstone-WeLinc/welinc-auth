@@ -8,6 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { PrismaService } from '../../shared/prisma.service';
+import { setSentryPortalUser } from '../../monitoring/user-context';
 import { accountLocked, lockActive } from '../lockout';
 import {
   SESSION_SETTINGS,
@@ -87,6 +88,8 @@ export class AdminSessionGuard implements CanActivate {
     }
 
     const standing = await this.admins.standing(session.userId);
+    // VRMS spec 0025, AC-1: the id and the portal role on any event from this request
+    setSentryPortalUser(session.userId, standing);
     const codeRequired = this.admins.codeRequired();
     request.portalAdmin = {
       userId: session.userId,
