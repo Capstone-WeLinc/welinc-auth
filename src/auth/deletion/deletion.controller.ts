@@ -31,6 +31,8 @@ import {
   VerifyPasswordDto,
 } from './deletion.dto';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors, ApiUserToken } from '../../openapi/decorators';
 /** AC-2: verify password takes at most 10 calls a minute per user. */
 export const VERIFY_PASSWORD_LIMIT = { limit: 10, ttlMs: 60_000 };
 
@@ -85,6 +87,9 @@ const admin = (req: AdminRequest) => ({
  * Spec 0012: password recheck and account deletion requests. User tokens only: a service token
  * gets 403 WRONG_TOKEN_USE from the guards (no route here takes a service scope).
  */
+@ApiTags('Account Deletion')
+@ApiUserToken()
+@ApiGenericErrors()
 @Controller('auth')
 export class DeletionController {
   constructor(

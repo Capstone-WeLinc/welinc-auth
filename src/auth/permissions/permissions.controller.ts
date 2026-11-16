@@ -17,6 +17,8 @@ import {
   type PermissionsReadRequest,
 } from './permissions-read.guard';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors, ApiServiceToken } from '../../openapi/decorators';
 /** A system code from the path, or 404 for anything else. */
 export function systemParam(value: string): SystemType {
   const system = value.toUpperCase();
@@ -31,6 +33,9 @@ export function systemParam(value: string): SystemType {
  * `If-None-Match` with the current tag answers 304 after one version read, so the poll costs
  * almost nothing while the matrix stays the same.
  */
+@ApiTags('Permissions')
+@ApiServiceToken()
+@ApiGenericErrors()
 @Controller('auth/permissions')
 @UseGuards(PermissionsReadGuard)
 export class PermissionsController {

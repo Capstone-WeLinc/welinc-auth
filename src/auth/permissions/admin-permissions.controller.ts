@@ -36,6 +36,12 @@ import { PortalCsrfGuard } from '../sessions/csrf';
 import { MatrixService, NOTE_MAX } from './matrix.service';
 import { systemParam } from './permissions.controller';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiCookieRoute,
+  ApiGenericErrors,
+  ApiSsoCookie,
+} from '../../openapi/decorators';
 // Spec 0013, AC-27: the matrix in the portal. Suite admins and the admins of that system read it;
 // only suite admins save.
 
@@ -78,6 +84,9 @@ export class MatrixChangesQueryDto {
 }
 
 /** Cookie authenticated like every `/auth/admin/*` route, each needing the code (AC-6). */
+@ApiTags('Portal Admin Permissions')
+@ApiSsoCookie()
+@ApiGenericErrors()
 @Controller('auth/admin/permissions')
 @UseGuards(AdminSessionGuard)
 export class AdminPermissionsController {
@@ -94,6 +103,7 @@ export class AdminPermissionsController {
     return this.matrix.adminMatrix(scope.system, scope.suite === true);
   }
 
+  @ApiCookieRoute()
   @Patch(':system')
   @UseGuards(PortalCsrfGuard)
   update(

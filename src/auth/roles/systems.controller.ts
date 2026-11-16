@@ -5,6 +5,8 @@ import type { Request, Response } from 'express';
 import { PrismaService } from '../../shared/prisma.service';
 import { CatalogService, type CatalogSystem } from './catalog.service';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors } from '../../openapi/decorators';
 export type SystemView = Omit<CatalogSystem, 'code'> & {
   code: SystemType;
   webAddress: string | null;
@@ -32,6 +34,8 @@ export function matchesEtag(header: string | undefined, etag: string): boolean {
  * secret, and the launcher and every app's pickers need them before or without a session. No
  * user data, no permissions.
  */
+@ApiTags('Systems')
+@ApiGenericErrors()
 @Controller('auth')
 export class SystemsController {
   constructor(

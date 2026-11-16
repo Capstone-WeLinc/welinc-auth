@@ -15,11 +15,41 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "The public part of every `current`, `next` and `retired` key.",
         "tags": [
-          "WellKnown"
+          "Discovery"
         ]
       }
     },
@@ -30,11 +60,41 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "RFC 8414 metadata, with the code flow of spec 0003.",
         "tags": [
-          "WellKnown"
+          "Discovery"
         ]
       }
     },
@@ -52,8 +112,43 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "summary": "AC-13: the system's feed for its admins, 60 calls a minute each.",
         "tags": [
           "Activity"
@@ -67,6 +162,36 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "AC-15: public, no user data. Labels for every category, type and reason.",
@@ -89,16 +214,52 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "Spec 0011, AC-13: the system's feed, 60 calls a minute per admin across both families.",
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/code": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminController_sendCode",
         "parameters": [],
         "responses": {
@@ -111,16 +272,52 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "AC-7: emails a `SIGN_IN` code to the caller for this session's step up. Already passed:\n`{ passed: true }` and nothing is sent. Spec 0009's send limits and address count apply.",
         "tags": [
-          "Admin"
+          "Portal Admin Session"
         ]
       }
     },
     "/auth/admin/code/verify": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminController_verifyCode",
         "parameters": [],
         "requestBody": {
@@ -136,11 +333,46 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "AC-7: a right code sets `sign_in_code_at` on the cookie session and writes\n`ADMIN_CODE_PASSED`. A ticket that belongs to someone else counts as expired.",
         "tags": [
-          "Admin"
+          "Portal Admin Session"
         ]
       }
     },
@@ -196,15 +428,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/deletion-requests/{id}/approve": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_approve",
         "parameters": [
           {
@@ -236,15 +504,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/deletion-requests/{id}/reject": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_reject",
         "parameters": [
           {
@@ -276,10 +580,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
@@ -297,11 +636,46 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "AC-15: answers for any signed in person, so the launcher knows whether to show Admin.",
         "tags": [
-          "Admin"
+          "Portal Admin Session"
         ]
       }
     },
@@ -328,13 +702,49 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminPermissions"
+          "Portal Admin Permissions"
         ]
       },
       "patch": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminPermissionsController_update",
         "parameters": [
           {
@@ -366,10 +776,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminPermissions"
+          "Portal Admin Permissions"
         ]
       }
     },
@@ -389,10 +834,45 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminPermissions"
+          "Portal Admin Permissions"
         ]
       }
     },
@@ -410,10 +890,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "SuiteAdmin"
+          "Portal Suite Admins"
         ]
       }
     },
@@ -424,13 +939,49 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "SuiteAdmin"
+          "Portal Suite Admins"
         ]
       },
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SuiteAdminController_add",
         "parameters": [],
         "requestBody": {
@@ -453,15 +1004,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "SuiteAdmin"
+          "Portal Suite Admins"
         ]
       }
     },
     "/auth/admin/suite-admins/{userId}/remove": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SuiteAdminController_remove",
         "parameters": [
           {
@@ -486,11 +1073,46 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "A `POST`, since some clients drop `DELETE` bodies (AC-2).",
         "tags": [
-          "SuiteAdmin"
+          "Portal Suite Admins"
         ]
       }
     },
@@ -501,13 +1123,49 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "SuiteAdmin"
+          "Portal Suite Admins"
         ]
       },
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SuiteAdminController_startGrant",
         "parameters": [],
         "requestBody": {
@@ -530,15 +1188,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "SuiteAdmin"
+          "Portal Suite Admins"
         ]
       }
     },
     "/auth/admin/temporary-grants/{id}": {
       "delete": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SuiteAdminController_endGrant",
         "parameters": [
           {
@@ -553,10 +1247,45 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "SuiteAdmin"
+          "Portal Suite Admins"
         ]
       }
     },
@@ -631,13 +1360,49 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       },
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_createUser",
         "parameters": [],
         "requestBody": {
@@ -660,15 +1425,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/users/{id}": {
       "delete": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_deleteUser",
         "parameters": [
           {
@@ -696,10 +1497,45 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       },
       "get": {
@@ -737,13 +1573,49 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       },
       "patch": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_updateUser",
         "parameters": [
           {
@@ -775,10 +1647,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
@@ -805,15 +1712,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/users/{id}/reset-code": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_sendResetCode",
         "parameters": [
           {
@@ -838,16 +1781,52 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "A reset code, or a setup code while setup is pending (AC-16, spec 0009).",
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/users/{id}/restore": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_restoreUser",
         "parameters": [
           {
@@ -879,15 +1858,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/users/{id}/sessions": {
       "delete": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_endSessions",
         "parameters": [
           {
@@ -912,10 +1927,45 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       },
       "get": {
@@ -946,15 +1996,51 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/users/{id}/status": {
       "patch": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_setStatus",
         "parameters": [
           {
@@ -986,15 +2072,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/users/{id}/unlock": {
       "patch": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_unlock",
         "parameters": [
           {
@@ -1026,10 +2148,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
@@ -1074,15 +2231,51 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
     "/auth/admin/verify-password": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "AdminAccountsController_verifyPassword",
         "parameters": [],
         "requestBody": {
@@ -1098,11 +2291,46 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "AC-14: a reauth token bound to this cookie session; `ADMIN_ACTION` or `TEMPORARY_ACCESS`.",
         "tags": [
-          "AdminAccounts"
+          "Portal Admin Accounts"
         ]
       }
     },
@@ -1113,11 +2341,46 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "The start of the code flow (AC-13).",
         "tags": [
-          "Sso"
+          "Web Login"
         ]
       }
     },
@@ -1128,11 +2391,46 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "The portal continues a login request after a password login (AC-14).",
         "tags": [
-          "Sso"
+          "Web Login"
         ]
       }
     },
@@ -1175,10 +2473,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Deletion"
+          "Account Deletion"
         ]
       }
     },
@@ -1205,10 +2538,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Deletion"
+          "Account Deletion"
         ]
       }
     },
@@ -1245,10 +2613,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Deletion"
+          "Account Deletion"
         ]
       }
     },
@@ -1259,8 +2662,43 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
         "tags": [
           "Directory"
         ]
@@ -1273,8 +2711,43 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
         "tags": [
           "Directory"
         ]
@@ -1287,8 +2760,43 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
         "tags": [
           "Directory"
         ]
@@ -1311,10 +2819,40 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1325,6 +2863,36 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -1334,6 +2902,7 @@
     },
     "/auth/login": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SsoController_login",
         "parameters": [],
         "requestBody": {
@@ -1356,16 +2925,47 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "The portal login (spec 0003, AC-11; spec 0007, AC-3): checks the password, builds the\nlauncher answer, then creates a web session and sets `welinc_sso`. Never answers a token.\nNo usable system means 403 and no session. A browser that already holds an SSO session\nloses it first. An unverified email gets the code step instead, last of all, so nobody\nwithout a system is sent a code (spec 0009, AC-7).",
         "tags": [
-          "Sso"
+          "Web Login"
         ]
       }
     },
     "/auth/login/verify-email": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SsoController_verifyEmail",
         "parameters": [],
         "requestBody": {
@@ -1388,16 +2988,47 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "Spec 0009, AC-9: the sign in step's code. The ticket's row, then the account and its systems\nagain (no try counted), then the code; a right one confirms the email and finishes the login\nexactly as `/auth/login` does. 10 calls a minute per address (AC-6).",
         "tags": [
-          "Sso"
+          "Web Login"
         ]
       }
     },
     "/auth/login/verify-email/resend": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SsoController_resendEmailCode",
         "parameters": [],
         "requestBody": {
@@ -1413,26 +3044,95 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "Spec 0009, AC-10: a new code on the same ticket.",
         "tags": [
-          "Sso"
+          "Web Login"
         ]
       }
     },
     "/auth/logout": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SessionEndController_logout",
         "parameters": [],
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          },
+          {
+            "clientAssertion": []
+          }
+        ],
         "summary": "Ends a session (AC-24, AC-42). Always 204 once the caller is known: an unknown, foreign or\nalready ended token ends nothing and says nothing about why.",
         "tags": [
-          "SessionEnd"
+          "Session End"
         ]
       }
     },
@@ -1450,10 +3150,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1464,8 +3199,43 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "summary": "Your live sessions, newest activity first, with `current` on this one (AC-31).",
         "tags": [
           "Sessions"
@@ -1488,8 +3258,43 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "summary": "Ends one of your sessions (`USER_ENDED`). Your current one too: the app then acts as after a\nlogout. A sid that isn't yours answers 404; one of yours that already ended answers 204.",
         "tags": [
           "Sessions"
@@ -1520,10 +3325,40 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "tags": [
-          "Mobile"
+          "Mobile Login"
         ]
       }
     },
@@ -1551,11 +3386,41 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "Suite spec 0009, AC-11: the email step's code, in AC-9's order. The ticket's row, then the\nclient, the account and the grant again (no try counted), then the code; a right one confirms\nthe email and answers the token body. 10 calls a minute per address (AC-6).",
         "tags": [
-          "Mobile"
+          "Mobile Login"
         ]
       }
     },
@@ -1576,11 +3441,41 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "summary": "Suite spec 0009, AC-11: a new code on the same ticket (AC-10).",
         "tags": [
-          "Mobile"
+          "Mobile Login"
         ]
       }
     },
@@ -1600,8 +3495,43 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "serviceToken": []
+          }
+        ],
         "tags": [
           "Permissions"
         ]
@@ -1631,10 +3561,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1652,8 +3617,43 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
           "Activity"
         ]
@@ -1666,10 +3666,45 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Deletion"
+          "Account Deletion"
         ]
       },
       "get": {
@@ -1678,10 +3713,45 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Deletion"
+          "Account Deletion"
         ]
       },
       "post": {
@@ -1707,10 +3777,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Deletion"
+          "Account Deletion"
         ]
       }
     },
@@ -1721,10 +3826,45 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       },
       "post": {
@@ -1743,10 +3883,45 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1774,10 +3949,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1805,10 +4015,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1826,10 +4071,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1840,10 +4120,45 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1864,10 +4179,45 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Deletion"
+          "Account Deletion"
         ]
       }
     },
@@ -1888,10 +4238,40 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -1902,26 +4282,100 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "The session check for system backends (AC-1, AC-26, AC-27; spec 0001 section 6). A locked\naccount's live session still answers 200 (AC-4).",
         "tags": [
-          "Sso"
+          "Web Login"
         ]
       }
     },
     "/auth/session/activity": {
       "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
         "operationId": "SessionEndController_activity",
         "parameters": [],
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          },
+          {
+            "clientAssertion": []
+          }
+        ],
         "summary": "An activity ping (AC-2, AC-3, AC-42): moves the session's idle cutoff. A used token inside\nits grace window still counts; past grace it answers 401 and ends nothing. A third ping in a\nminute for one `sid` is accepted and ignored (AC-38).",
         "tags": [
-          "SessionEnd"
+          "Session End"
         ]
       }
     },
@@ -1939,11 +4393,46 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
         "summary": "Whether this browser holds a live SSO session, and the systems the launcher lists\n(spec 0007, AC-1, AC-2, AC-4). Never counts as activity.",
         "tags": [
-          "Sso"
+          "Web Login"
         ]
       }
     },
@@ -1954,6 +4443,36 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -1977,8 +4496,13 @@
             }
           }
         },
+        "security": [
+          {
+            "clientAssertion": []
+          }
+        ],
         "tags": [
-          "Token"
+          "Tokens"
         ]
       }
     },
@@ -2022,10 +4546,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       },
       "post": {
@@ -2051,10 +4610,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -2074,10 +4668,45 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       },
       "patch": {
@@ -2112,10 +4741,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -2142,8 +4806,43 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "summary": "AC-12: one person's events for an admin of the token's system.",
         "tags": [
           "Activity"
@@ -2173,10 +4872,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -2206,8 +4940,43 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "summary": "Ends every live session of a user (AC-32). An admin account needs `reauthToken` in the body\n(spec 0013, AC-14b).",
         "tags": [
           "Sessions"
@@ -2228,8 +4997,43 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "summary": "A user's live sessions, for an admin who can see them (AC-32).",
         "tags": [
           "Sessions"
@@ -2269,10 +5073,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -2309,10 +5148,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -2344,10 +5218,45 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
+        "security": [
+          {
+            "userToken": []
+          }
+        ],
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     },
@@ -2368,10 +5277,40 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "400": {
+            "description": "The input failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
           }
         },
         "tags": [
-          "Auth"
+          "Accounts"
         ]
       }
     }
@@ -2607,6 +5546,43 @@
           "currentPassword",
           "newPassword",
           "confirmPassword"
+        ]
+      },
+      "CodedError": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "example": 400
+          },
+          "message": {
+            "description": "A sentence for people; may change. Match on `code`, never on this.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "error": {
+            "type": "string",
+            "example": "Bad Request"
+          },
+          "code": {
+            "type": "string",
+            "description": "The stable error code (contract 0001 section 11). Absent on a plain validation 400.",
+            "example": "VALIDATION_FAILED"
+          }
+        },
+        "required": [
+          "statusCode",
+          "message",
+          "error"
         ]
       },
       "CreateUserDto": {

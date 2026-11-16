@@ -16,14 +16,18 @@ import {
   TokenEndpointService,
 } from './token-endpoint.service';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiClientAssertion } from '../../openapi/decorators';
 /**
  * `POST /auth/token` (spec 0002, AC-14). Reads the request through `@Req()`, never a DTO, so the
  * global ValidationPipe doesn't touch it and every error here uses the OAuth body.
  */
+@ApiTags('Tokens')
 @Controller('auth')
 export class TokenController {
   constructor(private readonly endpoint: TokenEndpointService) {}
 
+  @ApiClientAssertion()
   @Post('token')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AddressThrottlerGuard)

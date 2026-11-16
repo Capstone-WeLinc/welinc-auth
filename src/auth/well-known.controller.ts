@@ -6,7 +6,11 @@ import {
   type TokenSettings,
 } from './tokens/token-config';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors } from '../openapi/decorators';
 /** Public discovery routes: no token needed (spec 0002, AC-3, AC-4). */
+@ApiTags('Discovery')
+@ApiGenericErrors()
 @Controller('auth/.well-known')
 export class WellKnownController {
   constructor(

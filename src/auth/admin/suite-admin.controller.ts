@@ -37,6 +37,12 @@ import {
 import { SuiteAdminsService } from './suite-admins.service';
 import { TemporaryGrantsService } from './temporary-grants.service';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiCookieRoute,
+  ApiGenericErrors,
+  ApiSsoCookie,
+} from '../../openapi/decorators';
 // Spec 0013, AC-1, AC-2, AC-9 to AC-11, AC-19: the suite admin routes. Reasons, hours and the
 // reauth token are checked by the services, so their errors match the spec's codes.
 
@@ -104,6 +110,9 @@ const token = (value: unknown) =>
   typeof value === 'string' ? value : undefined;
 
 /** Cookie authenticated like every `/auth/admin/*` route, each needing the code (AC-6). */
+@ApiTags('Portal Suite Admins')
+@ApiSsoCookie()
+@ApiGenericErrors()
 @Controller('auth/admin')
 @UseGuards(AdminSessionGuard)
 export class SuiteAdminController {
@@ -123,6 +132,7 @@ export class SuiteAdminController {
     return { items: await this.suiteAdmins.list() };
   }
 
+  @ApiCookieRoute()
   @Post('suite-admins')
   @UseGuards(PortalCsrfGuard)
   add(@Body() dto: AddSuiteAdminDto, @Req() req: AdminRequest) {
@@ -138,6 +148,7 @@ export class SuiteAdminController {
   }
 
   /** A `POST`, since some clients drop `DELETE` bodies (AC-2). */
+  @ApiCookieRoute()
   @Post('suite-admins/:userId/remove')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -168,6 +179,7 @@ export class SuiteAdminController {
     );
   }
 
+  @ApiCookieRoute()
   @Post('temporary-grants')
   @UseGuards(PortalCsrfGuard)
   startGrant(@Body() dto: StartGrantDto, @Req() req: AdminRequest) {
@@ -189,6 +201,7 @@ export class SuiteAdminController {
     );
   }
 
+  @ApiCookieRoute()
   @Delete('temporary-grants/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)

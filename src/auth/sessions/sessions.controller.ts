@@ -24,6 +24,8 @@ import type { UserCaller } from '../guards/request-authenticator';
 import type { AdminCaller } from '../user-scope';
 import { SessionService } from './session.service';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors, ApiUserToken } from '../../openapi/decorators';
 type UserRequest = Pick<Request, 'ip' | 'headers'> & { user: UserCaller };
 
 /** The bearer admin's scope: the token's system and session (spec 0013, AC-16). */
@@ -39,6 +41,9 @@ const adminOf = (req: UserRequest): AdminCaller => ({
  * Seeing and ending sessions (spec 0003, AC-31, AC-32): your own under `/auth/me/sessions`, and
  * an admin's view of a user they can see (spec 0011 scoping) under `/auth/users/:id/sessions`.
  */
+@ApiTags('Sessions')
+@ApiUserToken()
+@ApiGenericErrors()
 @Controller('auth')
 @UseGuards(JwtAuthGuard)
 export class SessionsController {

@@ -49,6 +49,8 @@ import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { SystemAdmin } from './decorators/system-admin.decorator';
 import type { Caller } from './guards/request-authenticator';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors, ApiUserToken } from '../openapi/decorators';
 /**
  * The signed in admin, as the change record names them (spec 0009, AC-19, AC-20), plus the
  * system their request resolved to, which scopes every admin user endpoint (spec 0011, AC-26).
@@ -68,6 +70,8 @@ const actorOf = (req: AdminRequest): AdminCaller => ({
   meta: requestMeta(req),
 });
 
+@ApiTags('Accounts')
+@ApiGenericErrors()
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -124,6 +128,7 @@ export class AuthController {
 
   // Spec 0004, AC-17: only the roles of the token's system (`aud`), whatever the query says
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Get('me')
   me(@Req() req: { user: { sub: string; system: SystemType } }) {
     return this.authService.getCurrentUser(req.user.sub, req.user.system);
@@ -132,6 +137,7 @@ export class AuthController {
   // Admins of the token's system only. Backends read people through /auth/directory, so a
   // service token here gets 403 WRONG_TOKEN_USE (spec 0005, AC-9)
   @SystemAdmin()
+  @ApiUserToken()
   @Get('users')
   listUsers(@Query() query: ListUsersQueryDto, @Req() req: { user: Caller }) {
     return this.authService.listUsers(query, { system: req.user.system });
@@ -139,6 +145,7 @@ export class AuthController {
 
   // Suite spec 0014, AC-9: 30 a minute per admin, one counter with the cookie route
   @SystemAdmin()
+  @ApiUserToken()
   @Get('users/lookup')
   async lookupUsers(
     @Query() query: LookupUsersQueryDto,
@@ -150,12 +157,14 @@ export class AuthController {
   }
 
   @SystemAdmin()
+  @ApiUserToken()
   @Post('users')
   createUser(@Body() dto: CreateUserDto, @Req() req: AdminRequest) {
     return this.authService.createUser(dto, actorOf(req));
   }
 
   @SystemAdmin()
+  @ApiUserToken()
   @Patch('users/:id')
   updateUser(
     @Param('id', ParseUUIDPipe) id: string,
@@ -166,6 +175,7 @@ export class AuthController {
   }
 
   @SystemAdmin()
+  @ApiUserToken()
   @Patch('users/:id/status')
   updateUserStatus(
     @Param('id', ParseUUIDPipe) id: string,
@@ -176,6 +186,7 @@ export class AuthController {
   }
 
   @SystemAdmin()
+  @ApiUserToken()
   @Delete('users/:id')
   async deleteUser(
     @Param('id', ParseUUIDPipe) id: string,
@@ -189,6 +200,7 @@ export class AuthController {
   }
 
   @SystemAdmin()
+  @ApiUserToken()
   @Post('users/:id/restore')
   @HttpCode(HttpStatus.OK)
   async restoreUser(
@@ -203,6 +215,7 @@ export class AuthController {
 
   // Spec 0013, AC-14b: an admin account needs `reauthToken` in the body
   @SystemAdmin()
+  @ApiUserToken()
   @Patch('users/:id/unlock')
   unlockUser(
     @Param('id', ParseUUIDPipe) id: string,
@@ -213,6 +226,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Patch('profile')
   updateOwnProfile(@Req() req: SelfRequest, @Body() dto: UpdateProfileDto) {
     return this.authService.updateOwnProfile(
@@ -224,6 +238,7 @@ export class AuthController {
 
   // Spec 0009, AC-17 to AC-19: your own email changes only after the new address is confirmed
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Post('profile/email')
   @HttpCode(HttpStatus.OK)
   startEmailChange(
@@ -239,6 +254,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Post('profile/email/verify')
   @HttpCode(HttpStatus.OK)
   verifyEmailChange(
@@ -253,6 +269,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Delete('profile/email')
   @HttpCode(HttpStatus.NO_CONTENT)
   cancelEmailChange(@Req() req: { user: { sub: string } }) {
@@ -260,6 +277,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Patch('profile/password')
   changeOwnPassword(
     @Req() req: SelfRequest & { user: { sid: string } },
@@ -274,6 +292,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Post('profile/picture')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -306,6 +325,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Get('profile/summary')
   getProfileSummary(@Req() req: { user: { sub: string } }) {
     return this.authService.getProfileSummary(req.user.sub);

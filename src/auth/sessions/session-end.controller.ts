@@ -28,6 +28,13 @@ import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 import { SessionService } from './session.service';
 import { clearSsoCookie, readSsoCookie } from './sso-cookie';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiClientAssertion,
+  ApiCookieRoute,
+  ApiGenericErrors,
+  ApiSsoCookie,
+} from '../../openapi/decorators';
 /** `/auth/session/activity` accepts and ignores more than 2 pings a minute per `sid` (AC-38). */
 export const ACTIVITY_LIMIT = { limit: 2, ttlMs: 60_000 };
 
@@ -56,6 +63,8 @@ function bodyOf(req: Request): Form {
  * behind the CSRF check. The bodies are read through `@Req()`, so the global ValidationPipe
  * leaves them alone. Neither route runs reuse detection: only the refresh grant does.
  */
+@ApiTags('Session End')
+@ApiGenericErrors()
 @Controller('auth')
 export class SessionEndController {
   constructor(
@@ -69,6 +78,9 @@ export class SessionEndController {
    * Ends a session (AC-24, AC-42). Always 204 once the caller is known: an unknown, foreign or
    * already ended token ends nothing and says nothing about why.
    */
+  @ApiClientAssertion()
+  @ApiSsoCookie()
+  @ApiCookieRoute()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
@@ -113,6 +125,9 @@ export class SessionEndController {
    * its grace window still counts; past grace it answers 401 and ends nothing. A third ping in a
    * minute for one `sid` is accepted and ignored (AC-38).
    */
+  @ApiClientAssertion()
+  @ApiSsoCookie()
+  @ApiCookieRoute()
   @Post('session/activity')
   @HttpCode(HttpStatus.NO_CONTENT)
   async activity(

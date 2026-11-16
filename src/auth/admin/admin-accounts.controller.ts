@@ -53,6 +53,12 @@ import {
   AdminVerifyPasswordDto,
 } from './admin.dto';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiCookieRoute,
+  ApiGenericErrors,
+  ApiSsoCookie,
+} from '../../openapi/decorators';
 const systemRequired = () =>
   coded(
     HttpStatus.BAD_REQUEST,
@@ -123,6 +129,9 @@ function querySystem(query: Record<string, unknown>): SystemType | undefined {
  * code (the guard's default level). Each one runs the same service as its bearer route, so the
  * scope, self, last admin and shared account rules match exactly.
  */
+@ApiTags('Portal Admin Accounts')
+@ApiSsoCookie()
+@ApiGenericErrors()
 @Controller('auth/admin')
 @UseGuards(AdminSessionGuard)
 export class AdminAccountsController {
@@ -135,6 +144,7 @@ export class AdminAccountsController {
   ) {}
 
   /** AC-14: a reauth token bound to this cookie session; `ADMIN_ACTION` or `TEMPORARY_ACCESS`. */
+  @ApiCookieRoute()
   @Post('verify-password')
   @HttpCode(HttpStatus.OK)
   @AdminRoute('admin')
@@ -189,6 +199,7 @@ export class AdminAccountsController {
     return this.authService.getPerson(id, accountScope(req, query.system));
   }
 
+  @ApiCookieRoute()
   @Post('users')
   @UseGuards(PortalCsrfGuard)
   createUser(@Body() dto: AdminCreateUserDto, @Req() req: AdminRequest) {
@@ -196,6 +207,7 @@ export class AdminAccountsController {
     return this.authService.createUser(body, systemScope(req, system));
   }
 
+  @ApiCookieRoute()
   @Patch('users/:id')
   @UseGuards(PortalCsrfGuard)
   updateUser(
@@ -207,6 +219,7 @@ export class AdminAccountsController {
     return this.authService.updateUser(id, body, systemScope(req, system));
   }
 
+  @ApiCookieRoute()
   @Patch('users/:id/status')
   @UseGuards(PortalCsrfGuard)
   setStatus(
@@ -221,6 +234,7 @@ export class AdminAccountsController {
     );
   }
 
+  @ApiCookieRoute()
   @Patch('users/:id/unlock')
   @UseGuards(PortalCsrfGuard)
   unlock(
@@ -236,6 +250,7 @@ export class AdminAccountsController {
   }
 
   /** A reset code, or a setup code while setup is pending (AC-16, spec 0009). */
+  @ApiCookieRoute()
   @Post('users/:id/reset-code')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -267,6 +282,7 @@ export class AdminAccountsController {
     };
   }
 
+  @ApiCookieRoute()
   @Delete('users/:id/sessions')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -295,6 +311,7 @@ export class AdminAccountsController {
     return this.events.listForUser(id, scope.system, filters);
   }
 
+  @ApiCookieRoute()
   @Delete('users/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -309,6 +326,7 @@ export class AdminAccountsController {
     await this.deletion.notifyAdminDelete(id, actor);
   }
 
+  @ApiCookieRoute()
   @Post('users/:id/restore')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -354,6 +372,7 @@ export class AdminAccountsController {
     return this.deletion.list(accountScope(req, system).system, rest);
   }
 
+  @ApiCookieRoute()
   @Post('deletion-requests/:id/approve')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -365,6 +384,7 @@ export class AdminAccountsController {
     return this.deletion.approve(id, accountScope(req, dto.system));
   }
 
+  @ApiCookieRoute()
   @Post('deletion-requests/:id/reject')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)

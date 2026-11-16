@@ -24,6 +24,8 @@ import { AccountEventsService } from './account-events.service';
 import { parseActivityQuery } from './activity-query';
 import { EVENT_CATALOG } from './event-types';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors, ApiUserToken } from '../../openapi/decorators';
 /** Browsers and the gateway may reuse the catalog for this long (AC-15). */
 export const CATALOG_MAX_AGE_SECONDS = 300;
 
@@ -64,6 +66,8 @@ export async function countFeedCall(
  * Spec 0011: account activity. A user token of any system reads its own events; a service token
  * gets 403 `WRONG_TOKEN_USE` from `JwtAuthGuard` (AC-14).
  */
+@ApiTags('Activity')
+@ApiGenericErrors()
 @Controller('auth')
 export class ActivityController {
   constructor(
@@ -72,6 +76,7 @@ export class ActivityController {
   ) {}
 
   @UseGuards(JwtAuthGuard)
+  @ApiUserToken()
   @Get('profile/activity')
   @Header('Cache-Control', 'no-store')
   ownActivity(
@@ -83,6 +88,7 @@ export class ActivityController {
 
   /** AC-12: one person's events for an admin of the token's system. */
   @SystemAdmin()
+  @ApiUserToken()
   @Get('users/:id/activity')
   @Header('Cache-Control', 'no-store')
   userActivity(
@@ -96,6 +102,7 @@ export class ActivityController {
 
   /** AC-13: the system's feed for its admins, 60 calls a minute each. */
   @SystemAdmin()
+  @ApiUserToken()
   @Get('activity')
   async systemActivity(
     @Query() query: Record<string, unknown>,

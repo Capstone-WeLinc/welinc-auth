@@ -34,6 +34,8 @@ import {
   type UserTokenAnswer,
 } from './user-grants.service';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors } from '../../openapi/decorators';
 /** `/auth/mobile/login` allows 5 a minute per address (spec 0003, AC-28, AC-38). */
 export const MOBILE_LOGIN_LIMIT = { limit: 5, ttlMs: 60_000 };
 
@@ -63,6 +65,8 @@ function mobileMeta(req: Request, deviceName: string): RequestMeta {
  * camel case, and never sets a cookie. It shares the per account lockout with the portal login.
  * Refresh is `/auth/token` with `client_id`; logout is `/auth/logout` with `{ refreshToken }`.
  */
+@ApiTags('Mobile Login')
+@ApiGenericErrors()
 @Controller('auth/mobile')
 export class MobileController {
   constructor(
