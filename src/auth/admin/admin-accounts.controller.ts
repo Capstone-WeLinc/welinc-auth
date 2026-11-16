@@ -56,9 +56,19 @@ import {
 import { ApiTags } from '@nestjs/swagger';
 import {
   ApiCookieRoute,
+  ApiErrorMap,
   ApiGenericErrors,
   ApiSsoCookie,
 } from '../../openapi/decorators';
+import {
+  ADMIN_SESSION,
+  ADMIN_STEP,
+  CODE_MAIL,
+  CSRF,
+  NOT_FOUND,
+  PASSWORD_CHECK,
+  VALIDATION,
+} from '../../openapi/guard-errors';
 const systemRequired = () =>
   coded(
     HttpStatus.BAD_REQUEST,
@@ -145,6 +155,11 @@ export class AdminAccountsController {
 
   /** AC-14: a reauth token bound to this cookie session; `ADMIN_ACTION` or `TEMPORARY_ACCESS`. */
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_STEP, CSRF, PASSWORD_CHECK, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_SUITE_ADMIN'],
+    429: ['RATE_LIMITED'],
+  })
   @Post('verify-password')
   @HttpCode(HttpStatus.OK)
   @AdminRoute('admin')
@@ -165,6 +180,10 @@ export class AdminAccountsController {
     );
   }
 
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    400: ['INVALID_CURSOR', 'UNKNOWN_ROLE', 'VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+  })
   @Get('users')
   listUsers(
     @Query() query: AdminListUsersQueryDto,
@@ -177,6 +196,10 @@ export class AdminAccountsController {
 
   // Declared before users/:id so "lookup" is never read as an id
   // Suite spec 0014, AC-9: 30 a minute per admin, one counter with the bearer route
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    429: ['RATE_LIMITED'],
+  })
   @Get('users/lookup')
   async lookupUsers(
     @Query() query: AdminLookupQueryDto,
@@ -188,6 +211,10 @@ export class AdminAccountsController {
     return this.authService.lookupUsers(query.q, scope);
   }
 
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+  })
   @Get('users/:id')
   getUser(
     @Param('id', ParseUUIDPipe) id: string,
@@ -200,6 +227,11 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, {
+    400: ['UNKNOWN_ROLE'],
+    403: ['NOT_ADMIN_OF_SYSTEM', 'REAUTH_REQUIRED', null],
+    409: ['ACCOUNT_EXISTS', 'ROLE_LIMIT', 'SUITE_ADMIN_NO_ROLES', null],
+  })
   @Post('users')
   @UseGuards(PortalCsrfGuard)
   createUser(@Body() dto: AdminCreateUserDto, @Req() req: AdminRequest) {
@@ -208,6 +240,25 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    400: ['UNKNOWN_ROLE'],
+    403: [
+      'NOT_ADMIN_OF_SYSTEM',
+      'REAUTH_REQUIRED',
+      'SUITE_ADMIN_SELF_ONLY',
+      null,
+    ],
+    409: [
+      'EMAIL_TAKEN',
+      'IS_SUITE_ADMIN',
+      'LAST_ADMIN',
+      'ROLE_LIMIT',
+      'SELF_EMAIL',
+      'SUITE_ADMIN_NO_ROLES',
+      'TEMPORARY_ROLE',
+      null,
+    ],
+  })
   @Patch('users/:id')
   @UseGuards(PortalCsrfGuard)
   updateUser(
@@ -220,6 +271,10 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    409: ['IS_SUITE_ADMIN', 'LAST_ADMIN', null],
+  })
   @Patch('users/:id/status')
   @UseGuards(PortalCsrfGuard)
   setStatus(
@@ -235,6 +290,9 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    403: ['NOT_ADMIN_OF_SYSTEM', 'REAUTH_REQUIRED'],
+  })
   @Patch('users/:id/unlock')
   @UseGuards(PortalCsrfGuard)
   unlock(
@@ -251,6 +309,10 @@ export class AdminAccountsController {
 
   /** A reset code, or a setup code while setup is pending (AC-16, spec 0009). */
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, CODE_MAIL, {
+    403: ['NOT_ADMIN_OF_SYSTEM', 'REAUTH_REQUIRED'],
+    409: ['NOT_ACTIVE'],
+  })
   @Post('users/:id/reset-code')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -266,6 +328,9 @@ export class AdminAccountsController {
     );
   }
 
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, NOT_FOUND, {
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+  })
   @Get('users/:id/sessions')
   async sessions(
     @Param('id', ParseUUIDPipe) id: string,
@@ -283,6 +348,9 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    403: ['NOT_ADMIN_OF_SYSTEM', 'REAUTH_REQUIRED', null],
+  })
   @Delete('users/:id/sessions')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -298,6 +366,10 @@ export class AdminAccountsController {
     );
   }
 
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, NOT_FOUND, {
+    400: ['INVALID_CURSOR', 'VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+  })
   @Get('users/:id/activity')
   userActivity(
     @Param('id', ParseUUIDPipe) id: string,
@@ -312,6 +384,11 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM', null],
+    409: ['IS_SUITE_ADMIN', 'LAST_ADMIN', null],
+  })
   @Delete('users/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -327,6 +404,11 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    409: ['NOT_RESTORABLE'],
+  })
   @Post('users/:id/restore')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -344,6 +426,11 @@ export class AdminAccountsController {
   }
 
   /** Spec 0011, AC-13: the system's feed, 60 calls a minute per admin across both families. */
+  @ApiErrorMap(ADMIN_SESSION, {
+    400: ['INVALID_CURSOR', 'VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    429: ['RATE_LIMITED'],
+  })
   @Get('activity')
   async activity(
     @Query() query: Record<string, unknown>,
@@ -361,6 +448,10 @@ export class AdminAccountsController {
     return this.events.feed(scope.system, filters);
   }
 
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    400: ['INVALID_CURSOR', 'VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+  })
   @Get('deletion-requests')
   deletionRequests(
     @Query() query: AdminDeletionListQueryDto,
@@ -373,6 +464,11 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM', 'SELF_DECISION'],
+    409: ['LAST_ADMIN', 'NOT_PENDING'],
+  })
   @Post('deletion-requests/:id/approve')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -385,6 +481,11 @@ export class AdminAccountsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM', 'SELF_DECISION'],
+    409: ['NOT_PENDING'],
+  })
   @Post('deletion-requests/:id/reject')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)

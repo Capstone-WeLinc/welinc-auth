@@ -37,9 +37,18 @@ import {
 import { ApiTags } from '@nestjs/swagger';
 import {
   ApiCookieRoute,
+  ApiErrorMap,
   ApiGenericErrors,
   ApiSsoCookie,
 } from '../../openapi/decorators';
+import {
+  ADMIN_SIGNED_IN,
+  ADMIN_STEP,
+  CODE_MAIL,
+  CODE_ROUTE_LIMIT,
+  CSRF,
+  VALIDATION,
+} from '../../openapi/guard-errors';
 /** The `GET /auth/admin/me` body (spec 0013, AC-15). */
 export type AdminMe = {
   user: { id: string; name: string; email: string; picture: string | null };
@@ -69,6 +78,7 @@ export class AdminController {
   ) {}
 
   /** AC-15: answers for any signed in person, so the launcher knows whether to show Admin. */
+  @ApiErrorMap(ADMIN_SIGNED_IN)
   @Get('me')
   @AdminRoute('signed-in')
   async me(
@@ -100,6 +110,9 @@ export class AdminController {
    * `{ passed: true }` and nothing is sent. Spec 0009's send limits and address count apply.
    */
   @ApiCookieRoute()
+  @ApiErrorMap(ADMIN_STEP, CSRF, CODE_ROUTE_LIMIT, CODE_MAIL, {
+    409: ['CODE_NOT_REQUIRED'],
+  })
   @Post('code')
   @HttpCode(HttpStatus.OK)
   @AdminRoute('admin')
@@ -134,6 +147,10 @@ export class AdminController {
    * `ADMIN_CODE_PASSED`. A ticket that belongs to someone else counts as expired.
    */
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_STEP, CSRF, CODE_ROUTE_LIMIT, {
+    400: ['CODE_EXPIRED', 'INVALID_CODE'],
+    409: ['CODE_NOT_REQUIRED'],
+  })
   @Post('code/verify')
   @HttpCode(HttpStatus.NO_CONTENT)
   @AdminRoute('admin')

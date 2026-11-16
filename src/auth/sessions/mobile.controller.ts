@@ -35,7 +35,11 @@ import {
 } from './user-grants.service';
 
 import { ApiTags } from '@nestjs/swagger';
-import { ApiGenericErrors } from '../../openapi/decorators';
+import { ApiErrorMap, ApiGenericErrors } from '../../openapi/decorators';
+import { CODE_MAIL, SIGN_IN, VALIDATION } from '../../openapi/guard-errors';
+import { ApiExtraModels, ApiOkResponse, getSchemaPath } from '@nestjs/swagger';
+import { SignInStepResponse } from '../codes/sign-in-step.response';
+import { MobileTokenResponse } from './mobile.response';
 /** `/auth/mobile/login` allows 5 a minute per address (spec 0003, AC-28, AC-38). */
 export const MOBILE_LOGIN_LIMIT = { limit: 5, ttlMs: 60_000 };
 
@@ -77,6 +81,22 @@ export class MobileController {
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
+  @ApiErrorMap(VALIDATION, SIGN_IN, CODE_MAIL, {
+    400: ['INVALID_CLIENT'],
+    403: ['APP_NOT_ALLOWED', 'NO_SYSTEM_ACCESS'],
+    429: ['rate_limited'],
+  })
+  @ApiExtraModels(MobileTokenResponse, SignInStepResponse)
+  @ApiOkResponse({
+    description:
+      'Signed in, or the email code step when the address is not verified yet',
+    schema: {
+      oneOf: [
+        { $ref: getSchemaPath(MobileTokenResponse) },
+        { $ref: getSchemaPath(SignInStepResponse) },
+      ],
+    },
+  })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
@@ -123,6 +143,18 @@ export class MobileController {
    * client, the account and the grant again (no try counted), then the code; a right one confirms
    * the email and answers the token body. 10 calls a minute per address (AC-6).
    */
+  @ApiErrorMap(VALIDATION, {
+    400: ['CODE_EXPIRED', 'INVALID_CLIENT', 'INVALID_CODE'],
+    401: [null],
+    403: [
+      'ACCOUNT_INACTIVE',
+      'ACCOUNT_LOCKED',
+      'APP_NOT_ALLOWED',
+      'NO_SYSTEM_ACCESS',
+    ],
+    429: ['rate_limited'],
+  })
+  @ApiOkResponse({ type: MobileTokenResponse })
   @Post('login/verify-email')
   @HttpCode(HttpStatus.OK)
   async verifyEmail(
@@ -155,6 +187,10 @@ export class MobileController {
   }
 
   /** Suite spec 0009, AC-11: a new code on the same ticket (AC-10). */
+  @ApiErrorMap(VALIDATION, CODE_MAIL, {
+    400: ['CODE_EXPIRED'],
+    429: ['rate_limited'],
+  })
   @Post('login/verify-email/resend')
   @HttpCode(HttpStatus.OK)
   async resendEmailCode(

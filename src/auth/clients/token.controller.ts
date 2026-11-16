@@ -17,7 +17,9 @@ import {
 } from './token-endpoint.service';
 
 import { ApiTags } from '@nestjs/swagger';
-import { ApiClientAssertion } from '../../openapi/decorators';
+import { ApiClientAssertion, ApiErrorMap } from '../../openapi/decorators';
+import { ApiOkResponse } from '@nestjs/swagger';
+import { TokenResponse } from './token.response';
 /**
  * `POST /auth/token` (spec 0002, AC-14). Reads the request through `@Req()`, never a DTO, so the
  * global ValidationPipe doesn't touch it and every error here uses the OAuth body.
@@ -28,6 +30,20 @@ export class TokenController {
   constructor(private readonly endpoint: TokenEndpointService) {}
 
   @ApiClientAssertion()
+  @ApiErrorMap({
+    400: [
+      'invalid_grant',
+      'invalid_request',
+      'invalid_scope',
+      'invalid_target',
+      'unauthorized_client',
+      'unsupported_grant_type',
+    ],
+    401: ['invalid_client'],
+    403: ['APP_NOT_ALLOWED', 'NO_SYSTEM_ACCESS'],
+    429: ['rate_limited'],
+  })
+  @ApiOkResponse({ type: TokenResponse })
   @Post('token')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AddressThrottlerGuard)

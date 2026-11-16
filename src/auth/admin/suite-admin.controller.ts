@@ -40,9 +40,16 @@ import { TemporaryGrantsService } from './temporary-grants.service';
 import { ApiTags } from '@nestjs/swagger';
 import {
   ApiCookieRoute,
+  ApiErrorMap,
   ApiGenericErrors,
   ApiSsoCookie,
 } from '../../openapi/decorators';
+import {
+  ADMIN_SESSION,
+  CSRF,
+  NOT_FOUND,
+  VALIDATION,
+} from '../../openapi/guard-errors';
 // Spec 0013, AC-1, AC-2, AC-9 to AC-11, AC-19: the suite admin routes. Reasons, hours and the
 // reauth token are checked by the services, so their errors match the spec's codes.
 
@@ -122,6 +129,7 @@ export class SuiteAdminController {
     private readonly reports: AdminReportService,
   ) {}
 
+  @ApiErrorMap(ADMIN_SESSION, { 403: ['NOT_SUITE_ADMIN'] })
   @Get('suite-admins')
   async list(
     @Req() req: AdminRequest,
@@ -133,6 +141,17 @@ export class SuiteAdminController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_SUITE_ADMIN', 'REAUTH_REQUIRED'],
+    409: [
+      'ALREADY_SUITE_ADMIN',
+      'HOLDS_SYSTEM_ROLES',
+      'NOT_ELIGIBLE',
+      'SUITE_ADMIN_LIMIT',
+      'SUITE_ADMIN_NO_ROLES',
+    ],
+  })
   @Post('suite-admins')
   @UseGuards(PortalCsrfGuard)
   add(@Body() dto: AddSuiteAdminDto, @Req() req: AdminRequest) {
@@ -149,6 +168,11 @@ export class SuiteAdminController {
 
   /** A `POST`, since some clients drop `DELETE` bodies (AC-2). */
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_SUITE_ADMIN', 'REAUTH_REQUIRED'],
+    409: ['LAST_SUITE_ADMIN', 'SELF_ROLE'],
+  })
   @Post('suite-admins/:userId/remove')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -165,6 +189,10 @@ export class SuiteAdminController {
     );
   }
 
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    400: ['INVALID_CURSOR', 'VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+  })
   @Get('temporary-grants')
   listGrants(
     @Query() query: GrantListQueryDto,
@@ -180,6 +208,11 @@ export class SuiteAdminController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, {
+    400: ['UNKNOWN_ROLE', 'VALIDATION_FAILED'],
+    403: ['NOT_SUITE_ADMIN', 'REAUTH_REQUIRED'],
+    409: ['GRANT_ACTIVE'],
+  })
   @Post('temporary-grants')
   @UseGuards(PortalCsrfGuard)
   startGrant(@Body() dto: StartGrantDto, @Req() req: AdminRequest) {
@@ -202,6 +235,9 @@ export class SuiteAdminController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, NOT_FOUND, {
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+  })
   @Delete('temporary-grants/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(PortalCsrfGuard)
@@ -221,6 +257,7 @@ export class SuiteAdminController {
     );
   }
 
+  @ApiErrorMap(ADMIN_SESSION, { 403: ['NOT_SUITE_ADMIN'] })
   @Get('report')
   report(@Req() req: AdminRequest, @Res({ passthrough: true }) res: Response) {
     res.setHeader('Cache-Control', 'no-store');

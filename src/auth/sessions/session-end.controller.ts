@@ -32,9 +32,11 @@ import { ApiTags } from '@nestjs/swagger';
 import {
   ApiClientAssertion,
   ApiCookieRoute,
+  ApiErrorMap,
   ApiGenericErrors,
   ApiSsoCookie,
 } from '../../openapi/decorators';
+import { CLIENT_ASSERTION, CSRF } from '../../openapi/guard-errors';
 /** `/auth/session/activity` accepts and ignores more than 2 pings a minute per `sid` (AC-38). */
 export const ACTIVITY_LIMIT = { limit: 2, ttlMs: 60_000 };
 
@@ -81,6 +83,7 @@ export class SessionEndController {
   @ApiClientAssertion()
   @ApiSsoCookie()
   @ApiCookieRoute()
+  @ApiErrorMap(CSRF, CLIENT_ASSERTION)
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
@@ -128,6 +131,7 @@ export class SessionEndController {
   @ApiClientAssertion()
   @ApiSsoCookie()
   @ApiCookieRoute()
+  @ApiErrorMap(CSRF, CLIENT_ASSERTION, { 401: ['SESSION_ENDED'] })
   @Post('session/activity')
   @HttpCode(HttpStatus.NO_CONTENT)
   async activity(

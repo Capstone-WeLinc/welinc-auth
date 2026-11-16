@@ -25,7 +25,18 @@ import { parseActivityQuery } from './activity-query';
 import { EVENT_CATALOG } from './event-types';
 
 import { ApiTags } from '@nestjs/swagger';
-import { ApiGenericErrors, ApiUserToken } from '../../openapi/decorators';
+import {
+  ApiErrorMap,
+  ApiGenericErrors,
+  ApiNoErrors,
+  ApiUserToken,
+} from '../../openapi/decorators';
+import {
+  NOT_FOUND,
+  SYSTEM_ADMIN,
+  USER_TOKEN,
+  VALIDATION,
+} from '../../openapi/guard-errors';
 /** Browsers and the gateway may reuse the catalog for this long (AC-15). */
 export const CATALOG_MAX_AGE_SECONDS = 300;
 
@@ -77,6 +88,7 @@ export class ActivityController {
 
   @UseGuards(JwtAuthGuard)
   @ApiUserToken()
+  @ApiErrorMap(USER_TOKEN, { 400: ['INVALID_CURSOR', 'VALIDATION_FAILED'] })
   @Get('profile/activity')
   @Header('Cache-Control', 'no-store')
   ownActivity(
@@ -89,6 +101,9 @@ export class ActivityController {
   /** AC-12: one person's events for an admin of the token's system. */
   @SystemAdmin()
   @ApiUserToken()
+  @ApiErrorMap(VALIDATION, SYSTEM_ADMIN, NOT_FOUND, {
+    400: ['INVALID_CURSOR', 'VALIDATION_FAILED'],
+  })
   @Get('users/:id/activity')
   @Header('Cache-Control', 'no-store')
   userActivity(
@@ -103,6 +118,10 @@ export class ActivityController {
   /** AC-13: the system's feed for its admins, 60 calls a minute each. */
   @SystemAdmin()
   @ApiUserToken()
+  @ApiErrorMap(SYSTEM_ADMIN, {
+    400: ['INVALID_CURSOR', 'VALIDATION_FAILED'],
+    429: ['RATE_LIMITED'],
+  })
   @Get('activity')
   async systemActivity(
     @Query() query: Record<string, unknown>,
@@ -120,6 +139,7 @@ export class ActivityController {
   }
 
   /** AC-15: public, no user data. Labels for every category, type and reason. */
+  @ApiNoErrors()
   @Get('activity/catalog')
   catalog(@Req() req: Request, @Res() res: Response): void {
     res.setHeader(

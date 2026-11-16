@@ -17,7 +17,18 @@ import { DirectoryService } from './directory.service';
 import type { DirectoryView } from './directory-user';
 
 import { ApiTags } from '@nestjs/swagger';
-import { ApiGenericErrors, ApiServiceToken } from '../../openapi/decorators';
+import {
+  ApiErrorMap,
+  ApiGenericErrors,
+  ApiServiceToken,
+} from '../../openapi/decorators';
+import { SERVICE_SCOPE } from '../../openapi/guard-errors';
+import { ApiOkResponse } from '@nestjs/swagger';
+import {
+  DirectoryChangesResponse,
+  DirectoryLookupResponse,
+  DirectoryUsersResponse,
+} from './directory.response';
 export const DEFAULT_LIMIT = 100;
 /** AC-6: ids per lookup. */
 export const MAX_LOOKUP_IDS = 200;
@@ -105,6 +116,8 @@ async function withCursor<T>(work: () => Promise<T>): Promise<T> {
 export class DirectoryController {
   constructor(private readonly directory: DirectoryService) {}
 
+  @ApiErrorMap(SERVICE_SCOPE, { 400: ['INVALID_CURSOR', 'VALIDATION_FAILED'] })
+  @ApiOkResponse({ type: DirectoryUsersResponse })
   @Get('users')
   @Header('Cache-Control', 'no-store')
   listUsers(
@@ -117,6 +130,8 @@ export class DirectoryController {
     return withCursor(() => this.directory.listUsers(view(req), page, size));
   }
 
+  @ApiErrorMap(SERVICE_SCOPE, { 400: ['INVALID_CURSOR', 'VALIDATION_FAILED'] })
+  @ApiOkResponse({ type: DirectoryChangesResponse })
   @Get('changes')
   @Header('Cache-Control', 'no-store')
   changes(
@@ -131,6 +146,8 @@ export class DirectoryController {
 
   // The body is read as plain JSON (no DTO), so a bad one answers VALIDATION_FAILED like the
   // other directory inputs instead of the global pipe's uncoded 400
+  @ApiErrorMap(SERVICE_SCOPE, { 400: ['VALIDATION_FAILED'] })
+  @ApiOkResponse({ type: DirectoryLookupResponse })
   @Post('users/lookup')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')

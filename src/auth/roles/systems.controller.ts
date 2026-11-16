@@ -6,7 +6,9 @@ import { PrismaService } from '../../shared/prisma.service';
 import { CatalogService, type CatalogSystem } from './catalog.service';
 
 import { ApiTags } from '@nestjs/swagger';
-import { ApiGenericErrors } from '../../openapi/decorators';
+import { ApiGenericErrors, ApiNoErrors } from '../../openapi/decorators';
+import { ApiHeader, ApiOkResponse, ApiResponse } from '@nestjs/swagger';
+import { SystemsResponse } from './systems.response';
 export type SystemView = Omit<CatalogSystem, 'code'> & {
   code: SystemType;
   webAddress: string | null;
@@ -43,6 +45,23 @@ export class SystemsController {
     private readonly prisma: PrismaService,
   ) {}
 
+  @ApiNoErrors()
+  @ApiHeader({
+    name: 'If-None-Match',
+    required: false,
+    description: 'The ETag you hold; a match answers 304',
+  })
+  @ApiOkResponse({
+    type: SystemsResponse,
+    headers: {
+      ETag: { description: 'A hash of the body', schema: { type: 'string' } },
+    },
+  })
+  @ApiResponse({
+    status: 304,
+    description: 'Not modified: your copy is current (no body)',
+    headers: { ETag: { schema: { type: 'string' } } },
+  })
   @Get('systems')
   async systems(@Req() req: Request, @Res() res: Response): Promise<void> {
     const [systems, clients] = await Promise.all([

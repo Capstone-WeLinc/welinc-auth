@@ -39,9 +39,11 @@ import { systemParam } from './permissions.controller';
 import { ApiTags } from '@nestjs/swagger';
 import {
   ApiCookieRoute,
+  ApiErrorMap,
   ApiGenericErrors,
   ApiSsoCookie,
 } from '../../openapi/decorators';
+import { ADMIN_SESSION, CSRF, VALIDATION } from '../../openapi/guard-errors';
 // Spec 0013, AC-27: the matrix in the portal. Suite admins and the admins of that system read it;
 // only suite admins save.
 
@@ -92,6 +94,10 @@ export class MatrixChangesQueryDto {
 export class AdminPermissionsController {
   constructor(private readonly matrix: MatrixService) {}
 
+  @ApiErrorMap(ADMIN_SESSION, {
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    404: ['NOT_FOUND'],
+  })
   @Get(':system')
   async read(
     @Param('system') raw: string,
@@ -104,6 +110,17 @@ export class AdminPermissionsController {
   }
 
   @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, {
+    400: [
+      'NOTE_REQUIRED',
+      'UNKNOWN_PERMISSION',
+      'UNKNOWN_ROLE',
+      'VALIDATION_FAILED',
+    ],
+    403: ['NOT_SUITE_ADMIN'],
+    404: ['NOT_FOUND'],
+    409: ['LOCKED_CELL', 'MATRIX_STALE'],
+  })
   @Patch(':system')
   @UseGuards(PortalCsrfGuard)
   update(
@@ -121,6 +138,11 @@ export class AdminPermissionsController {
     );
   }
 
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    400: ['INVALID_CURSOR'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    404: ['NOT_FOUND'],
+  })
   @Get(':system/changes')
   async changes(
     @Param('system') raw: string,
