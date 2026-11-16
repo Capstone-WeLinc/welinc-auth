@@ -30,6 +30,7 @@ The shared auth service for the WeLinc suite: NestJS 11 with Prisma 7 on Postgre
 | `src/auth/deletion/`, `src/auth/reauth/password-check.service.ts` | Spec 0012: reauth tokens (`password-check.service.ts`, wrong passwords share the login lockout), deletion requests, and `erasure.service.ts` (run by the hourly sweep after `ACCOUNT_ERASURE_GRACE_DAYS`). Guide: `docs/integration/account-screens.md` in the workspace repo |
 | `src/auth/dto/` | Request DTOs validated with `class-validator` |
 | `src/config/` | Spec 0010: `env.ts` (the one zod schema for every runtime variable, `validateEnv` run by `ConfigModule` at boot, the production rules, `envWarnings`, `testEnv`), `check-env.ts` (`npm run env:check`), the Jest `setupFiles` fixtures |
+| `src/openapi/` | VRMS spec 0026, the docs at `/auth/docs`: `document.ts` (builds the OpenAPI document in a stable order), `docs.ts` (mounts Scalar, the document and the bundle behind `API_DOCS_ENABLED`), `decorators.ts` (the security scheme and error reply decorators every route uses), `expect-reply.ts` (reply tests against the committed `docs/openapi.json`) |
 | `src/shared/` | `PrismaService`, `MailService`, `SharedModule` |
 | `prisma/schema.prisma`, `prisma/migrations/` | The schema. Triggers (directory feed, append only tables, suite admins hold no roles) and partial indexes exist only in migration SQL, and a later `CREATE OR REPLACE` wins (`20261115000200_account_erasure`, `20261117000000_suite_admin_powers`) |
 | `prisma/seed.ts`, `prisma/seeds/` | Seed manifest (spec 0006): `seeds/people.json` is the only roster (fixed ids), checked by `manifest.ts` (`seedGuard`: production needs `SEED_ALLOW=staging`, `--reset` is local only); `seeds/clients.seed.ts` is the client registry. Guide: `docs/integration/seed-accounts.md` in the workspace repo |
@@ -41,6 +42,8 @@ npm run start:dev    # nest --watch
 npm run lint         # eslint --fix edits files; check git diff afterwards
 npm run build
 npm run env:check    # checks the environment without starting the app (after a build); exits 1 with the list
+npm run openapi      # rewrites docs/openapi.json from the built app; commit it with any route, DTO or reply class change
+npm run openapi:check  # exits 1 when docs/openapi.json differs from the code (CI runs it)
 npm run test         # Jest unit tests
 npm run test:e2e
 npm run test:db      # migration tests on a throwaway database; locally: docker exec welinc_auth_service npm run test:db (CI runs them too, the `db` job)
@@ -78,6 +81,8 @@ npx prisma migrate dev   # creates the migration folder; ask before running
 
 ## Gotchas
 
+- In `prisma/seeds/people.json` a person's `password` is a key of the file's `passwords` map, not the password itself (`ops` means `ops1234`); `docs/integration/seed-accounts.md` lists the real ones.
+- `@scalar/nestjs-api-reference` is ES module only and the Jest config doesn't transform it, so a spec that imports `src/openapi/docs.ts` mocks it (see `docs.spec.ts`).
 - `argon2` stays on 0.44 (`dependabot.yml` skips 0.45 and up): 0.45 ships no prebuilt binary for Intel Macs, so `npm install` has to compile it and fails on a Mac without full C++ build tools.
 - There is no `JWT_SECRET`. A missing or bad `AUTH_SIGNING_KEYS` stops startup; run `npm run keys:dev` once locally. `AUTH_ISSUER` must be the same string in every service, or every check fails.
 - In development, mail to an address on `DEV_EMAIL_DOMAINS` (`src/shared/dev-email-domains.ts`: `welinc.com`, `localhost`, `test.com`, `example.com`) is printed to the log, never sent, even with `SMTP_*` set; real addresses still use SMTP. Read a seed account's code with `docker logs welinc_auth_service`.
