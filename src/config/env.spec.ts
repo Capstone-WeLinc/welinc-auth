@@ -1,6 +1,13 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { envSchema, envWarnings, testEnv, validateEnv, type Env } from './env';
+import {
+  apiDocsEnabled,
+  envSchema,
+  envWarnings,
+  testEnv,
+  validateEnv,
+  type Env,
+} from './env';
 
 // covers: spec 0010 AC-1 to AC-6, AC-10, and the session cross checks
 
@@ -229,6 +236,32 @@ describe('validateEnv', () => {
     for (const raw of failures) {
       expect(errorOf(raw)).not.toContain(SENTINEL);
     }
+  });
+});
+
+describe('API_DOCS_ENABLED (VRMS spec 0026, AC-2 and AC-12)', () => {
+  const enabled = (raw: Record<string, unknown>): boolean => {
+    const env = validateEnv(raw);
+    return apiDocsEnabled((key) => env[key]);
+  };
+
+  it('follows NODE_ENV when unset or blank', () => {
+    expect(enabled(testEnv)).toBe(true);
+    expect(enabled({ ...testEnv, NODE_ENV: 'development' })).toBe(true);
+    expect(enabled({ ...testEnv, API_DOCS_ENABLED: '  ' })).toBe(true);
+    expect(enabled(PRODUCTION)).toBe(false);
+    expect(enabled({ ...PRODUCTION, API_DOCS_ENABLED: '' })).toBe(false);
+  });
+
+  it('takes true or false over the NODE_ENV default', () => {
+    expect(enabled({ ...testEnv, API_DOCS_ENABLED: 'false' })).toBe(false);
+    expect(enabled({ ...PRODUCTION, API_DOCS_ENABLED: 'true' })).toBe(true);
+  });
+
+  it('refuses anything else', () => {
+    expect(errorOf({ ...testEnv, API_DOCS_ENABLED: 'yes' })).toContain(
+      'API_DOCS_ENABLED: must be true or false',
+    );
   });
 });
 

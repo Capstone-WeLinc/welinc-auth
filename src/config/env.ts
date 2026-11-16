@@ -106,6 +106,11 @@ export const envSchema = z.object({
   // Spec 0013, AC-8: admins confirm each portal sign in with an emailed code; false is local only
   ADMIN_SIGN_IN_CODE: flagOn,
 
+  /** VRMS spec 0026, AC-2: the docs at /auth/docs. Unset, on unless NODE_ENV is production (`apiDocsEnabled`). */
+  API_DOCS_ENABLED: optional(
+    z.enum(['true', 'false'], { error: 'must be true or false' }),
+  ).transform((v) => (v === undefined ? undefined : v === 'true')),
+
   // Spec 0011: sign in, session and code events are kept this long; account changes forever
   ACCOUNT_EVENT_RETENTION_DAYS: whole(30, 3650, 365),
   // Spec 0012: days between a soft delete and the erasure of the person's personal data
@@ -256,6 +261,13 @@ export function envWarnings(
     ];
   }
   return [];
+}
+
+/** VRMS spec 0026, AC-2: whether the docs routes are served; a blank switch follows `NODE_ENV`. */
+export function apiDocsEnabled(
+  get: <K extends keyof Env>(key: K) => Env[K],
+): boolean {
+  return get('API_DOCS_ENABLED') ?? get('NODE_ENV') !== 'production';
 }
 
 /** Valid values for tests (no secrets, no network): loaded by Jest setupFiles (AC-9). */

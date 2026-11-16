@@ -8,6 +8,7 @@ import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { envWarnings, type Env } from './config/env';
+import { mountDocs } from './openapi/docs';
 
 function isLocalDevOrigin(origin: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
@@ -72,6 +73,10 @@ async function bootstrap() {
     allowedHeaders: ['Authorization', 'Content-Type'],
     credentials: true,
   });
+
+  // VRMS spec 0026: /auth/docs, on locally and on staging, never in production
+  mountDocs(app, config);
+
   await app.listen(config.get('PORT', { infer: true }));
 }
 void bootstrap();

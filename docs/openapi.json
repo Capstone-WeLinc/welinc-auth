@@ -1,0 +1,2958 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/auth/.well-known/jwks.json": {
+      "get": {
+        "operationId": "WellKnownController_jwks",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "The public part of every `current`, `next` and `retired` key.",
+        "tags": [
+          "WellKnown"
+        ]
+      }
+    },
+    "/auth/.well-known/oauth-authorization-server": {
+      "get": {
+        "operationId": "WellKnownController_metadata",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "RFC 8414 metadata, with the code flow of spec 0003.",
+        "tags": [
+          "WellKnown"
+        ]
+      }
+    },
+    "/auth/activity": {
+      "get": {
+        "operationId": "ActivityController_systemActivity",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "AC-13: the system's feed for its admins, 60 calls a minute each.",
+        "tags": [
+          "Activity"
+        ]
+      }
+    },
+    "/auth/activity/catalog": {
+      "get": {
+        "operationId": "ActivityController_catalog",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "AC-15: public, no user data. Labels for every category, type and reason.",
+        "tags": [
+          "Activity"
+        ]
+      }
+    },
+    "/auth/admin/activity": {
+      "get": {
+        "operationId": "AdminAccountsController_activity",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Spec 0011, AC-13: the system's feed, 60 calls a minute per admin across both families.",
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/code": {
+      "post": {
+        "operationId": "AdminController_sendCode",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "AC-7: emails a `SIGN_IN` code to the caller for this session's step up. Already passed:\n`{ passed: true }` and nothing is sent. Spec 0009's send limits and address count apply.",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/auth/admin/code/verify": {
+      "post": {
+        "operationId": "AdminController_verifyCode",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifySignInDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "AC-7: a right code sets `sign_in_code_at` on the cookie session and writes\n`ADMIN_CODE_PASSED`. A ticket that belongs to someone else counts as expired.",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/auth/admin/deletion-requests": {
+      "get": {
+        "operationId": "AdminAccountsController_deletionRequests",
+        "parameters": [
+          {
+            "name": "system",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          },
+          {
+            "name": "view",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Object"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Object"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Object"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/deletion-requests/{id}/approve": {
+      "post": {
+        "operationId": "AdminAccountsController_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminOptionalSystemDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/deletion-requests/{id}/reject": {
+      "post": {
+        "operationId": "AdminAccountsController_reject",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRejectDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/me": {
+      "get": {
+        "operationId": "AdminController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "AC-15: answers for any signed in person, so the launcher knows whether to show Admin.",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/auth/admin/permissions/{system}": {
+      "get": {
+        "operationId": "AdminPermissionsController_read",
+        "parameters": [
+          {
+            "name": "system",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminPermissions"
+        ]
+      },
+      "patch": {
+        "operationId": "AdminPermissionsController_update",
+        "parameters": [
+          {
+            "name": "system",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMatrixDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminPermissions"
+        ]
+      }
+    },
+    "/auth/admin/permissions/{system}/changes": {
+      "get": {
+        "operationId": "AdminPermissionsController_changes",
+        "parameters": [
+          {
+            "name": "system",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AdminPermissions"
+        ]
+      }
+    },
+    "/auth/admin/report": {
+      "get": {
+        "operationId": "SuiteAdminController_report",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SuiteAdmin"
+        ]
+      }
+    },
+    "/auth/admin/suite-admins": {
+      "get": {
+        "operationId": "SuiteAdminController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "SuiteAdmin"
+        ]
+      },
+      "post": {
+        "operationId": "SuiteAdminController_add",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddSuiteAdminDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SuiteAdmin"
+        ]
+      }
+    },
+    "/auth/admin/suite-admins/{userId}/remove": {
+      "post": {
+        "operationId": "SuiteAdminController_remove",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveSuiteAdminDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "A `POST`, since some clients drop `DELETE` bodies (AC-2).",
+        "tags": [
+          "SuiteAdmin"
+        ]
+      }
+    },
+    "/auth/admin/temporary-grants": {
+      "get": {
+        "operationId": "SuiteAdminController_listGrants",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "SuiteAdmin"
+        ]
+      },
+      "post": {
+        "operationId": "SuiteAdminController_startGrant",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartGrantDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SuiteAdmin"
+        ]
+      }
+    },
+    "/auth/admin/temporary-grants/{id}": {
+      "delete": {
+        "operationId": "SuiteAdminController_endGrant",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "SuiteAdmin"
+        ]
+      }
+    },
+    "/auth/admin/users": {
+      "get": {
+        "operationId": "AdminAccountsController_listUsers",
+        "parameters": [
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "LOCKED",
+                "SETUP_PENDING",
+                "EMAIL_NOT_VERIFIED",
+                "ACTIVE",
+                "INACTIVE",
+                "PENDING_DELETION"
+              ]
+            }
+          },
+          {
+            "name": "role",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 400,
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      },
+      "post": {
+        "operationId": "AdminAccountsController_createUser",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCreateUserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/{id}": {
+      "delete": {
+        "operationId": "AdminAccountsController_deleteUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      },
+      "get": {
+        "operationId": "AdminAccountsController_getUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      },
+      "patch": {
+        "operationId": "AdminAccountsController_updateUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUpdateUserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/{id}/activity": {
+      "get": {
+        "operationId": "AdminAccountsController_userActivity",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/{id}/reset-code": {
+      "post": {
+        "operationId": "AdminAccountsController_sendResetCode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSystemReauthDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "A reset code, or a setup code while setup is pending (AC-16, spec 0009).",
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/{id}/restore": {
+      "post": {
+        "operationId": "AdminAccountsController_restoreUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminOptionalSystemDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/{id}/sessions": {
+      "delete": {
+        "operationId": "AdminAccountsController_endSessions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSystemReauthDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      },
+      "get": {
+        "operationId": "AdminAccountsController_sessions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/{id}/status": {
+      "patch": {
+        "operationId": "AdminAccountsController_setStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSetStatusDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/{id}/unlock": {
+      "patch": {
+        "operationId": "AdminAccountsController_unlock",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSystemReauthDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/users/lookup": {
+      "get": {
+        "operationId": "AdminAccountsController_lookupUsers",
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minLength": 2,
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/admin/verify-password": {
+      "post": {
+        "operationId": "AdminAccountsController_verifyPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminVerifyPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "AC-14: a reauth token bound to this cookie session; `ADMIN_ACTION` or `TEMPORARY_ACCESS`.",
+        "tags": [
+          "AdminAccounts"
+        ]
+      }
+    },
+    "/auth/authorize": {
+      "get": {
+        "operationId": "SsoController_authorizeStart",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "The start of the code flow (AC-13).",
+        "tags": [
+          "Sso"
+        ]
+      }
+    },
+    "/auth/authorize/resume": {
+      "get": {
+        "operationId": "SsoController_authorizeResume",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "The portal continues a login request after a password login (AC-14).",
+        "tags": [
+          "Sso"
+        ]
+      }
+    },
+    "/auth/deletion-requests": {
+      "get": {
+        "operationId": "DeletionController_list",
+        "parameters": [
+          {
+            "name": "view",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Object"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Object"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Object"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Deletion"
+        ]
+      }
+    },
+    "/auth/deletion-requests/{id}/approve": {
+      "post": {
+        "operationId": "DeletionController_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Deletion"
+        ]
+      }
+    },
+    "/auth/deletion-requests/{id}/reject": {
+      "post": {
+        "operationId": "DeletionController_reject",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectDeletionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Deletion"
+        ]
+      }
+    },
+    "/auth/directory/changes": {
+      "get": {
+        "operationId": "DirectoryController_changes",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Directory"
+        ]
+      }
+    },
+    "/auth/directory/users": {
+      "get": {
+        "operationId": "DirectoryController_listUsers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Directory"
+        ]
+      }
+    },
+    "/auth/directory/users/lookup": {
+      "post": {
+        "operationId": "DirectoryController_lookup",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Directory"
+        ]
+      }
+    },
+    "/auth/forgot-password": {
+      "post": {
+        "operationId": "AuthController_forgotPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/health": {
+      "get": {
+        "operationId": "HealthController_health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "SsoController_login",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "The portal login (spec 0003, AC-11; spec 0007, AC-3): checks the password, builds the\nlauncher answer, then creates a web session and sets `welinc_sso`. Never answers a token.\nNo usable system means 403 and no session. A browser that already holds an SSO session\nloses it first. An unverified email gets the code step instead, last of all, so nobody\nwithout a system is sent a code (spec 0009, AC-7).",
+        "tags": [
+          "Sso"
+        ]
+      }
+    },
+    "/auth/login/verify-email": {
+      "post": {
+        "operationId": "SsoController_verifyEmail",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifySignInDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Spec 0009, AC-9: the sign in step's code. The ticket's row, then the account and its systems\nagain (no try counted), then the code; a right one confirms the email and finishes the login\nexactly as `/auth/login` does. 10 calls a minute per address (AC-6).",
+        "tags": [
+          "Sso"
+        ]
+      }
+    },
+    "/auth/login/verify-email/resend": {
+      "post": {
+        "operationId": "SsoController_resendEmailCode",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendSignInDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Spec 0009, AC-10: a new code on the same ticket.",
+        "tags": [
+          "Sso"
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "SessionEndController_logout",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Ends a session (AC-24, AC-42). Always 204 once the caller is known: an unknown, foreign or\nalready ended token ends nothing and says nothing about why.",
+        "tags": [
+          "SessionEnd"
+        ]
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "AuthController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/me/sessions": {
+      "get": {
+        "operationId": "SessionsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Your live sessions, newest activity first, with `current` on this one (AC-31).",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/auth/me/sessions/{sid}": {
+      "delete": {
+        "operationId": "SessionsController_endMine",
+        "parameters": [
+          {
+            "name": "sid",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Ends one of your sessions (`USER_ENDED`). Your current one too: the app then acts as after a\nlogout. A sid that isn't yours answers 404; one of yours that already ended answers 204.",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/auth/mobile/login": {
+      "post": {
+        "operationId": "MobileController_login",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobileLoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Mobile"
+        ]
+      }
+    },
+    "/auth/mobile/login/verify-email": {
+      "post": {
+        "operationId": "MobileController_verifyEmail",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobileVerifySignInDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Suite spec 0009, AC-11: the email step's code, in AC-9's order. The ticket's row, then the\nclient, the account and the grant again (no try counted), then the code; a right one confirms\nthe email and answers the token body. 10 calls a minute per address (AC-6).",
+        "tags": [
+          "Mobile"
+        ]
+      }
+    },
+    "/auth/mobile/login/verify-email/resend": {
+      "post": {
+        "operationId": "MobileController_resendEmailCode",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendSignInDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Suite spec 0009, AC-11: a new code on the same ticket (AC-10).",
+        "tags": [
+          "Mobile"
+        ]
+      }
+    },
+    "/auth/permissions/{system}": {
+      "get": {
+        "operationId": "PermissionsController_read",
+        "parameters": [
+          {
+            "name": "system",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Permissions"
+        ]
+      }
+    },
+    "/auth/profile": {
+      "patch": {
+        "operationId": "AuthController_updateOwnProfile",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/profile/activity": {
+      "get": {
+        "operationId": "ActivityController_ownActivity",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Activity"
+        ]
+      }
+    },
+    "/auth/profile/deletion-request": {
+      "delete": {
+        "operationId": "DeletionController_cancel",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Deletion"
+        ]
+      },
+      "get": {
+        "operationId": "DeletionController_own",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Deletion"
+        ]
+      },
+      "post": {
+        "operationId": "DeletionController_request",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletionRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Deletion"
+        ]
+      }
+    },
+    "/auth/profile/email": {
+      "delete": {
+        "operationId": "AuthController_cancelEmailChange",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      },
+      "post": {
+        "operationId": "AuthController_startEmailChange",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartEmailChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/profile/email/verify": {
+      "post": {
+        "operationId": "AuthController_verifyEmailChange",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/profile/password": {
+      "patch": {
+        "operationId": "AuthController_changeOwnPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/profile/picture": {
+      "post": {
+        "operationId": "AuthController_uploadProfilePicture",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/profile/summary": {
+      "get": {
+        "operationId": "AuthController_getProfileSummary",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/profile/verify-password": {
+      "post": {
+        "operationId": "DeletionController_verifyPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Deletion"
+        ]
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "operationId": "AuthController_resetPasswordOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpResetPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "operationId": "SsoController_session",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "The session check for system backends (AC-1, AC-26, AC-27; spec 0001 section 6). A locked\naccount's live session still answers 200 (AC-4).",
+        "tags": [
+          "Sso"
+        ]
+      }
+    },
+    "/auth/session/activity": {
+      "post": {
+        "operationId": "SessionEndController_activity",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "An activity ping (AC-2, AC-3, AC-42): moves the session's idle cutoff. A used token inside\nits grace window still counts; past grace it answers 401 and ends nothing. A third ping in a\nminute for one `sid` is accepted and ignored (AC-38).",
+        "tags": [
+          "SessionEnd"
+        ]
+      }
+    },
+    "/auth/sso": {
+      "get": {
+        "operationId": "SsoController_sso",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Whether this browser holds a live SSO session, and the systems the launcher lists\n(spec 0007, AC-1, AC-2, AC-4). Never counts as activity.",
+        "tags": [
+          "Sso"
+        ]
+      }
+    },
+    "/auth/systems": {
+      "get": {
+        "operationId": "SystemsController_systems",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Systems"
+        ]
+      }
+    },
+    "/auth/token": {
+      "post": {
+        "operationId": "TokenController_token",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Token"
+        ]
+      }
+    },
+    "/auth/users": {
+      "get": {
+        "operationId": "AuthController_listUsers",
+        "parameters": [
+          {
+            "name": "system",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          },
+          {
+            "name": "role",
+            "required": false,
+            "in": "query",
+            "description": "Only users holding this role in the caller's system (spec 0004, AC-9).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      },
+      "post": {
+        "operationId": "AuthController_createUser",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/users/{id}": {
+      "delete": {
+        "operationId": "AuthController_deleteUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      },
+      "patch": {
+        "operationId": "AuthController_updateUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/users/{id}/activity": {
+      "get": {
+        "operationId": "ActivityController_userActivity",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "summary": "AC-12: one person's events for an admin of the token's system.",
+        "tags": [
+          "Activity"
+        ]
+      }
+    },
+    "/auth/users/{id}/restore": {
+      "post": {
+        "operationId": "AuthController_restoreUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/users/{id}/sessions": {
+      "delete": {
+        "operationId": "SessionsController_endAllOfUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBodyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Ends every live session of a user (AC-32). An admin account needs `reauthToken` in the body\n(spec 0013, AC-14b).",
+        "tags": [
+          "Sessions"
+        ]
+      },
+      "get": {
+        "operationId": "SessionsController_ofUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "A user's live sessions, for an admin who can see them (AC-32).",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/auth/users/{id}/status": {
+      "patch": {
+        "operationId": "AuthController_updateUserStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetUserStatusDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/users/{id}/unlock": {
+      "patch": {
+        "operationId": "AuthController_unlockUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthBodyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/users/lookup": {
+      "get": {
+        "operationId": "AuthController_lookupUsers",
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minLength": 2,
+              "maxLength": 100,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/verify-otp": {
+      "post": {
+        "operationId": "AuthController_verifyOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "WeLinc auth API",
+    "description": "The shared WeLinc auth service: sign in, sessions, tokens, people, roles and the permission matrix.\n\nThese docs are generated from the code and show the shapes of each route. On behavior (which\nerrors come when, lifetimes, the rules behind each route) the shared services contract wins:\n[contract 0001](https://github.com/Capstone-WeLinc/welinc-workspace/blob/main/docs/specs/_root/0001-shared-services-contract/index.md).",
+    "version": "0.0.1",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "userToken": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "A user access token (`token_use: user`), from the `/auth/token` code exchange or refresh."
+      },
+      "serviceToken": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "A service token (`aud: AUTH`, with `scope`), from the `/auth/token` client credentials grant."
+      },
+      "ssoCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "welinc_sso",
+        "description": "welinc-auth's SSO cookie, set by `/auth/login` (`__Secure-welinc_sso` when hosted)."
+      },
+      "vrmsSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "vrms_rt",
+        "description": "The VRMS web session's refresh cookie, on `/vrms/session`."
+      },
+      "clientAssertion": {
+        "type": "apiKey",
+        "in": "query",
+        "name": "client_assertion",
+        "description": "A `private_key_jwt` client assertion, sent in the form body of `/auth/token` with `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` (OpenAPI has no form body scheme, so it is listed here as a named field)."
+      }
+    },
+    "schemas": {
+      "AddSuiteAdminDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AdminCreateUserDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "roleAssignments": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleAssignmentDto"
+            }
+          },
+          "attachExisting": {
+            "type": "boolean",
+            "description": "Add the roles to the account that already owns this email (spec 0011, AC-30)."
+          },
+          "reauthToken": {
+            "type": "string",
+            "description": "Spec 0013, AC-14a, AC-14b: the actor's ADMIN_ACTION reauth token, when the change needs it.",
+            "maxLength": 200
+          },
+          "system": {
+            "type": "string",
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "roleAssignments",
+          "system"
+        ]
+      },
+      "AdminOptionalSystemDto": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ],
+            "type": "string"
+          }
+        }
+      },
+      "AdminRejectDto": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "type": "object"
+          }
+        }
+      },
+      "AdminSetStatusDto": {
+        "type": "object",
+        "properties": {
+          "isActive": {
+            "type": "boolean"
+          },
+          "system": {
+            "type": "string",
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ]
+          }
+        },
+        "required": [
+          "isActive",
+          "system"
+        ]
+      },
+      "AdminSystemReauthDto": {
+        "type": "object",
+        "properties": {
+          "reauthToken": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "system": {
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "system"
+        ]
+      },
+      "AdminUpdateUserDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "roleAssignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleAssignmentDto"
+            }
+          },
+          "reauthToken": {
+            "type": "string",
+            "description": "Spec 0013, AC-14a, AC-14b: the actor's ADMIN_ACTION reauth token, when the change needs it.",
+            "maxLength": 200
+          },
+          "system": {
+            "type": "string",
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ]
+          }
+        },
+        "required": [
+          "system"
+        ]
+      },
+      "AdminVerifyPasswordDto": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "object"
+          },
+          "purpose": {
+            "type": "object"
+          }
+        }
+      },
+      "ChangePasswordDto": {
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string"
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 6
+          },
+          "confirmPassword": {
+            "type": "string",
+            "minLength": 6
+          }
+        },
+        "required": [
+          "currentPassword",
+          "newPassword",
+          "confirmPassword"
+        ]
+      },
+      "CreateUserDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "roleAssignments": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleAssignmentDto"
+            }
+          },
+          "attachExisting": {
+            "type": "boolean",
+            "description": "Add the roles to the account that already owns this email (spec 0011, AC-30)."
+          },
+          "reauthToken": {
+            "type": "string",
+            "description": "Spec 0013, AC-14a, AC-14b: the actor's ADMIN_ACTION reauth token, when the change needs it.",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "roleAssignments"
+        ]
+      },
+      "DeletionRequestDto": {
+        "type": "object",
+        "properties": {
+          "reauthToken": {
+            "type": "object"
+          },
+          "reason": {
+            "type": "object"
+          }
+        }
+      },
+      "ForgotPasswordDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "reauthToken": {
+            "type": "string",
+            "description": "Spec 0013, AC-14b: an admin sending a code to an admin account sends their reauth token.",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "LoginDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string"
+          },
+          "recaptchaToken": {
+            "type": "string",
+            "description": "Sent by the portal once reCAPTCHA (WL-103) is wired; not checked yet.",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "MobileLoginDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string"
+          },
+          "clientId": {
+            "type": "string",
+            "description": "A public native client, such as `vmms-mobile`.",
+            "maxLength": 64
+          },
+          "deviceName": {
+            "type": "string",
+            "description": "The device as the app reports it; trimmed and cut to 100 characters (AC-33).",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "clientId",
+          "deviceName"
+        ]
+      },
+      "MobileVerifySignInDto": {
+        "type": "object",
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "code": {
+            "type": "string"
+          },
+          "clientId": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "deviceName": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "challengeId",
+          "code",
+          "clientId",
+          "deviceName"
+        ]
+      },
+      "Object": {
+        "type": "object",
+        "properties": {}
+      },
+      "OtpResetPasswordDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "otp": {
+            "type": "string"
+          },
+          "newPassword": {
+            "type": "string",
+            "pattern": "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{8,}$"
+          }
+        },
+        "required": [
+          "email",
+          "otp",
+          "newPassword"
+        ]
+      },
+      "ReauthBodyDto": {
+        "type": "object",
+        "properties": {
+          "reauthToken": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      },
+      "RejectDeletionDto": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "object"
+          }
+        }
+      },
+      "RemoveSuiteAdminDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ResendSignInDto": {
+        "type": "object",
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "challengeId"
+        ]
+      },
+      "RoleAssignmentDto": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "system": {
+            "type": "string",
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ]
+          }
+        },
+        "required": [
+          "role",
+          "system"
+        ]
+      },
+      "SetUserStatusDto": {
+        "type": "object",
+        "properties": {
+          "isActive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "isActive"
+        ]
+      },
+      "StartEmailChangeDto": {
+        "type": "object",
+        "properties": {
+          "newEmail": {
+            "type": "string",
+            "maxLength": 255,
+            "format": "email"
+          },
+          "currentPassword": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "newEmail",
+          "currentPassword"
+        ]
+      },
+      "StartGrantDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateMatrixDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpdateProfileDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "contact": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateUserDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "roleAssignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleAssignmentDto"
+            }
+          },
+          "reauthToken": {
+            "type": "string",
+            "description": "Spec 0013, AC-14a, AC-14b: the actor's ADMIN_ACTION reauth token, when the change needs it.",
+            "maxLength": 200
+          }
+        }
+      },
+      "VerifyEmailChangeDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "VerifyOtpDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "otp": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "otp"
+        ]
+      },
+      "VerifyPasswordDto": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "object"
+          },
+          "purpose": {
+            "type": "object"
+          }
+        }
+      },
+      "VerifySignInDto": {
+        "type": "object",
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "challengeId",
+          "code"
+        ]
+      }
+    }
+  }
+}

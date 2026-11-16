@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../shared/prisma.service';
 
 export type HealthCheck = 'ok' | 'failed';
@@ -39,6 +40,7 @@ export async function checkWithin(
  * The gateway and the host's probes call this (spec 0008, AC-22). Public, never rate limited, and
  * it shows only ok or failed, never the error behind a failure.
  */
+@ApiTags('Operations')
 @Controller('auth')
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
