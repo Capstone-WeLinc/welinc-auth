@@ -24,6 +24,18 @@ import type { UserCaller } from '../guards/request-authenticator';
 import type { AdminCaller } from '../user-scope';
 import { SessionService } from './session.service';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiErrorMap,
+  ApiGenericErrors,
+  ApiUserToken,
+} from '../../openapi/decorators';
+import {
+  NOT_FOUND,
+  SYSTEM_ADMIN,
+  USER_TOKEN,
+  VALIDATION,
+} from '../../openapi/guard-errors';
 type UserRequest = Pick<Request, 'ip' | 'headers'> & { user: UserCaller };
 
 /** The bearer admin's scope: the token's system and session (spec 0013, AC-16). */
@@ -39,6 +51,9 @@ const adminOf = (req: UserRequest): AdminCaller => ({
  * Seeing and ending sessions (spec 0003, AC-31, AC-32): your own under `/auth/me/sessions`, and
  * an admin's view of a user they can see (spec 0011 scoping) under `/auth/users/:id/sessions`.
  */
+@ApiTags('Sessions')
+@ApiUserToken()
+@ApiGenericErrors()
 @Controller('auth')
 @UseGuards(JwtAuthGuard)
 export class SessionsController {
@@ -49,6 +64,7 @@ export class SessionsController {
   ) {}
 
   /** Your live sessions, newest activity first, with `current` on this one (AC-31). */
+  @ApiErrorMap(USER_TOKEN)
   @Get('me/sessions')
   async mine(
     @Req() req: UserRequest,
@@ -64,6 +80,7 @@ export class SessionsController {
    * Ends one of your sessions (`USER_ENDED`). Your current one too: the app then acts as after a
    * logout. A sid that isn't yours answers 404; one of yours that already ended answers 204.
    */
+  @ApiErrorMap(VALIDATION, USER_TOKEN, { 404: [null] })
   @Delete('me/sessions/:sid')
   @HttpCode(HttpStatus.NO_CONTENT)
   async endMine(
@@ -83,6 +100,7 @@ export class SessionsController {
   }
 
   /** A user's live sessions, for an admin who can see them (AC-32). */
+  @ApiErrorMap(VALIDATION, SYSTEM_ADMIN, NOT_FOUND)
   @Get('users/:id/sessions')
   @SystemAdmin()
   async ofUser(
@@ -98,6 +116,9 @@ export class SessionsController {
    * Ends every live session of a user (AC-32). An admin account needs `reauthToken` in the body
    * (spec 0013, AC-14b).
    */
+  @ApiErrorMap(VALIDATION, SYSTEM_ADMIN, NOT_FOUND, {
+    403: ['REAUTH_REQUIRED', null],
+  })
   @Delete('users/:id/sessions')
   @SystemAdmin()
   async endAllOfUser(

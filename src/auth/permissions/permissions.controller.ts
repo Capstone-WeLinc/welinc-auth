@@ -17,6 +17,15 @@ import {
   type PermissionsReadRequest,
 } from './permissions-read.guard';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiErrorMap,
+  ApiGenericErrors,
+  ApiServiceToken,
+} from '../../openapi/decorators';
+import { SERVICE_SCOPE } from '../../openapi/guard-errors';
+import { ApiHeader, ApiOkResponse, ApiResponse } from '@nestjs/swagger';
+import { SystemMatrixResponse } from './permissions.response';
 /** A system code from the path, or 404 for anything else. */
 export function systemParam(value: string): SystemType {
   const system = value.toUpperCase();
@@ -31,11 +40,31 @@ export function systemParam(value: string): SystemType {
  * `If-None-Match` with the current tag answers 304 after one version read, so the poll costs
  * almost nothing while the matrix stays the same.
  */
+@ApiTags('Permissions')
+@ApiServiceToken()
+@ApiGenericErrors()
 @Controller('auth/permissions')
 @UseGuards(PermissionsReadGuard)
 export class PermissionsController {
   constructor(private readonly matrix: MatrixService) {}
 
+  @ApiErrorMap(SERVICE_SCOPE, { 403: ['WRONG_SYSTEM'], 404: ['NOT_FOUND'] })
+  @ApiHeader({
+    name: 'If-None-Match',
+    required: false,
+    description: 'The ETag you hold; a match answers 304',
+  })
+  @ApiOkResponse({
+    type: SystemMatrixResponse,
+    headers: {
+      ETag: { description: '`"v<version>"`', schema: { type: 'string' } },
+    },
+  })
+  @ApiResponse({
+    status: 304,
+    description: 'Not modified: your copy is current (no body)',
+    headers: { ETag: { schema: { type: 'string' } } },
+  })
   @Get(':system')
   async read(
     @Param('system') raw: string,

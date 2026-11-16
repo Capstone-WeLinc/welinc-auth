@@ -6,7 +6,16 @@ import {
   type TokenSettings,
 } from './tokens/token-config';
 
+import { ApiTags } from '@nestjs/swagger';
+import { ApiGenericErrors, ApiNoErrors } from '../openapi/decorators';
+import { ApiOkResponse } from '@nestjs/swagger';
+import {
+  AuthServerMetadataResponse,
+  JwksResponse,
+} from './well-known.response';
 /** Public discovery routes: no token needed (spec 0002, AC-3, AC-4). */
+@ApiTags('Discovery')
+@ApiGenericErrors()
 @Controller('auth/.well-known')
 export class WellKnownController {
   constructor(
@@ -15,6 +24,8 @@ export class WellKnownController {
   ) {}
 
   /** The public part of every `current`, `next` and `retired` key. */
+  @ApiNoErrors()
+  @ApiOkResponse({ type: JwksResponse })
   @Get('jwks.json')
   @Header('Cache-Control', 'public, max-age=300')
   jwks() {
@@ -22,6 +33,8 @@ export class WellKnownController {
   }
 
   /** RFC 8414 metadata, with the code flow of spec 0003. */
+  @ApiNoErrors()
+  @ApiOkResponse({ type: AuthServerMetadataResponse })
   @Get('oauth-authorization-server')
   metadata() {
     const issuer = this.settings.issuer;

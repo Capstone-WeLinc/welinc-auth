@@ -34,6 +34,21 @@ import {
   type AdminRequest,
 } from './admin-session.guard';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiCookieRoute,
+  ApiErrorMap,
+  ApiGenericErrors,
+  ApiSsoCookie,
+} from '../../openapi/decorators';
+import {
+  ADMIN_SIGNED_IN,
+  ADMIN_STEP,
+  CODE_MAIL,
+  CODE_ROUTE_LIMIT,
+  CSRF,
+  VALIDATION,
+} from '../../openapi/guard-errors';
 /** The `GET /auth/admin/me` body (spec 0013, AC-15). */
 export type AdminMe = {
   user: { id: string; name: string; email: string; picture: string | null };
@@ -49,6 +64,9 @@ export type AdminMe = {
  * Spec 0013: the portal admin section's routes, authenticated by the `welinc_sso` cookie
  * (AC-14). Slice 1 holds who the caller is and the step up code (AC-7, AC-15).
  */
+@ApiTags('Portal Admin Session')
+@ApiSsoCookie()
+@ApiGenericErrors()
 @Controller('auth/admin')
 @UseGuards(AdminSessionGuard)
 export class AdminController {
@@ -60,6 +78,7 @@ export class AdminController {
   ) {}
 
   /** AC-15: answers for any signed in person, so the launcher knows whether to show Admin. */
+  @ApiErrorMap(ADMIN_SIGNED_IN)
   @Get('me')
   @AdminRoute('signed-in')
   async me(
@@ -90,6 +109,10 @@ export class AdminController {
    * AC-7: emails a `SIGN_IN` code to the caller for this session's step up. Already passed:
    * `{ passed: true }` and nothing is sent. Spec 0009's send limits and address count apply.
    */
+  @ApiCookieRoute()
+  @ApiErrorMap(ADMIN_STEP, CSRF, CODE_ROUTE_LIMIT, CODE_MAIL, {
+    409: ['CODE_NOT_REQUIRED'],
+  })
   @Post('code')
   @HttpCode(HttpStatus.OK)
   @AdminRoute('admin')
@@ -123,6 +146,11 @@ export class AdminController {
    * AC-7: a right code sets `sign_in_code_at` on the cookie session and writes
    * `ADMIN_CODE_PASSED`. A ticket that belongs to someone else counts as expired.
    */
+  @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_STEP, CSRF, CODE_ROUTE_LIMIT, {
+    400: ['CODE_EXPIRED', 'INVALID_CODE'],
+    409: ['CODE_NOT_REQUIRED'],
+  })
   @Post('code/verify')
   @HttpCode(HttpStatus.NO_CONTENT)
   @AdminRoute('admin')

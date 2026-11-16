@@ -48,6 +48,24 @@ import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 import { SessionService, sessionExpiresAt } from './session.service';
 import { readSsoCookie, setSsoCookie } from './sso-cookie';
 
+import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiCookieRoute,
+  ApiErrorMap,
+  ApiGenericErrors,
+  ApiHtmlError,
+  ApiNoErrors,
+  ApiSsoCookie,
+  ApiUserToken,
+} from '../../openapi/decorators';
+import {
+  CODE_MAIL,
+  CODE_ROUTE_LIMIT,
+  CSRF,
+  SIGN_IN,
+  VALIDATION,
+} from '../../openapi/guard-errors';
+import { SessionResponse } from './session.response';
 /** `/auth/authorize` allows 30 a minute per address (spec 0003, AC-13, AC-38). */
 export const AUTHORIZE_LIMIT = { limit: 30, ttlMs: 60_000 };
 
@@ -64,6 +82,8 @@ const sessionEnded = () =>
  * The browser and session check routes of spec 0003: the portal login with the SSO cookie,
  * `/auth/sso`, the authorize routes, and `/auth/session` for system backends.
  */
+@ApiTags('Web Login')
+@ApiGenericErrors()
 @Controller('auth')
 export class SsoController {
   constructor(
@@ -86,6 +106,10 @@ export class SsoController {
    * loses it first. An unverified email gets the code step instead, last of all, so nobody
    * without a system is sent a code (spec 0009, AC-7).
    */
+  @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, CSRF, SIGN_IN, CODE_ROUTE_LIMIT, CODE_MAIL, {
+    403: ['NO_SYSTEM_ACCESS'],
+  })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -130,6 +154,12 @@ export class SsoController {
    * again (no try counted), then the code; a right one confirms the email and finishes the login
    * exactly as `/auth/login` does. 10 calls a minute per address (AC-6).
    */
+  @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, CSRF, CODE_ROUTE_LIMIT, {
+    400: ['CODE_EXPIRED', 'INVALID_CODE'],
+    401: [null],
+    403: ['ACCOUNT_INACTIVE', 'ACCOUNT_LOCKED', 'NO_SYSTEM_ACCESS'],
+  })
   @Post('login/verify-email')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -156,6 +186,10 @@ export class SsoController {
   }
 
   /** Spec 0009, AC-10: a new code on the same ticket. */
+  @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, CSRF, CODE_ROUTE_LIMIT, CODE_MAIL, {
+    400: ['CODE_EXPIRED'],
+  })
   @Post('login/verify-email/resend')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -205,6 +239,12 @@ export class SsoController {
    * Whether this browser holds a live SSO session, and the systems the launcher lists
    * (spec 0007, AC-1, AC-2, AC-4). Never counts as activity.
    */
+  @ApiSsoCookie()
+  @ApiErrorMap({
+    401: ['SESSION_ENDED'],
+    403: ['NO_SYSTEM_ACCESS'],
+    429: ['RATE_LIMITED'],
+  })
   @Get('sso')
   async sso(
     @Req() req: Request,
@@ -237,6 +277,15 @@ export class SsoController {
   }
 
   /** The start of the code flow (AC-13). */
+  @ApiSsoCookie()
+  @ApiHtmlError(
+    400,
+    'An HTML page: the client, redirect address, state or PKCE challenge is not valid',
+  )
+  @ApiHtmlError(
+    429,
+    'An HTML page: 30 a minute per address, with `Retry-After`',
+  )
   @Get('authorize')
   async authorizeStart(
     @Query() query: Record<string, unknown>,
@@ -278,6 +327,8 @@ export class SsoController {
   }
 
   /** The portal continues a login request after a password login (AC-14). */
+  @ApiSsoCookie()
+  @ApiNoErrors()
   @Get('authorize/resume')
   async authorizeResume(
     @Query('request') request: unknown,
@@ -298,6 +349,9 @@ export class SsoController {
    * The session check for system backends (AC-1, AC-26, AC-27; spec 0001 section 6). A locked
    * account's live session still answers 200 (AC-4).
    */
+  @ApiUserToken()
+  @ApiErrorMap({ 401: ['ACCOUNT_INACTIVE', 'SESSION_ENDED', 'TOKEN_EXPIRED'] })
+  @ApiOkResponse({ type: SessionResponse })
   @Get('session')
   async session(
     @Req() req: Request,

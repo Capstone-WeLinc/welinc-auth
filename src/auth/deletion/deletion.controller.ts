@@ -31,6 +31,19 @@ import {
   VerifyPasswordDto,
 } from './deletion.dto';
 
+import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiErrorMap,
+  ApiGenericErrors,
+  ApiUserToken,
+} from '../../openapi/decorators';
+import {
+  NOT_FOUND,
+  PASSWORD_CHECK,
+  SYSTEM_ADMIN,
+  USER_TOKEN,
+  VALIDATION,
+} from '../../openapi/guard-errors';
 /** AC-2: verify password takes at most 10 calls a minute per user. */
 export const VERIFY_PASSWORD_LIMIT = { limit: 10, ttlMs: 60_000 };
 
@@ -85,6 +98,9 @@ const admin = (req: AdminRequest) => ({
  * Spec 0012: password recheck and account deletion requests. User tokens only: a service token
  * gets 403 WRONG_TOKEN_USE from the guards (no route here takes a service scope).
  */
+@ApiTags('Account Deletion')
+@ApiUserToken()
+@ApiGenericErrors()
 @Controller('auth')
 export class DeletionController {
   constructor(
@@ -93,6 +109,11 @@ export class DeletionController {
   ) {}
 
   @UseGuards(JwtAuthGuard)
+  @ApiErrorMap(VALIDATION, USER_TOKEN, PASSWORD_CHECK, {
+    400: ['VALIDATION_FAILED'],
+    403: ['NOT_AN_ADMIN'],
+    429: ['RATE_LIMITED'],
+  })
   @Post('profile/verify-password')
   @HttpCode(HttpStatus.OK)
   async verifyPassword(
@@ -105,6 +126,11 @@ export class DeletionController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiErrorMap(VALIDATION, USER_TOKEN, {
+    400: ['VALIDATION_FAILED'],
+    403: ['REAUTH_REQUIRED'],
+    409: ['DELETION_PENDING', 'IS_SUITE_ADMIN', 'LAST_ADMIN'],
+  })
   @Post('profile/deletion-request')
   @HttpCode(HttpStatus.CREATED)
   request(@Req() req: SelfRequest, @Body() dto: DeletionRequestDto) {
@@ -112,12 +138,14 @@ export class DeletionController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiErrorMap(USER_TOKEN)
   @Get('profile/deletion-request')
   own(@Req() req: SelfRequest) {
     return this.deletion.own(req.user.sub);
   }
 
   @UseGuards(JwtAuthGuard)
+  @ApiErrorMap(USER_TOKEN)
   @Delete('profile/deletion-request')
   @HttpCode(HttpStatus.NO_CONTENT)
   async cancel(@Req() req: SelfRequest): Promise<void> {
@@ -125,12 +153,19 @@ export class DeletionController {
   }
 
   @SystemAdmin()
+  @ApiErrorMap(VALIDATION, SYSTEM_ADMIN, {
+    400: ['INVALID_CURSOR', 'VALIDATION_FAILED'],
+  })
   @Get('deletion-requests')
   list(@Req() req: AdminRequest, @Query() query: DeletionListQueryDto) {
     return this.deletion.list(req.user.system, query);
   }
 
   @SystemAdmin()
+  @ApiErrorMap(VALIDATION, SYSTEM_ADMIN, NOT_FOUND, {
+    403: ['SELF_DECISION'],
+    409: ['LAST_ADMIN', 'NOT_PENDING'],
+  })
   @Post('deletion-requests/:id/approve')
   @HttpCode(HttpStatus.OK)
   approve(@Param('id', ParseUUIDPipe) id: string, @Req() req: AdminRequest) {
@@ -138,6 +173,11 @@ export class DeletionController {
   }
 
   @SystemAdmin()
+  @ApiErrorMap(VALIDATION, SYSTEM_ADMIN, NOT_FOUND, {
+    400: ['VALIDATION_FAILED'],
+    403: ['SELF_DECISION'],
+    409: ['NOT_PENDING'],
+  })
   @Post('deletion-requests/:id/reject')
   @HttpCode(HttpStatus.OK)
   reject(
