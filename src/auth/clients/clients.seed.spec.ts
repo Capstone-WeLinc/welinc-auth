@@ -123,16 +123,16 @@ describe('seedClients', () => {
   // covers: spec 0003 (the registry's web and redirect addresses come from env)
   it('builds each callback from API_PUBLIC_URL and the web address from env', async () => {
     const calls = await run({
-      API_PUBLIC_URL: 'https://api.welinc.tech/',
-      CLIENT_VRMS_WEB_ADDRESS: 'https://vrms.welinc.tech',
-      PORTAL_URL: 'https://portal.welinc.tech',
+      API_PUBLIC_URL: 'https://api.welinc.app/',
+      CLIENT_VRMS_WEB_ADDRESS: 'https://vrms.welinc.app',
+      PORTAL_URL: 'https://portal.welinc.app',
     });
     expect(calls.vrms.update).toMatchObject({
-      webAddress: 'https://vrms.welinc.tech',
-      redirectUris: ['https://api.welinc.tech/vrms/session/callback'],
+      webAddress: 'https://vrms.welinc.app',
+      redirectUris: ['https://api.welinc.app/vrms/session/callback'],
     });
     expect(calls.portal.update).toMatchObject({
-      webAddress: 'https://portal.welinc.tech',
+      webAddress: 'https://portal.welinc.app',
       redirectUris: [],
     });
     expect(calls['vmms-mobile'].update).toMatchObject({
