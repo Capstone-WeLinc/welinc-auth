@@ -10354,7 +10354,59 @@
     "version": "0.0.1",
     "contact": {}
   },
-  "tags": [],
+  "tags": [
+    {
+      "name": "Account Deletion"
+    },
+    {
+      "name": "Accounts"
+    },
+    {
+      "name": "Activity"
+    },
+    {
+      "name": "Directory"
+    },
+    {
+      "name": "Discovery"
+    },
+    {
+      "name": "Mobile Login"
+    },
+    {
+      "name": "Operations"
+    },
+    {
+      "name": "Permissions"
+    },
+    {
+      "name": "Portal Admin Accounts"
+    },
+    {
+      "name": "Portal Admin Permissions"
+    },
+    {
+      "name": "Portal Admin Session"
+    },
+    {
+      "name": "Portal Suite Admins"
+    },
+    {
+      "name": "Session End"
+    },
+    {
+      "name": "Sessions"
+    },
+    {
+      "name": "Systems"
+    },
+    {
+      "name": "Tokens"
+    },
+    {
+      "name": "Web Login"
+    }
+  ],
   "servers": [
     {
       "url": "/"

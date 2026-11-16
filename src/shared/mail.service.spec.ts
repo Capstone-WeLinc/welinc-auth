@@ -15,7 +15,9 @@ const SMTP = {
 /** A MailService whose SMTP transport is a spy, so nothing is sent. */
 function build(overrides: Record<string, string | undefined>) {
   const service = new MailService(fakeConfig(overrides));
-  const sendMail = jest.fn(() => Promise.resolve({}));
+  const sendMail = jest.fn<(options: unknown) => Promise<unknown>>(() =>
+    Promise.resolve({}),
+  );
   (service as unknown as { transporter: unknown }).transporter = { sendMail };
   const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
   return { service, sendMail, log };
@@ -28,7 +30,9 @@ const mail = (to: string) => ({
   tag: 'user=u1 purpose=TEST',
 });
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 describe('MailService', () => {
   it('logs mail to a seed address in development, even with SMTP on', async () => {

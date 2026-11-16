@@ -45,7 +45,9 @@ const where = { host: 'job-host', osUser: 'node' };
     let pool: pg.Pool;
     let prisma: PrismaClient;
     let service: AdminRecoveryService;
-    const sendSetupCode = jest.fn(() => Promise.resolve(true));
+    const sendSetupCode = jest.fn<(arg: unknown) => Promise<boolean>>(() =>
+      Promise.resolve(true),
+    );
 
     beforeAll(async () => {
       admin = new Client({ connectionString: urlFor('postgres') });
