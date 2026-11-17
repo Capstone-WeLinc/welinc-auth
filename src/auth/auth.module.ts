@@ -62,6 +62,10 @@ import { SuiteAdminController } from './admin/suite-admin.controller';
 import { SuiteAdminsService } from './admin/suite-admins.service';
 import { TemporaryGrantsService } from './admin/temporary-grants.service';
 import { AdminReportService } from './admin/admin-report.service';
+import {
+  SentryTestController,
+  SentryTestSwitch,
+} from './admin/sentry-test.controller';
 
 @Module({
   // The throttler guards /auth/token only, never globally (spec 0002, AC-18)
@@ -115,6 +119,8 @@ import { AdminReportService } from './admin/admin-report.service';
     // Spec 0013 slice 5: the central permission matrix
     MatrixService,
     PermissionsReadGuard,
+    // VRMS spec 0025, AC-16: the staging only test route's switch
+    SentryTestSwitch,
     { provide: APP_FILTER, useClass: CodeErrorFilter },
   ],
   controllers: [
@@ -134,6 +140,7 @@ import { AdminReportService } from './admin/admin-report.service';
     SuiteAdminController,
     PermissionsController,
     AdminPermissionsController,
+    SentryTestController,
   ],
 })
 export default class AuthModule {}
