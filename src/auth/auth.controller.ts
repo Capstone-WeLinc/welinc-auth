@@ -15,6 +15,8 @@ import {
   UseGuards,
   UseInterceptors,
   ParseUUIDPipe,
+  ParseFilePipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -366,7 +368,11 @@ export class AuthController {
         const allowed = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
         const ext = file.originalname.toLowerCase().split('.').pop();
         if (!ext || !allowed.includes(`.${ext}`)) {
-          return cb(new Error('Only image files are allowed'), false);
+          // A plain Error here would answer 500 (S17).
+          return cb(
+            new BadRequestException('Only image files are allowed'),
+            false,
+          );
         }
         cb(null, true);
       },
@@ -374,7 +380,8 @@ export class AuthController {
   )
   uploadProfilePicture(
     @Req() req: SelfRequest,
-    @UploadedFile()
+    // 400 when no file is sent, before the service reads it (S17).
+    @UploadedFile(new ParseFilePipe())
     file: {
       originalname: string;
       buffer: Buffer;
