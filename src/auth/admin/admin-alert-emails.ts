@@ -2,7 +2,8 @@ import type { SystemType } from '@prisma/client';
 import { escapeHtml, type Email } from '../codes/code-emails';
 
 // Spec 0013, AC-13: the admin change alert. One email per recipient per save, listing every
-// change in it, with who, what, when (Asia/Manila), the actor and the reason, and a portal link.
+// change in it, with who, what, when (Asia/Manila), the actor and the reason, and where to see it in the
+// portal, named in plain text with no link (suite spec 0009, AC-34).
 
 const BRAND = 'WeLinc Logistics';
 
@@ -102,7 +103,7 @@ export function adminAlertEmail(input: {
   recipientName: string;
   actorName: string;
   lines: AlertLine[];
-  link: string;
+  portalHost: string;
 }): Email {
   const first = input.lines[0];
   const subject =
@@ -122,7 +123,7 @@ export function adminAlertEmail(input: {
     `Hello, ${input.recipientName || 'there'}!`,
     'You are getting this because you are an admin who would want to know about this change.',
     ...input.lines.map((line) => `${alertSentence(line)}\n${details(line)}`),
-    `See it in the portal: ${input.link}`,
+    `See it in the portal at ${input.portalHost}, under Admin.`,
     "If you didn't expect this, check the account right away.",
   ].join('\n\n');
 
@@ -138,7 +139,7 @@ export function adminAlertEmail(input: {
           .map(escapeHtml)
           .join('<br>')}</p>`,
     ),
-    `<p><a href="${escapeHtml(input.link)}">See it in the portal</a></p>`,
+    `<p>See it in the portal at ${escapeHtml(input.portalHost)}, under Admin.</p>`,
     "<p>If you didn't expect this, check the account right away.</p>",
   ].join('\n');
 

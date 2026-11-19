@@ -1,3 +1,4 @@
+import { portalHostOf } from '../shared/portal-host';
 import {
   BadRequestException,
   ConflictException,
@@ -321,8 +322,8 @@ export type LookupUserResponse = {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly lookupLimiter = new LookupLimiter();
-  /** Where setup and reset emails send people (spec 0009, AC-16). */
-  private readonly passwordLink: string;
+  /** The portal host setup and reset emails name in plain text (suite spec 0009, AC-34). */
+  private readonly portalHost: string;
   /** Hosted: every email domain must receive mail (`validateEmailDomain`). */
   private readonly production: boolean;
 
@@ -340,8 +341,7 @@ export class AuthService {
     private readonly alerts: AdminAlertsService,
   ) {
     // PORTAL_URL is required and checked at boot (spec 0010)
-    const portalUrl = config.get('PORTAL_URL', { infer: true });
-    this.passwordLink = `${portalUrl.replace(/\/+$/, '')}/forgot-password`;
+    this.portalHost = portalHostOf(config.get('PORTAL_URL', { infer: true }));
     this.production = config.get('NODE_ENV', { infer: true }) === 'production';
   }
 
@@ -1128,7 +1128,7 @@ export class AuthService {
             purpose,
             name: user.name,
             code,
-            link: this.passwordLink,
+            portalHost: this.portalHost,
           }),
       },
     });

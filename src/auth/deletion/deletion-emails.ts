@@ -44,7 +44,6 @@ export function requestForAdminsEmail(input: {
   personName: string;
   personEmail: string;
   reason: string | null;
-  reviewLink: string;
 }): Email {
   const who = `${input.personName} (${input.personEmail})`;
   const reason = input.reason ? `"${input.reason}"` : 'No reason given.';
@@ -53,12 +52,12 @@ export function requestForAdminsEmail(input: {
     text: paragraphs(input.adminName, [
       `${who} asked to delete their account.`,
       `Their reason: ${reason}`,
-      `Review it on the Users page of your system: ${input.reviewLink}`,
+      'Review it on the Users page of your system.',
     ]),
     html: paragraphsHtml(input.adminName, [
       `<strong>${escapeHtml(who)}</strong> asked to delete their account.`,
       `Their reason: ${escapeHtml(reason)}`,
-      `Review it on the Users page of your system: <a href="${escapeHtml(input.reviewLink)}">${escapeHtml(input.reviewLink)}</a>`,
+      'Review it on the Users page of your system.',
     ]),
   };
 }

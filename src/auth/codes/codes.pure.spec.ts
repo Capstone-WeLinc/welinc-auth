@@ -128,7 +128,7 @@ describe('code emails', () => {
         purpose: VerificationPurpose.PASSWORD_SETUP,
         name: 'P',
         code: '123456',
-        link: 'https://portal/forgot-password',
+        portalHost: 'portal.welinc.test',
       }).text,
     ).toContain('1 hour');
   });

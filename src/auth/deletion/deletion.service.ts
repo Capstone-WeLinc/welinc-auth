@@ -192,7 +192,6 @@ export class DeletionService {
   /** The notice emails waiting to go out, one after another (see `send`). */
   private mailQueue: Promise<void> = Promise.resolve();
   private readonly graceDays: number;
-  private readonly reviewLink: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -206,9 +205,6 @@ export class DeletionService {
     private readonly alerts: AdminAlertsService,
   ) {
     this.graceDays = config.get('ACCOUNT_ERASURE_GRACE_DAYS', { infer: true });
-    this.reviewLink = config
-      .get('PORTAL_URL', { infer: true })
-      .replace(/\/+$/, '');
   }
 
   /** When a soft deleted account is erased (Value sourcing: computed at read time). */
@@ -326,7 +322,6 @@ export class DeletionService {
           personName: person.name,
           personEmail: person.email,
           reason,
-          reviewLink: this.reviewLink,
         }),
       );
     }

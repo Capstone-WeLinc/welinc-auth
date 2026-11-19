@@ -83,7 +83,7 @@ export const envSchema = z.object({
   /** Proxy hops in front of welinc-auth (spec 0002, AC-18): 1 locally (nginx), 2 hosted. */
   TRUST_PROXY_HOPS: whole(0, 10, 0),
   CORS_ORIGINS: originList,
-  /** The portal: setup and reset links, and the one Origin the SSO cookie routes accept. */
+  /** The portal: its host named in emails (no links, suite spec 0009 AC-34), and the one Origin the SSO cookie routes accept. */
   PORTAL_URL: url,
   DATABASE_URL: required,
   /** The `pg.Pool` size (VRMS spec 0008, AC-21): 3 when hosted, where a server has about 35. */
