@@ -384,6 +384,36 @@ describe('Sentry settings (VRMS spec 0025 AC-14, AC-15)', () => {
     ).toBe(true);
   });
 
+  it('reads SEED_MAIL_REDIRECT as a template with one {tag} before the @ (spec 0009 AC-33)', () => {
+    for (const bad of [
+      'team@gmail.com',
+      'team+{tag}{tag}@gmail.com',
+      'team@gmail.com{tag}',
+      '{tag}',
+      'team+{tag}@',
+    ]) {
+      expect(errorOf({ ...testEnv, SEED_MAIL_REDIRECT: bad })).toContain(
+        'SEED_MAIL_REDIRECT: must be an email address with one {tag}',
+      );
+    }
+    expect(validateEnv({ ...testEnv }).SEED_MAIL_REDIRECT).toBeUndefined();
+    expect(
+      validateEnv({ ...PRODUCTION, SEED_MAIL_REDIRECT: 'team+{tag}@gmail.com' })
+        .SEED_MAIL_REDIRECT,
+    ).toBe('team+{tag}@gmail.com');
+  });
+
+  it('refuses SEED_MAIL_REDIRECT in production (spec 0009 AC-33)', () => {
+    expect(
+      errorOf({
+        ...PRODUCTION,
+        SENTRY_DSN: DSN,
+        SENTRY_ENVIRONMENT: 'production',
+        SEED_MAIL_REDIRECT: 'team+{tag}@gmail.com',
+      }),
+    ).toContain('SEED_MAIL_REDIRECT: must not be set in production');
+  });
+
   it('allows the test routes on staging', () => {
     const env = validateEnv({
       ...testEnv,

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { fakeConfig } from '../config/fake-config.setup';
-import { isDevAddress } from './dev-email-domains';
+import { isDevAddress, seedMailRecipient } from './dev-email-domains';
 import { MailService } from './mail.service';
 
-// covers: spec 0009 AC-1 (the development log fallback), AC-32 (seed mail logged on staging); seed
-// addresses never leave the machine
+// covers: spec 0009 AC-1 (the development log fallback), AC-32 (seed mail logged on staging), AC-33
+// (seed mail to the team inbox on staging); seed addresses never reach welinc.com
 
 const SMTP = {
   SMTP_HOST: 'smtp.example.org',
@@ -93,6 +93,59 @@ describe('MailService', () => {
       expect.objectContaining({ to: 'vrms.admin@welinc.com' }),
     );
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it('sends seed mail to the team inbox on staging (SEED_MAIL_REDIRECT), not the log', async () => {
+    const { service, sendMail, log } = build({
+      ...HOSTED,
+      SEED_MAIL_TO_LOG: 'true',
+      SEED_MAIL_REDIRECT: 'welinc.demo+{tag}@gmail.com',
+    });
+    await service.sendMail(mail('vrms.admin@welinc.com'));
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'welinc.demo+vrms.admin@gmail.com',
+        subject: 'Your code',
+        text: 'Code 123456',
+      }),
+    );
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('sends a real address as is while SEED_MAIL_REDIRECT is set', async () => {
+    const { service, sendMail } = build({
+      ...HOSTED,
+      SEED_MAIL_REDIRECT: 'welinc.demo+{tag}@gmail.com',
+    });
+    await service.sendMail(mail('someone@gmail.com'));
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: 'someone@gmail.com' }),
+    );
+  });
+
+  it('falls back to the log when SEED_MAIL_REDIRECT is set but SMTP is off', async () => {
+    const { service, sendMail, log } = build({
+      ...HOSTED,
+      SEED_MAIL_TO_LOG: 'true',
+      SEED_MAIL_REDIRECT: 'welinc.demo+{tag}@gmail.com',
+    });
+    (service as unknown as { transporter: unknown }).transporter = null;
+    await service.sendMail(mail('vrms.admin@welinc.com'));
+    expect(sendMail).not.toHaveBeenCalled();
+    expect(String(log.mock.calls[0]?.[0])).toContain('Code 123456');
+  });
+
+  it('builds the team inbox tag from the seed name', () => {
+    const t = 'team+{tag}@gmail.com';
+    expect(seedMailRecipient('VRMS.Admin@welinc.com', t)).toBe(
+      'team+vrms.admin@gmail.com',
+    );
+    expect(seedMailRecipient('a+b c@welinc.com', t)).toBe(
+      'team+a-b-c@gmail.com',
+    );
+    expect(seedMailRecipient(`${'x'.repeat(60)}@welinc.com`, t)).toBe(
+      `team+${'x'.repeat(40)}@gmail.com`,
+    );
   });
 
   it('knows the made up seed domains and nothing else', () => {

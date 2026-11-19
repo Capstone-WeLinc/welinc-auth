@@ -148,9 +148,27 @@ export const envSchema = z.object({
   SENTRY_TEST_ROUTES: flag,
   /** Staging only (spec 0009, AC-32): mail to a seed address is logged, never sent. Refused with SENTRY_ENVIRONMENT=production. */
   SEED_MAIL_TO_LOG: flag,
+  /**
+   * Staging only (spec 0009, AC-33): mail to a seed address goes to this address, `{tag}` replaced
+   * by the seed address's name, for example `team+{tag}@gmail.com`. Beats SEED_MAIL_TO_LOG. Refused
+   * with SENTRY_ENVIRONMENT=production.
+   */
+  SEED_MAIL_REDIRECT: optional(
+    z.string().trim().refine(isSeedMailTemplate, {
+      error:
+        'must be an email address with one {tag} before the @, like team+{tag}@gmail.com',
+    }),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** One `{tag}`, before the `@`, and a valid address once it is filled in (spec 0009, AC-33). */
+function isSeedMailTemplate(value: string): boolean {
+  const parts = value.split('{tag}');
+  if (parts.length !== 2 || !parts[1].includes('@')) return false;
+  return z.email().safeParse(parts.join('x')).success;
+}
 
 /** URL variables held to https and no localhost in production (AC-4). */
 const PRODUCTION_URLS = ['PORTAL_URL'] as const;
@@ -265,6 +283,9 @@ function sentryIssues(raw: Record<string, unknown>): string[] {
     environment === 'production'
   ) {
     lines.push('SEED_MAIL_TO_LOG: must not be true in production');
+  }
+  if (text(raw, 'SEED_MAIL_REDIRECT') && environment === 'production') {
+    lines.push('SEED_MAIL_REDIRECT: must not be set in production');
   }
   return lines;
 }
