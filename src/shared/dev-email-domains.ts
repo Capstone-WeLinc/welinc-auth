@@ -1,7 +1,8 @@
 /**
  * Made up domains the seed accounts and local tests use (spec 0006). On a development machine an
- * address here skips the DNS check when an account is made, and its email is printed to the log
- * instead of sent, so seed accounts get their codes while real addresses still go through SMTP.
+ * address here skips the DNS check when an account is made. Its email is printed to the log instead
+ * of sent outside production, and on staging too (SEED_MAIL_TO_LOG, spec 0009 AC-32), so seed
+ * accounts get their codes while real addresses still go through SMTP.
  */
 export const DEV_EMAIL_DOMAINS = [
   'welinc.com',

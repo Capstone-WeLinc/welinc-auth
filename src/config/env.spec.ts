@@ -363,6 +363,27 @@ describe('Sentry settings (VRMS spec 0025 AC-14, AC-15)', () => {
     ).toContain('SENTRY_TEST_ROUTES: must not be true in production');
   });
 
+  it('refuses SEED_MAIL_TO_LOG in production (spec 0009 AC-32)', () => {
+    expect(
+      errorOf({
+        ...PRODUCTION,
+        SENTRY_DSN: DSN,
+        SENTRY_ENVIRONMENT: 'production',
+        SEED_MAIL_TO_LOG: 'true',
+      }),
+    ).toContain('SEED_MAIL_TO_LOG: must not be true in production');
+  });
+
+  it('reads SEED_MAIL_TO_LOG strictly: only true or false (spec 0009 AC-32)', () => {
+    expect(errorOf({ ...testEnv, SEED_MAIL_TO_LOG: '1' })).toContain(
+      'SEED_MAIL_TO_LOG: must be true or false',
+    );
+    expect(validateEnv({ ...testEnv }).SEED_MAIL_TO_LOG).toBe(false);
+    expect(
+      validateEnv({ ...PRODUCTION, SEED_MAIL_TO_LOG: 'true' }).SEED_MAIL_TO_LOG,
+    ).toBe(true);
+  });
+
   it('allows the test routes on staging', () => {
     const env = validateEnv({
       ...testEnv,

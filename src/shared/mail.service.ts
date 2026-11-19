@@ -10,6 +10,7 @@ export class MailService {
   private transporter: nodemailer.Transporter | null = null;
   private readonly from: string;
   private readonly production: boolean;
+  private readonly seedMailToLog: boolean;
 
   /** SMTP counts as on only when host, user and pass are all set; boot warns otherwise (spec 0010, AC-5). */
   constructor(config: ConfigService<Env, true>) {
@@ -19,6 +20,7 @@ export class MailService {
     const pass = config.get('SMTP_PASS', { infer: true });
     this.from = config.get('SMTP_FROM', { infer: true });
     this.production = config.get('NODE_ENV', { infer: true }) === 'production';
+    this.seedMailToLog = config.get('SEED_MAIL_TO_LOG', { infer: true });
 
     if (host && user && pass) {
       this.transporter = nodemailer.createTransport({
@@ -35,11 +37,12 @@ export class MailService {
   }
 
   /**
-   * Sends the email, or throws when it can't be sent. In development it prints the whole email
-   * instead when SMTP is off, or when the address is on a made up seed domain (`welinc.com` and the
-   * rest of `DEV_EMAIL_DOMAINS`), so seed accounts get their codes while real addresses still go
-   * through SMTP: the one log allowed to hold a code or an address (spec 0009, AC-1). The boot
-   * check already requires SMTP in production; this throw is the second guard.
+   * Sends the email, or throws when it can't be sent. It prints the whole email instead when the
+   * address is on a made up seed domain (`welinc.com` and the rest of `DEV_EMAIL_DOMAINS`) outside
+   * production or on staging (`SEED_MAIL_TO_LOG`, spec 0009 AC-32), and in development when SMTP is
+   * off. So seed accounts get their codes while real addresses still go through SMTP: the one log
+   * allowed to hold a code or an address (AC-1). The boot check already requires SMTP in
+   * production; this throw is the second guard.
    */
   async sendMail(options: {
     to: string;
@@ -49,7 +52,7 @@ export class MailService {
     /** What the log line names instead of the address: `user=<id> purpose=<kind>` (spec 0009, AC-1). */
     tag: string;
   }): Promise<void> {
-    if (!this.production && isDevAddress(options.to)) {
+    if ((!this.production || this.seedMailToLog) && isDevAddress(options.to)) {
       this.logFallback(options);
       return;
     }
