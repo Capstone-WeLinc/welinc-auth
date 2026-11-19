@@ -146,6 +146,8 @@ export const envSchema = z.object({
   SENTRY_RELEASE: optional(z.string().trim()),
   /** Staging only: POST /auth/admin/debug/sentry-test. Refused with SENTRY_ENVIRONMENT=production. */
   SENTRY_TEST_ROUTES: flag,
+  /** Staging only (spec 0009, AC-32): mail to a seed address is logged, never sent. Refused with SENTRY_ENVIRONMENT=production. */
+  SEED_MAIL_TO_LOG: flag,
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -257,6 +259,12 @@ function sentryIssues(raw: Record<string, unknown>): string[] {
     environment === 'production'
   ) {
     lines.push('SENTRY_TEST_ROUTES: must not be true in production');
+  }
+  if (
+    text(raw, 'SEED_MAIL_TO_LOG') === 'true' &&
+    environment === 'production'
+  ) {
+    lines.push('SEED_MAIL_TO_LOG: must not be true in production');
   }
   return lines;
 }
