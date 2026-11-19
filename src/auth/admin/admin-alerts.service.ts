@@ -1,3 +1,4 @@
+import { portalHostOf } from '../../shared/portal-host';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SystemType } from '@prisma/client';
@@ -50,7 +51,8 @@ type Recipient = {
 export class AdminAlertsService {
   private readonly logger = new Logger(AdminAlertsService.name);
   private mailQueue: Promise<void> = Promise.resolve();
-  private readonly portal: string;
+  /** Named in plain text, never linked (suite spec 0009, AC-34). */
+  private readonly portalHost: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -58,7 +60,7 @@ export class AdminAlertsService {
     private readonly mail: MailService,
     config: ConfigService<Env, true>,
   ) {
-    this.portal = config.get('PORTAL_URL', { infer: true }).replace(/\/+$/, '');
+    this.portalHost = portalHostOf(config.get('PORTAL_URL', { infer: true }));
   }
 
   /** Call after the commit, with every change of one save. */
@@ -149,16 +151,12 @@ export class AdminAlertsService {
           alert.systems.some((s) => recipient.adminOf.has(s)),
       );
       if (mine.length === 0) continue;
-      const link = this.linkFor(
-        recipient,
-        mine.map((m) => m.alert),
-      );
       this.queue(recipient, () =>
         adminAlertEmail({
           recipientName: recipient.name,
           actorName,
           lines: mine.map((m) => m.line),
-          link,
+          portalHost: this.portalHost,
         }),
       );
     }
@@ -215,25 +213,6 @@ export class AdminAlertsService {
           .map((r) => r.system),
       ),
     }));
-  }
-
-  /** The person page when the save was about one person, else the admin section. */
-  private linkFor(recipient: Recipient, alerts: AdminAlert[]): string {
-    const matrix = alerts.find((a) => a.kind === 'PERMISSIONS_CHANGED');
-    if (matrix?.roleSystem) {
-      return `${this.portal}/admin/permissions?system=${matrix.roleSystem}`;
-    }
-    const targets = new Set(alerts.map((a) => a.targetId));
-    if (targets.size !== 1) return `${this.portal}/admin`;
-    const [targetId] = targets;
-    const systems = alerts.flatMap((a) =>
-      a.systems === 'ALL' ? [] : a.systems,
-    );
-    const system =
-      systems.find((s) => recipient.adminOf.has(s)) ??
-      (recipient.suite ? systems[0] : undefined);
-    const query = system ? `?system=${system}` : '';
-    return `${this.portal}/admin/people/${targetId}${query}`;
   }
 
   /** Waits for queued alert emails; a script calls it before it exits (AC-12). */

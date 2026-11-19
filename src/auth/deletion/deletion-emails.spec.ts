@@ -45,17 +45,17 @@ describe('deletion emails', () => {
     expect(requestReceivedEmail({ name: '' }).text).toContain('Hello, there!');
   });
 
-  it('escapes names, reason and link for admins in the html part', () => {
+  it('escapes names and reason for admins in the html part, and holds no link (0009 AC-34)', () => {
     const e = requestForAdminsEmail({
       adminName: EVIL,
       personName: EVIL,
       personEmail: 'a@welinc.com',
       reason: EVIL,
-      reviewLink: 'https://x.test/?a=1&b="2"',
     });
     expect(e.html).not.toContain('<script>');
     expect(e.html).toContain('&lt;script&gt;');
-    expect(e.html).toContain('&amp;b=&quot;2&quot;');
+    expect(e.html).not.toContain('<a');
+    expect(e.text).toContain('Users page of your system.');
   });
 
   it('says no reason was given when there is none', () => {
@@ -64,7 +64,6 @@ describe('deletion emails', () => {
       personName: 'Ana',
       personEmail: 'a@welinc.com',
       reason: null,
-      reviewLink: 'https://x.test',
     });
     expect(e.text).toContain('No reason given.');
   });

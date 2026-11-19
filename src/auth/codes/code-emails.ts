@@ -2,7 +2,9 @@ import { VerificationPurpose } from '@prisma/client';
 import { lifetimeText } from './code-config';
 
 // Spec 0009, AC-24: every code and notice email, each with a text and an HTML part. Names and
-// addresses are HTML escaped. The old address never receives a code.
+// addresses are HTML escaped. The old address never receives a code. Suite spec 0009 AC-34: no
+// email holds a link or URL; Brevo rewrites links through a tracking domain some networks can't
+// reach, so the portal is named by its host in plain text.
 
 export type Email = { subject: string; text: string; html: string };
 
@@ -18,8 +20,6 @@ export function escapeHtml(value: string): string {
 const BRAND = 'WeLinc Logistics';
 const CODE_STYLE =
   'font-size: 24px; font-weight: bold; color: #1a1f6e; letter-spacing: 2px;';
-const LINK_STYLE =
-  'color: #1a1f6e; font-weight: bold; text-decoration: underline;';
 const NOT_YOU =
   "If this wasn't you, change your password and tell your admin right away.";
 
@@ -27,21 +27,21 @@ const greet = (name: string) => `Hello, ${name || 'there'}!`;
 const greetHtml = (name: string) =>
   `<p>Hello, <strong>${escapeHtml(name || 'there')}</strong>!</p>`;
 
-/** Setup (60 min) or reset (10 min) code, with the portal link (AC-13). */
+/** Setup (60 min) or reset (10 min) code, naming the portal host in plain text (AC-13, AC-34). */
 export function passwordCodeEmail(input: {
   purpose:
     | typeof VerificationPurpose.PASSWORD_SETUP
     | typeof VerificationPurpose.PASSWORD_RESET;
   name: string;
   code: string;
-  link: string;
+  portalHost: string;
 }): Email {
   const setup = input.purpose === VerificationPurpose.PASSWORD_SETUP;
   const lifetime = lifetimeText(input.purpose);
   const intro = setup
     ? `Welcome to ${BRAND}! An administrator created your account. Use this code to set your password.`
     : 'You asked to reset your password. Use this code to set a new one.';
-  const action = setup ? 'Set up your password' : 'Reset your password';
+  const where = `Go to ${input.portalHost}, choose Forgot password, enter your email, then type this code. If you already have the reset page open, type it there.`;
   return {
     subject: setup
       ? `${BRAND} - Set up your account`
@@ -52,14 +52,13 @@ ${intro}
 
 ${setup ? 'Setup' : 'Reset'} code: ${input.code}
 
-${action} here:
-${input.link}
+${where}
 
 This code expires in ${lifetime}. If you didn't ask for it, you can ignore this email.`,
     html: `${greetHtml(input.name)}
 <p>${escapeHtml(intro)}</p>
 <h2 style="${CODE_STYLE}">${input.code}</h2>
-<p><a href="${escapeHtml(input.link)}" style="${LINK_STYLE}">${action}</a></p>
+<p>${escapeHtml(where)}</p>
 <p>This code expires in ${lifetime}. If you didn't ask for it, you can ignore this email.</p>`,
   };
 }

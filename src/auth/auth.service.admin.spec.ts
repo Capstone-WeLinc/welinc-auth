@@ -928,7 +928,7 @@ describe('AuthService admin writes', () => {
   });
 });
 
-describe('AuthService password links and reset', () => {
+describe('AuthService password emails and reset', () => {
   // covers: AC-16
   describe('PORTAL_URL', () => {
     const user = {
@@ -948,12 +948,13 @@ describe('AuthService password links and reset', () => {
       return sendMail.mock.calls[0][0].text as string;
     }
 
-    it('links the reset email to the configured portal', async () => {
+    it('names the configured portal host in plain text, with no link (0009 AC-34)', async () => {
       const text = await mailedText({
         PORTAL_URL: 'https://portal.welinc.com',
       });
 
-      expect(text).toContain('https://portal.welinc.com/forgot-password');
+      expect(text).toContain('Go to portal.welinc.com, choose Forgot password');
+      expect(text).not.toMatch(/https?:\/\//);
     });
 
     it('ignores trailing slashes on the portal address', async () => {
@@ -961,8 +962,8 @@ describe('AuthService password links and reset', () => {
         PORTAL_URL: 'https://portal.welinc.com//',
       });
 
-      expect(text).toContain('https://portal.welinc.com/forgot-password');
-      expect(text).not.toContain('com//forgot');
+      expect(text).toContain('Go to portal.welinc.com, choose');
+      expect(text).not.toContain('com/');
     });
 
     // PORTAL_URL being required (no localhost fallback) is the boot check's job: env.spec.ts
