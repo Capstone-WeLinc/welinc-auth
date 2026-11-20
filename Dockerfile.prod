@@ -38,6 +38,10 @@ COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/geo ./geo
 # Profile pictures; hosted, an Azure Files share is mounted here (AC-14)
 RUN mkdir -p uploads && chown node:node uploads
+# Spec 0025: the deploy passes the commit it built; Sentry tags every event with it. Blank
+# (a local build) means no release. Last, so a new commit reuses every layer above.
+ARG GIT_SHA=
+ENV SENTRY_RELEASE=$GIT_SHA
 USER node
 EXPOSE 3001
 CMD ["node", "dist/src/main"]

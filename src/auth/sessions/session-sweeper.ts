@@ -8,6 +8,7 @@ import {
   SessionKind,
 } from '@prisma/client';
 import type { Env } from '../../config/env';
+import { reportJobFailure } from '../../monitoring/job-failure';
 import { PrismaService } from '../../shared/prisma.service';
 import { AccountEventsService } from '../events/account-events.service';
 import { deviceLabel } from './device-label';
@@ -77,6 +78,7 @@ export class SessionSweeper {
       await this.sweep();
     } catch (error) {
       this.logger.error(`session sweep failed: ${(error as Error).message}`);
+      reportJobFailure('session-sweep', error);
     }
   }
 

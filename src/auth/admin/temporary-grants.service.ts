@@ -24,6 +24,7 @@ import { AdminAlertsService, type AdminAlert } from './admin-alerts.service';
 import { grantActive, notAdminOfSystem, notSuiteAdmin } from './admin-errors';
 import type { AdminStanding } from './admin-standing.service';
 import { reasonProblem } from './admin-recovery.service';
+import { reportJobFailure } from '../../monitoring/job-failure';
 
 type Tx = Prisma.TransactionClient;
 
@@ -482,6 +483,7 @@ export class TemporaryGrantsService {
       this.logger.error(
         `temporary access sweep failed: ${error instanceof Error ? error.message : 'unknown error'}`,
       );
+      reportJobFailure('temporary-grant-sweep', error);
     }
   }
 
