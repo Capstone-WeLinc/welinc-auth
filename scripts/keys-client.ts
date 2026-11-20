@@ -56,7 +56,7 @@ async function main() {
     `  public key → ${name} in ${publicFile.path}${kept.length ? ' (the previous key is kept beside it)' : ''}`,
   );
   console.log(
-    'Next: apply both files with set-secrets.sh, run `npm run seed:clients` in welinc-auth, then deploy the client.',
+    'Next: apply both values (hosted: rotate-secret.sh and infra/private/<env>.json, see docs/keys.md), run `npm run seed:clients` in welinc-auth, then deploy the client.',
   );
 }
 
