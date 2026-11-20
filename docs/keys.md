@@ -25,35 +25,48 @@ Run this once on a new machine, or after you reset your `.env` files:
 
 You'll see `signing key auth-… is current` in the auth log at startup.
 
+## Running a step on a hosted environment
+
+On staging (or production), the key set lives in the workspace's `infra/private/<env>.json` as `auth.signingKeys`, a JSON string, not in an env file. Run every step from the workspace root with:
+
+```bash
+PATH="$HOME/.local/bin:$PATH" bash infra/scripts/rotate-signing-keys.sh <staging|prod> <add|promote|remove> [--now] [<kid>]
+```
+
+It copies the key set into a temporary env file, runs `keys:rotate` there (a step that is too early is refused and nothing changes), writes the result back to the private file, and sets it with `rotate-secret.sh` on `auth-service-<env>` (restarted) and on the `auth-migrate-<env>` and `auth-seed-<env>` jobs. It prints key ids only. Then update the password manager copy of the private file. Locally, run `keys:rotate` on `welinc-auth/.env` and recreate the auth container.
+
 ## A planned rotation (nobody is logged out)
 
-Run each step against the environment's private secrets file (spec 0008), and apply it with `set-secrets.sh` straight away. The script times each wait from the moment it writes the file, so a step you apply late gives verifiers less time than the script assumes.
+Apply each step straight away (the hosted script above does). The script times each wait from the moment it writes the file, so a step you apply late gives verifiers less time than the script assumes.
 
-1. `npm run keys:rotate -- <private file> add`, then `set-secrets.sh`. The new key is published as `next`; the old key still signs.
-2. Wait at least 60 minutes. Every service caches the key set for up to 5 minutes, so an hour leaves a wide margin. Then run `npm run keys:rotate -- <private file> promote` and `set-secrets.sh`. New tokens carry the new `kid`; the old key is `retired` and still published, so tokens it signed keep working.
-3. Wait until the time `promote` printed for `remove`: the longer token life (`ACCESS_TOKEN_MINUTES` or `SERVICE_TOKEN_MINUTES`, from the same file) plus 30 minutes. Then run `npm run keys:rotate -- <private file> remove` and `set-secrets.sh`.
+1. `add`. The new key is published as `next`; the old key still signs.
+2. Wait, then `promote`. New tokens carry the new `kid`; the old key is `retired` and still published, so tokens it signed keep working.
+3. Wait, then `remove`. The old key is gone.
 
 If you run a step too early, the script refuses and prints when it becomes allowed. Each step also prints the next one with its earliest time.
 
-To check a rotation, stay signed in to VRMS through all three steps; you should never be sent back to the login page. Before launch, do one rotation on staging this way.
+**The waits.** The script's defaults are wide margins: 60 minutes before `promote`, and the longer token life (`ACCESS_TOKEN_MINUTES` or `SERVICE_TOKEN_MINUTES`) plus 30 minutes before `remove`. The real limits are smaller: every service caches the key set for at most 5 minutes (and VRMS refetches once on an unknown `kid`), and no token outlives its life. So `promote --now` 10 minutes after `add`, then `remove --now <old kid>` the longer token life plus 5 minutes after `promote`, is also safe. Staging was rotated that way on 2026-11-20 in 35 minutes.
+
+To check a rotation, stay signed in to VRMS through all three steps; you should never be sent back to the login page.
 
 ## A new environment
 
-There is no old key to protect, so you can skip the waits:
+There is no old key to protect, so you can skip the waits. Run steps 1 to 3 against temporary env files (a hosted private file is JSON):
 
 1. `npm run keys:rotate -- <private file> add`
 2. `npm run keys:rotate -- <private file> promote --now`
 3. `npm run keys:client -- vrms <backend-vrms private file> <auth private file>`
-4. `set-secrets.sh`, then deploy welinc-auth first, run `npm run seed:clients` once, then deploy backend-vrms, then the portal. A backend deployed before welinc-auth fails every request.
+4. Put the values in `infra/private/<env>.json` and run `apply.sh <env>` (workspace `infra/README.md`), then deploy welinc-auth first, run `npm run seed:clients` once, then deploy backend-vrms, then the portal. A backend deployed before welinc-auth fails every request.
 
 ## A leaked signing key
 
 Act at once. Everyone signed by the leaked key has to sign in again; that is the price of killing it.
 
-1. `npm run keys:rotate -- <private file> add`
-2. `npm run keys:rotate -- <private file> promote --now`
-3. `npm run keys:rotate -- <private file> remove --now <leaked kid>`
-4. `set-secrets.sh` and restart welinc-auth.
+1. `add`
+2. `promote --now`
+3. `remove --now <leaked kid>`
+
+On a hosted environment, run each through `rotate-signing-keys.sh` (above), which applies it and restarts welinc-auth. Locally, run them with `npm run keys:rotate -- .env <step>` and recreate the auth container.
 
 The script warns you that live tokens signed by the removed key stop working, and that a service may keep accepting that key for up to 5 more minutes from its cache. If the leaked key was already `retired`, skip steps 1 and 2.
 
@@ -62,7 +75,7 @@ The script warns you that live tokens signed by the removed key stop working, an
 A client key can only ask welinc-auth for that client's own service token (for VRMS: reading its own system's users), and only for 5 minutes at a time. Either fix stops it:
 
 - **Fastest:** switch the client off. Run `update oauth_clients set is_active = false where id = '<client id>';` against the auth database. Its next assertion is refused, and its service tokens stop working on welinc-auth's routes at once. `npm run seed:clients` never switches it back on; set `is_active = true` by hand when the new key is in place.
-- **Replace the key:** run `npm run keys:client -- <client id> <client private file> <auth private file> --force`. It writes the new private key and keeps the previous public key beside the new one. Apply both files with `set-secrets.sh`, run `npm run seed:clients`, and deploy the client. Once the client runs on the new key, remove the old public key from `CLIENT_<ID>_JWKS` (keep only the newest) and seed again.
+- **Replace the key:** run `npm run keys:client -- <client id> <client private file> <auth private file> --force`. It writes the new private key and keeps the previous public key beside the new one. On a hosted environment the private files are JSON, so run it against two temporary env files, then set the private half on the client's app and the public half on `auth-service-<env>` with the workspace's `infra/scripts/rotate-secret.sh`, and copy both into `infra/private/<env>.json` so the next apply keeps them. Then run `npm run seed:clients` and deploy the client. Once the client runs on the new key, remove the old public key from `CLIENT_<ID>_JWKS` (keep only the newest) and seed again.
 
 ## What each script refuses
 

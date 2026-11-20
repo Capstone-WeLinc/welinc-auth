@@ -52,7 +52,7 @@ async function main() {
 
   for (const line of notes) console.log(line);
   console.log(
-    `\nWritten to ${file.path}. Apply it now with set-secrets.sh: the waits count from the times just written.`,
+    `\nWritten to ${file.path}. Apply it now (hosted: the workspace's infra/scripts/rotate-signing-keys.sh does it for you; locally: recreate the auth container): the waits count from the times just written.`,
   );
 }
 
