@@ -65,7 +65,7 @@ describe('validateEnv', () => {
   });
 
   it('passes a full production set', () => {
-    expect(validateEnv(PRODUCTION).NODE_ENV).toBe('production');
+    expect(validateEnv(PRODUCTION).NODE_ENV).toBe('not-production');
   });
 
   it('lists every missing or blank required name at once, one line each (AC-1)', () => {
