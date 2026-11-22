@@ -1,9 +1,10 @@
 import { liveRoleWhere } from '../roles/live-roles';
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
-import { ClientKind, SystemType } from '@prisma/client';
+import { ClientKind, type Session, SystemType } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma.service';
 import { coded } from '../errors';
 import { allowedCodes } from '../roles/allowed-roles';
+import { sessionExpiresAt } from './session.service';
 
 // Spec 0007: which systems a person holds, for the portal launcher (`/auth/sso`, `/auth/login`)
 // and for each app's Switch system link (`user.systems` in every user grant answer).
@@ -42,12 +43,52 @@ export type LauncherMobileSystem = {
   app: { clientId: string; released: boolean };
 };
 
-/** The `/auth/sso` and `/auth/login` body (spec 0007, AC-1, AC-3; suite spec 0014, AC-4). */
-export type LauncherAnswer = {
+/** Who the person is and what they can open: the launcher body before the session is known. */
+export type LauncherSystems = {
   user: { id: string; name: string; email: string; picture: string | null };
   systems: LauncherSystem[];
   mobileSystems: LauncherMobileSystem[];
 };
+
+/** The browser session's cutoffs, as ISO times (suite spec 0016, AC-12a). */
+export type LauncherCutoffs = {
+  sessionExpiresAt: string;
+  sessionAbsoluteExpiresAt: string;
+  serverTime: string;
+};
+
+/**
+ * The `/auth/sso`, `/auth/login` and `/auth/login/verify-email` body (spec 0007, AC-1, AC-3;
+ * suite spec 0014, AC-4; suite spec 0016, AC-12a).
+ */
+export type LauncherAnswer = LauncherSystems & LauncherCutoffs;
+
+/** The session fields the cutoffs come from. */
+export type LauncherSession = Pick<
+  Session,
+  'endedAt' | 'idleExpiresAt' | 'absoluteExpiresAt'
+>;
+
+/**
+ * Adds the session's cutoffs to the launcher body. `sessionExpiresAt` is computed as
+ * `/auth/session` computes it; a web session always has a 12 hour cutoff, but one without
+ * falls back to the idle cutoff so the field is never missing.
+ */
+export function withCutoffs(
+  answer: LauncherSystems,
+  session: LauncherSession,
+  now: Date = new Date(),
+): LauncherAnswer {
+  const expires = sessionExpiresAt(session);
+  return {
+    ...answer,
+    sessionExpiresAt: expires.toISOString(),
+    sessionAbsoluteExpiresAt: (
+      session.absoluteExpiresAt ?? expires
+    ).toISOString(),
+    serverTime: now.toISOString(),
+  };
+}
 
 /** An active client row the launcher reads: confidential web clients and phone apps. */
 export type LauncherClientRow = {
@@ -247,10 +288,22 @@ export class LauncherService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * The launcher body for a user, or 403 `NO_SYSTEM_ACCESS` when neither a web nor a phone only
-   * system is left (spec 0007, AC-1 to AC-3; suite spec 0014, AC-5). Read only.
+   * The launcher body for a live session (`GET /auth/sso`): the person's systems plus the
+   * session's cutoffs (suite spec 0016, AC-12a). 403 `NO_SYSTEM_ACCESS` as `systemsFor`.
    */
-  async answerFor(user: LauncherInput): Promise<LauncherAnswer> {
+  async answerFor(
+    user: LauncherInput,
+    session: LauncherSession,
+  ): Promise<LauncherAnswer> {
+    return withCutoffs(await this.systemsFor(user), session);
+  }
+
+  /**
+   * The person's systems, or 403 `NO_SYSTEM_ACCESS` when neither a web nor a phone only
+   * system is left (spec 0007, AC-1 to AC-3; suite spec 0014, AC-5). Read only. A login calls
+   * this before it creates the session, then adds the cutoffs with `withCutoffs`.
+   */
+  async systemsFor(user: LauncherInput): Promise<LauncherSystems> {
     const held = await this.prisma.userRoleAssignment.findMany({
       where: { userId: user.id, ...liveRoleWhere() },
       select: { system: true, role: true },
@@ -298,7 +351,7 @@ export class LauncherService {
   private async noSystems(
     user: LauncherInput,
     mobileSystems: LauncherMobileSystem[],
-  ): Promise<LauncherAnswer> {
+  ): Promise<LauncherSystems> {
     const suite = await this.prisma.suiteAdmin.findUnique({
       where: { userId: user.id },
       select: { userId: true },
@@ -315,7 +368,7 @@ type LauncherInput = {
   profilePicture: string | null;
 };
 
-function launcherUser(user: LauncherInput): LauncherAnswer['user'] {
+function launcherUser(user: LauncherInput): LauncherSystems['user'] {
   return {
     id: user.id,
     name: user.name,

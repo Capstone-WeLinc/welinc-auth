@@ -5601,11 +5601,18 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "Signed in (the launcher answer), or the email code step when the address is not verified yet",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LauncherAnswerResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SignInStepResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -5743,7 +5750,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/LauncherAnswerResponse"
                 }
               }
             }
@@ -8603,7 +8610,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/LauncherAnswerResponse"
                 }
               }
             }
@@ -11051,6 +11058,177 @@
         },
         "required": [
           "keys"
+        ]
+      },
+      "LauncherAnswerResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/LauncherUserResponse"
+          },
+          "systems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LauncherSystemResponse"
+            }
+          },
+          "mobileSystems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LauncherMobileSystemResponse"
+            }
+          },
+          "sessionExpiresAt": {
+            "type": "string",
+            "description": "The earlier of the idle and the 12 hour cutoff of this browser session (ISO 8601)"
+          },
+          "sessionAbsoluteExpiresAt": {
+            "type": "string",
+            "description": "The 12 hour cutoff of this browser session (ISO 8601)"
+          },
+          "serverTime": {
+            "type": "string",
+            "description": "The server's clock when it answered (ISO 8601), so the portal can count on the server's time"
+          }
+        },
+        "required": [
+          "user",
+          "systems",
+          "mobileSystems",
+          "sessionExpiresAt",
+          "sessionAbsoluteExpiresAt",
+          "serverTime"
+        ]
+      },
+      "LauncherAppResponse": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string"
+          },
+          "released": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "clientId",
+          "released"
+        ]
+      },
+      "LauncherMobileSystemResponse": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "VMMS"
+          },
+          "description": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LauncherRoleResponse"
+            }
+          },
+          "app": {
+            "$ref": "#/components/schemas/LauncherAppResponse"
+          }
+        },
+        "required": [
+          "system",
+          "name",
+          "description",
+          "roles",
+          "app"
+        ]
+      },
+      "LauncherRoleResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "MECHANIC"
+          },
+          "name": {
+            "type": "string",
+            "example": "Mechanic"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ]
+      },
+      "LauncherSystemResponse": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "VRMS"
+          },
+          "description": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Where the system opens"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LauncherRoleResponse"
+            }
+          }
+        },
+        "required": [
+          "system",
+          "name",
+          "description",
+          "url",
+          "roles"
+        ]
+      },
+      "LauncherUserResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "VRMS Admin"
+          },
+          "email": {
+            "type": "string",
+            "example": "admin@welinc.com"
+          },
+          "picture": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "picture"
         ]
       },
       "LoginDto": {
