@@ -14,7 +14,13 @@ import { SystemType } from '@prisma/client';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { UpdateUserDto } from '../dto/update-user.dto';
 import { ROLE_CODE_RE, type RoleCode } from '../roles/catalog.types';
-import { PEOPLE_STATUSES, type PeopleStatus } from './people-page';
+import {
+  PEOPLE_GROUPS,
+  PEOPLE_SORTS,
+  PEOPLE_STATUS_LIST_RE,
+  type PeopleGroup,
+  type PeopleSort,
+} from './people-page';
 
 // Spec 0013, AC-16: the `/auth/admin/*` account bodies are today's bearer bodies plus the
 // `system` the admin acts in (checked against their admin roles by the controller).
@@ -48,9 +54,25 @@ export class AdminListUsersQueryDto extends AdminOptionalSystemDto {
   @MaxLength(100)
   q?: string;
 
+  /** One status, or a comma list read as any of them (suite spec 0017, AC-20). */
   @IsOptional()
-  @IsIn(PEOPLE_STATUSES)
-  status?: PeopleStatus;
+  @IsString()
+  @MaxLength(200)
+  @Matches(PEOPLE_STATUS_LIST_RE, {
+    message:
+      'status must be LOCKED, SETUP_PENDING, EMAIL_NOT_VERIFIED, ACTIVE, INACTIVE or PENDING_DELETION, or a comma list of them',
+  })
+  status?: string;
+
+  /** Suite spec 0017, AC-5: one group, and the answer adds `counts`. */
+  @IsOptional()
+  @IsIn(PEOPLE_GROUPS)
+  group?: PeopleGroup;
+
+  /** Suite spec 0017, AC-20: `name` (default), `lastSignedIn` or `newest`. */
+  @IsOptional()
+  @IsIn(PEOPLE_SORTS)
+  sort?: PeopleSort;
 
   @IsOptional()
   @IsString()

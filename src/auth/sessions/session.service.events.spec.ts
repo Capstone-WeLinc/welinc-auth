@@ -207,3 +207,52 @@ describe('SessionService.createMobile events', () => {
     }
   });
 });
+
+// Suite spec 0017, covers: AC-22 (both sign in sites stamp last_signed_in_at, forward only)
+describe('SessionService sign ins stamp last_signed_in_at', () => {
+  const stamps = (raw: jest.Mock) =>
+    raw.mock.calls.filter((call) =>
+      (call[0] as string[]).join('?').includes('last_signed_in_at'),
+    );
+
+  it('stamps it at a web sign in, forward only, with the same time as the session', async () => {
+    const { service, tx } = setup();
+    await service.createWeb({
+      userId: USER,
+      meta: { ip: '112.198.0.1', device: null, userAgent: CHROME },
+      previousHandle: undefined,
+    });
+    const calls = stamps(tx.$executeRaw);
+    expect(calls).toHaveLength(1);
+    const sql = (calls[0][0] as string[]).join('?');
+    expect(sql).toContain(
+      '"last_signed_in_at" IS NULL OR "last_signed_in_at" <',
+    );
+    const created = (tx.session.create.mock.calls[0] as unknown[])[0] as {
+      data: { createdAt: Date };
+    };
+    expect(calls[0][1]).toBe(created.data.createdAt);
+    expect(calls[0][2]).toBe(USER);
+  });
+
+  it('stamps it at a native login', async () => {
+    const { service, tx } = setup();
+    await service.createMobile({
+      userId: USER,
+      clientId: 'vmms-mobile',
+      audience: 'VMMS',
+      deviceName: 'Pixel 8',
+      meta: { ip: '112.198.0.1', device: 'Pixel 8', userAgent: 'okhttp/4' },
+    });
+    expect(stamps(tx.$executeRaw as jest.Mock)).toHaveLength(1);
+  });
+
+  it('does not stamp it when a system is opened on a live session', async () => {
+    const { service, tx } = setup({ count: 1 });
+    await service.addAudience(tx as never, SID, 'VRMS', {
+      ip: '112.198.0.1',
+      clientId: 'vrms-backend',
+    });
+    expect(stamps(tx.$executeRaw as jest.Mock)).toHaveLength(0);
+  });
+});

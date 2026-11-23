@@ -33,6 +33,37 @@ export type SuiteScope = Actor & { system: null; sid: string; suite: true };
 /** Where an account action runs: one system, or (suite admins only) the whole suite. */
 export type AccountScope = AdminCaller | SuiteScope;
 
+/**
+ * Suite spec 0017, AC-19: who the three People reads (list, person, activity) cover. Writes never
+ * take this; they keep one `system` (`AdminCaller`).
+ * - `systems`: a person counts when they hold a role in one of these; null is everyone (suite).
+ * - `only`: the one system the request named, which keeps today's answer shape (that system's
+ *   roles plus `otherSystems`); null answers every role and an empty `otherSystems`.
+ * - `suite`: a suite admin, who also sees soft deleted people in their grace period.
+ */
+export type ReadScope = {
+  systems: SystemType[] | null;
+  only: SystemType | null;
+  suite: boolean;
+};
+
+/**
+ * 404 unless the person is in a read scope. With no system named, a system admin never finds a
+ * soft deleted person (AC-19); with one named, the rule stays today's (`assertInScope`).
+ */
+export function assertInReadScope<
+  T extends { roles: { system: SystemType }[]; deletedAt?: Date | null },
+>(user: T | null | undefined, scope: ReadScope): asserts user is T {
+  const systems = scope.systems;
+  if (
+    !user ||
+    (systems !== null && !user.roles.some((r) => systems.includes(r.system))) ||
+    (!scope.suite && scope.only === null && user.deletedAt)
+  ) {
+    throw new NotFoundException('User not found');
+  }
+}
+
 /** 404 unless the person is in scope: any existing person for a suite wide caller. */
 export function assertInScope<T extends { roles: RoleAssignment[] }>(
   user: T | null | undefined,

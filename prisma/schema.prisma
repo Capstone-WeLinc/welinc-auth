@@ -106,7 +106,10 @@ model User {
   deletedAt            DateTime?                @map("deleted_at") @db.Timestamptz(6)
   // Spec 0012: personal data replaced by "Deleted user"; never cleared
   erasedAt             DateTime?                @map("erased_at") @db.Timestamptz(6)
-  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Suite spec 0017, AC-22: the newest sign in, forward only; its index is in the migration SQL
+  lastSignedInAt       DateTime?                @map("last_signed_in_at") @db.Timestamptz(3)
+  // Milliseconds: the "Newest first" keyset cursor (suite spec 0017, AC-20)
+  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   roles                UserRoleAssignment[]
   verificationCodes    VerificationCode[]

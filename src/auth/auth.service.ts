@@ -55,13 +55,21 @@ import {
   temporaryRole,
 } from './admin/admin-errors';
 import {
+  PEOPLE_GROUPS,
   afterCursor,
+  cursorAfter,
   decodePeopleCursor,
-  encodePeopleCursor,
+  filterKey,
+  groupWhere,
   parsePeopleLimit,
-  statusWhere,
-  type PeopleStatus,
+  parseStatuses,
+  peopleOrder,
+  statusesWhere,
+  type PeopleGroup,
+  type PeopleSort,
 } from './admin/people-page';
+
+const DAY_MS = 86_400_000;
 
 /** Who sent a code and from where (spec 0011, AC-5); the user themselves when left out. */
 type CodeSender = { actorId?: string; meta?: RequestMeta };
@@ -120,9 +128,11 @@ import {
 } from './user-changes';
 import type { EventInput } from './events/account-events.service';
 import {
+  type ReadScope,
   AccountScope,
   AdminCaller,
   LOOKUP_LIMIT,
+  assertInReadScope,
   assertInScope,
   LookupLimiter,
   assertInSystem,
@@ -245,6 +255,23 @@ const MANAGED_USER_SELECT = {
   },
 } satisfies Prisma.UserSelect;
 
+/** A People list row and the person page: the admin fields plus the two flags (spec 0013). */
+const PERSON_LIST_SELECT = {
+  ...MANAGED_USER_SELECT,
+  lastSignedInAt: true,
+  // Spec 0012, AC-9: an EXISTS on a pending request
+  deletionRequests: {
+    where: { status: DeletionRequestStatus.PENDING },
+    select: { id: true },
+    take: 1,
+  },
+  suiteAdmin: { select: { userId: true } },
+} satisfies Prisma.UserSelect;
+
+type PersonListRecord = Prisma.UserGetPayload<{
+  select: typeof PERSON_LIST_SELECT;
+}>;
+
 /** The signed in caller of a public route, when they sent a valid token (OptionalJwtAuthGuard). */
 export type OptionalCaller = {
   sub: string;
@@ -304,11 +331,38 @@ export type ManagedUserResponse = {
   roles: RoleAssignment[];
 };
 
+/** Suite spec 0017, AC-21: a role with when its temporary grant ends, null when permanent. */
+export type PersonRole = RoleAssignment & { temporaryUntil: string | null };
+
 /** An admin answer: only the caller's system roles, plus the other systems by name (spec 0011, AC-26). */
 export type ScopedUserResponse = ManagedUserResponse & {
   otherSystems: SystemType[];
-  /** Spec 0013, AC-11: when the person's temporary role in this system ends, else null. */
+  /** Spec 0013, AC-11: the latest end of the returned roles' temporary grants, else null. */
   temporaryUntil: string | null;
+};
+
+/** A People list row (spec 0013, AC-23; suite spec 0017, AC-21). */
+export type PersonListItem = Omit<ScopedUserResponse, 'roles'> & {
+  roles: PersonRole[];
+  /** The newest sign in, or null if never (or pruned by event retention). */
+  lastSignedInAt: string | null;
+  pendingDeletion: boolean;
+  suiteAdmin: boolean;
+};
+
+/** The person page answer (spec 0013, AC-23; suite spec 0017, AC-21). */
+export type PersonResponse = PersonListItem & {
+  deletedAt: string | null;
+  /** Who made the account; null when it was the person, nobody known, or the creator is erased. */
+  addedBy: { id: string; name: string } | null;
+  /** SIGN_IN_FAILED and LOCKED_OUT events in the last 30 days, every system. */
+  failedSignIns30d: number;
+  /** Live sessions, by the sessions list's rule. */
+  sessionCount: number;
+  /** The newest unused setup code's expiry, even when past; null when there is none. */
+  setupCodeExpiresAt: string | null;
+  /** `deletedAt` plus ACCOUNT_ERASURE_GRACE_DAYS; null when not deleted. */
+  restorableUntil: string | null;
 };
 
 export type LookupUserResponse = {
@@ -326,6 +380,7 @@ export class AuthService {
   private readonly portalHost: string;
   /** Hosted: every email domain must receive mail (`validateEmailDomain`). */
   private readonly production: boolean;
+  private readonly graceDays: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -343,6 +398,7 @@ export class AuthService {
     // PORTAL_URL is required and checked at boot (spec 0010)
     this.portalHost = portalHostOf(config.get('PORTAL_URL', { infer: true }));
     this.production = config.get('NODE_ENV', { infer: true }) === 'production';
+    this.graceDays = config.get('ACCOUNT_ERASURE_GRACE_DAYS', { infer: true });
   }
 
   /**
@@ -812,128 +868,216 @@ export class AuthService {
   }
 
   /**
-   * Spec 0013, AC-16, AC-23: the portal's People list for one system, the same scope as
-   * `listUsers` (people holding a role in it, not deleted), searched by name or email, filtered
-   * by status, keyset paged by name then id.
+   * Spec 0013, AC-16, AC-23: the portal's People list, people holding a role in the scope's
+   * systems (everyone for a suite admin), not deleted, searched by name, email or a role's
+   * display name, filtered by status. Suite spec 0017, AC-5, AC-20: one `group` at a time with
+   * every group's `counts`, three sorts, keyset cursors bound to the sort and the filters.
    */
   async listPeople(
     query: {
       q?: string;
-      status?: PeopleStatus;
+      status?: string;
+      group?: PeopleGroup;
+      sort?: PeopleSort;
       role?: string;
       cursor?: string;
       limit?: string;
     },
-    caller: Pick<AccountScope, 'system'>,
+    scope: ReadScope,
   ): Promise<{
-    items: (ScopedUserResponse & {
-      pendingDeletion: boolean;
-      suiteAdmin: boolean;
-    })[];
+    items: PersonListItem[];
     next: string | null;
+    counts?: Record<PeopleGroup, number>;
   }> {
     if (query.role !== undefined) {
-      if (caller.system === null) {
+      if (scope.only === null) {
         throw coded(
           HttpStatus.BAD_REQUEST,
           'VALIDATION_FAILED',
           'A role filter needs a system',
         );
       }
-      await this.catalog.assertKnownRole(caller.system, query.role);
+      await this.catalog.assertKnownRole(scope.only, query.role);
     }
+    const sort = query.sort ?? 'name';
+    const statuses = parseStatuses(query.status);
+    const q = query.q?.trim() || undefined;
     const limit = parsePeopleLimit(query.limit);
-    const cursor = query.cursor ? decodePeopleCursor(query.cursor) : null;
-    const q = query.q?.trim();
-    const rows = await this.prisma.user.findMany({
-      where: {
-        AND: [
-          { deletedAt: null },
-          // Spec 0013, AC-17: suite scope is every person, people with no role included
-          caller.system === null
-            ? {}
-            : {
-                roles: {
-                  some: {
-                    system: caller.system,
-                    ...(query.role !== undefined ? { role: query.role } : {}),
-                  },
-                },
+    const filters = filterKey([
+      scope.only ?? scope.systems?.join(',') ?? '*',
+      q,
+      query.group,
+      statuses.join(','),
+      query.role,
+    ]);
+    const cursor = query.cursor
+      ? decodePeopleCursor(query.cursor, { sort, filters })
+      : null;
+    const systems = scope.systems;
+    const base: Prisma.UserWhereInput[] = [
+      { deletedAt: null },
+      // Spec 0013, AC-17: suite scope is every person, people with no role included
+      systems === null
+        ? {}
+        : {
+            roles: {
+              some: {
+                system: scope.only ?? { in: systems },
+                ...(query.role !== undefined ? { role: query.role } : {}),
               },
-          q
-            ? {
-                OR: [
-                  { name: { contains: q, mode: 'insensitive' } },
-                  { email: { contains: q, mode: 'insensitive' } },
-                ],
-              }
-            : {},
-          query.status ? statusWhere(query.status) : {},
-          afterCursor(cursor),
-        ],
-      },
-      select: {
-        ...MANAGED_USER_SELECT,
-        deletionRequests: {
-          where: { status: DeletionRequestStatus.PENDING },
-          select: { id: true },
-          take: 1,
+            },
+          },
+      q ? await this.searchWhere(q, systems) : {},
+      statusesWhere(statuses),
+    ];
+    const [rows, counts] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          AND: [
+            ...base,
+            query.group ? groupWhere(query.group) : {},
+            afterCursor(cursor),
+          ],
         },
-        suiteAdmin: { select: { userId: true } },
-      },
-      orderBy: [{ name: 'asc' }, { id: 'asc' }],
-      take: limit + 1,
-    });
+        select: PERSON_LIST_SELECT,
+        orderBy: peopleOrder(sort),
+        take: limit + 1,
+      }),
+      query.group ? this.groupCounts(base) : undefined,
+    ]);
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     return {
-      items: page.map(({ deletionRequests, suiteAdmin, ...user }) => ({
-        ...this.mapScopedUser(user, caller.system),
-        pendingDeletion: deletionRequests.length > 0,
-        suiteAdmin: suiteAdmin !== null,
-      })),
+      items: page.map((row) => this.mapListItem(row, scope.only)),
       next:
-        rows.length > limit && last
-          ? encodePeopleCursor({ name: last.name, id: last.id })
-          : null,
+        rows.length > limit && last ? cursorAfter(sort, filters, last) : null,
+      ...(counts ? { counts } : {}),
+    };
+  }
+
+  /** AC-3, AC-20: name, email, or a role whose display name matches, in the systems in scope. */
+  private async searchWhere(
+    q: string,
+    systems: SystemType[] | null,
+  ): Promise<Prisma.UserWhereInput> {
+    const needle = q.toLowerCase();
+    const catalog = await this.catalog.systems();
+    const byRole: Prisma.UserWhereInput[] = catalog
+      .filter((s) => systems === null || systems.includes(s.code))
+      .map((s) => ({
+        system: s.code,
+        codes: s.roles
+          .filter((r) => r.name.toLowerCase().includes(needle))
+          .map((r) => r.code),
+      }))
+      .filter((s) => s.codes.length > 0)
+      .map((s) => ({
+        roles: { some: { system: s.system, role: { in: s.codes } } },
+      }));
+    return {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { email: { contains: q, mode: 'insensitive' } },
+        ...byRole,
+      ],
+    };
+  }
+
+  /** AC-5, AC-20: each group's count under the same filters (no cursor). */
+  private async groupCounts(
+    base: Prisma.UserWhereInput[],
+  ): Promise<Record<PeopleGroup, number>> {
+    const [attention, active, inactive] = await Promise.all(
+      PEOPLE_GROUPS.map((group) =>
+        this.prisma.user.count({
+          where: { AND: [...base, groupWhere(group)] },
+        }),
+      ),
+    );
+    return { attention, active, inactive };
+  }
+
+  private mapListItem(
+    row: PersonListRecord,
+    only: SystemType | null,
+  ): PersonListItem {
+    const { deletionRequests, suiteAdmin, lastSignedInAt, ...user } = row;
+    return {
+      ...this.mapScopedUser(user, only),
+      // Suite spec 0017, AC-21: each role says when its temporary grant ends
+      roles: user.roles
+        .filter((r) => only === null || r.system === only)
+        .map((r) => ({
+          role: r.role,
+          system: r.system,
+          temporaryUntil: r.temporaryGrant?.expiresAt.toISOString() ?? null,
+        })),
+      lastSignedInAt: lastSignedInAt?.toISOString() ?? null,
+      pendingDeletion: deletionRequests.length > 0,
+      suiteAdmin: suiteAdmin !== null,
     };
   }
 
   /**
-   * Spec 0013, AC-23: one person for the portal's person page, in the admin's system. A soft
-   * deleted account in its grace period is shown too (with `deletedAt`, so the page offers
-   * Restore); an erased one answers 404 like anyone outside the system.
+   * Spec 0013, AC-23: one person for the portal's person page. A soft deleted account in its
+   * grace period is shown to a suite admin, and to an admin who named its system (as before), so
+   * the page offers Restore; an erased one answers 404 like anyone outside the scope. Suite spec
+   * 0017, AC-19, AC-21: with no system, every role of the person; plus the person page facts.
    */
-  async getPerson(
-    userId: string,
-    caller: Pick<AccountScope, 'system'>,
-  ): Promise<
-    ScopedUserResponse & {
-      pendingDeletion: boolean;
-      deletedAt: string | null;
-      suiteAdmin: boolean;
-    }
-  > {
+  async getPerson(userId: string, scope: ReadScope): Promise<PersonResponse> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, erasedAt: null },
-      select: {
-        ...MANAGED_USER_SELECT,
-        deletedAt: true,
-        deletionRequests: {
-          where: { status: DeletionRequestStatus.PENDING },
-          select: { id: true },
-          take: 1,
-        },
-        suiteAdmin: { select: { userId: true } },
-      },
+      select: { ...PERSON_LIST_SELECT, deletedAt: true },
     });
-    assertInScope(user, caller.system);
-    const { deletionRequests, deletedAt, suiteAdmin, ...rest } = user;
+    assertInReadScope(user, scope);
+    const now = new Date();
+    const [created, failedSignIns30d, sessionCount, setupCode] =
+      await Promise.all([
+        this.prisma.accountEvent.findFirst({
+          where: { userId, type: AccountEventType.CREATED },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: {
+            actor: { select: { id: true, name: true, erasedAt: true } },
+          },
+        }),
+        this.prisma.accountEvent.count({
+          where: {
+            userId,
+            type: {
+              in: [
+                AccountEventType.SIGN_IN_FAILED,
+                AccountEventType.LOCKED_OUT,
+              ],
+            },
+            createdAt: { gte: new Date(now.getTime() - 30 * DAY_MS) },
+          },
+        }),
+        this.sessions.countLive(userId, now),
+        this.prisma.verificationCode.findFirst({
+          where: {
+            userId,
+            purpose: VerificationPurpose.PASSWORD_SETUP,
+            usedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { expiresAt: true },
+        }),
+      ]);
+    const { deletedAt, ...row } = user;
+    const actor = created?.actor;
     return {
-      ...this.mapScopedUser(rest, caller.system),
-      pendingDeletion: deletionRequests.length > 0,
+      ...this.mapListItem(row, scope.only),
       deletedAt: deletedAt ? deletedAt.toISOString() : null,
-      suiteAdmin: suiteAdmin !== null,
+      addedBy:
+        actor && actor.id !== userId && actor.erasedAt === null
+          ? { id: actor.id, name: actor.name }
+          : null,
+      failedSignIns30d,
+      sessionCount,
+      setupCodeExpiresAt: setupCode ? setupCode.expiresAt.toISOString() : null,
+      restorableUntil: deletedAt
+        ? new Date(deletedAt.getTime() + this.graceDays * DAY_MS).toISOString()
+        : null,
     };
   }
 

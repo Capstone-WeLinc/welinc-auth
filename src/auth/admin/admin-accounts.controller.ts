@@ -30,7 +30,7 @@ import { AccountEventsService } from '../events/account-events.service';
 import { parseActivityQuery } from '../events/activity-query';
 import { requestMeta } from '../events/request-meta';
 import { PortalCsrfGuard } from '../sessions/csrf';
-import type { AccountScope, AdminCaller } from '../user-scope';
+import type { AccountScope, AdminCaller, ReadScope } from '../user-scope';
 import { AccountSessionsService } from './account-sessions.service';
 import { notAdminOfSystem } from './admin-errors';
 import {
@@ -120,6 +120,24 @@ export function accountScope(
   };
 }
 
+/**
+ * Suite spec 0017, AC-19: the scope of the three People reads (list, person, activity). With
+ * `system`, exactly today's rule (`systemScope`). Without it: a suite admin reads the whole suite
+ * (even when they also hold admin roles), any other admin every system they admin, read now.
+ */
+export function readScope(
+  req: AdminRequest,
+  system: SystemType | undefined,
+): ReadScope {
+  if (system !== undefined) {
+    const scope = systemScope(req, system);
+    return { systems: [system], only: system, suite: scope.suite === true };
+  }
+  const { standing } = portalAdmin(req);
+  if (standing.suiteAdmin) return { systems: null, only: null, suite: true };
+  return { systems: [...standing.adminOf], only: null, suite: false };
+}
+
 /** `system` from a hand parsed query (the activity routes): unknown is 400, missing undefined. */
 function querySystem(query: Record<string, unknown>): SystemType | undefined {
   const system = query.system;
@@ -191,7 +209,7 @@ export class AdminAccountsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    return this.authService.listPeople(query, accountScope(req, query.system));
+    return this.authService.listPeople(query, readScope(req, query.system));
   }
 
   // Declared before users/:id so "lookup" is never read as an id
@@ -223,7 +241,7 @@ export class AdminAccountsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    return this.authService.getPerson(id, accountScope(req, query.system));
+    return this.authService.getPerson(id, readScope(req, query.system));
   }
 
   @ApiCookieRoute()
@@ -378,9 +396,9 @@ export class AdminAccountsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    const scope = accountScope(req, querySystem(query));
+    const scope = readScope(req, querySystem(query));
     const filters = parseActivityQuery(query, { type: true, dates: true });
-    return this.events.listForUser(id, scope.system, filters);
+    return this.events.listForUser(id, scope, filters);
   }
 
   @ApiCookieRoute()
