@@ -12,7 +12,7 @@ The portal's admin API from suite spec 0013: suite admins, system admins, the ad
 | `admin-standing.service.ts` | `AdminStanding` `{ suiteAdmin, adminOf }` from permanent roles only, read per request with no cache; `codeRequired()` reads `ADMIN_SIGN_IN_CODE` |
 | `admin-errors.ts` | Every coded error of the section; some are thrown from `auth.service.ts` |
 | `admin.controller.ts` | `GET me` (standing, code state, temporary grants for suite admins), `POST code` and `POST code/verify` (the step up; the ticket must belong to the caller) |
-| `admin-accounts.controller.ts`, `people-page.ts` | The portal people routes (`users`, `users/lookup`, `users/:id/*`, `activity`, `deletion-requests`) and their `systemScope` and `accountScope` helpers; the People status filter and keyset cursor |
+| `admin-accounts.controller.ts`, `people-page.ts` | The portal people routes (`users`, `users/lookup`, `users/:id/*`, `activity`, `deletion-requests`) and their `systemScope`, `accountScope` and `readScope` helpers; the People groups with `counts`, the three sorts, the status lists and the keyset cursor (`INVALID_CURSOR`) |
 | `suite-admin.controller.ts`, `suite-admins.service.ts` | Suite admin list, add and remove; temporary grants routes; `GET report` |
 | `temporary-grants.service.ts` | Temporary grants: create (suite admins, for themselves only), end (`endInTx`), list, and the minute expiry sweep |
 | `admin-recovery.service.ts` | The `npm run admin:recover` logic (`scripts/admin-recover.ts`), `lockSuiteAdmins`, `reasonProblem` |
@@ -25,6 +25,7 @@ The portal's admin API from suite spec 0013: suite admins, system admins, the ad
 
 - Every class here sits behind `AdminSessionGuard`; its default level is `admin-code`, so a new route needs the code unless it opts down with `@AdminRoute`. Writes also carry `PortalCsrfGuard`.
 - Suite only routes check `standing.suiteAdmin` inside the handler or service (`NOT_SUITE_ADMIN`); system scoped routes go through `systemScope` or `accountScope` (`NOT_ADMIN_OF_SYSTEM`). Keep the `user-scope.ts` rules on any new people route.
+- The three People reads (list, person, activity) use `readScope`: every system the caller admins (suite spec 0017). Every write stays on `accountScope`, one system; never widen a write to `ReadScope`.
 - Admin standing never counts temporary grants: a temporary `ADMIN` role gives that system's app access, not the portal admin section.
 - Every suite admin change takes `pg_advisory_xact_lock(hashtext('suite_admins'))` first (`lockSuiteAdmins`), then the target row `FOR UPDATE`. At most 3 suite admins (`MAX_SUITE_ADMINS`, from `prisma/seeds/manifest`). Nobody removes themselves (`SELF_ROLE`) or the last suite admin (`LAST_SUITE_ADMIN`); removing one first ends their live temporary grants.
 - A suite admin holds no system roles (`HOLDS_SYSTEM_ROLES`, and a deferred trigger maps to `SUITE_ADMIN_NO_ROLES`).

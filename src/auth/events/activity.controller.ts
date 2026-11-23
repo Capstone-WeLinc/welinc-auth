@@ -112,7 +112,8 @@ export class ActivityController {
     @Req() req: { user: UserCaller },
   ) {
     const filters = parseActivityQuery(query, { type: true, dates: true });
-    return this.events.listForUser(id, req.user.system, filters);
+    const system = req.user.system;
+    return this.events.listForUser(id, { systems: [system] }, filters);
   }
 
   /** AC-13: the system's feed for its admins, 60 calls a minute each. */

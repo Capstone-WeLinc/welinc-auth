@@ -98,6 +98,31 @@ export type SessionView = {
   current?: boolean;
 };
 
+/**
+ * Suite spec 0017, AC-22: stamps `users.last_signed_in_at` at a sign in, inside the sign in's
+ * transaction, only moving it forward. Raw SQL on purpose: a Prisma update would also move
+ * `updated_at`, and a sign in is not a change to the account.
+ */
+export async function markSignedIn(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  at: Date,
+): Promise<void> {
+  await tx.$executeRaw`UPDATE "users" SET "last_signed_in_at" = ${at}
+    WHERE "id" = ${userId}::uuid
+      AND ("last_signed_in_at" IS NULL OR "last_signed_in_at" < ${at})`;
+}
+
+/** A person's live sessions: not ended and before both cutoffs. */
+function liveSessionWhere(userId: string, now: Date): Prisma.SessionWhereInput {
+  return {
+    userId,
+    endedAt: null,
+    idleExpiresAt: { gt: now },
+    OR: [{ absoluteExpiresAt: null }, { absoluteExpiresAt: { gt: now } }],
+  };
+}
+
 /** The session's expiry as answers report it: the earlier of the idle and absolute cutoffs. */
 export function sessionExpiresAt(session: SessionTimes): Date {
   const idle = session.idleExpiresAt;
@@ -312,6 +337,7 @@ export class SessionService {
           signInCodeAt: input.codePassed ? now : null,
         },
       });
+      await markSignedIn(tx, input.userId, now);
       await this.events.record(tx, {
         userId: input.userId,
         actorId: input.userId,
@@ -417,6 +443,7 @@ export class SessionService {
         clientId: input.clientId,
         meta,
       };
+      await markSignedIn(tx, input.userId, now);
       await this.events.recordMany(tx, [
         { ...opened, type: AccountEventType.SIGNED_IN },
         {
@@ -576,18 +603,18 @@ export class SessionService {
    * here; the next call that touches them, or the hourly sweep, writes them as ended. With
    * `currentSid`, the caller's own row is marked `current`.
    */
+  /** How many sessions `listLive` would list (suite spec 0017, AC-21). */
+  countLive(userId: string, now = new Date()): Promise<number> {
+    return this.prisma.session.count({ where: liveSessionWhere(userId, now) });
+  }
+
   async listLive(
     userId: string,
     currentSid?: string,
     now = new Date(),
   ): Promise<SessionView[]> {
     const rows = await this.prisma.session.findMany({
-      where: {
-        userId,
-        endedAt: null,
-        idleExpiresAt: { gt: now },
-        OR: [{ absoluteExpiresAt: null }, { absoluteExpiresAt: { gt: now } }],
-      },
+      where: liveSessionWhere(userId, now),
       orderBy: [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }],
     });
     return rows.map((row) => ({

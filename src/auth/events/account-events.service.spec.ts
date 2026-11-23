@@ -126,6 +126,19 @@ describe('adminView', () => {
     expect(other.client).toBeNull();
     expect(wide.client).toBeNull();
   });
+
+  // Suite spec 0017, covers: AC-19 (the client on rows of any of the admin's systems)
+  it('keeps the client on rows of any system in a list', () => {
+    const view = (system: string | null) =>
+      adminView({ ...row({ system: system as never }), actor: null } as never, [
+        'VRMS',
+        'VMMS',
+      ]).client;
+    expect(view('VRMS')).toBe('web-portal');
+    expect(view('VMMS')).toBe('web-portal');
+    expect(view('BMS')).toBeNull();
+    expect(view(null)).toBeNull();
+  });
 });
 
 describe('paging helpers', () => {
@@ -286,18 +299,39 @@ describe('AccountEventsService reads', () => {
   // covers: AC-12
   it('listForUser answers 404 when the person holds no role in the system', async () => {
     const { svc, findMany } = service();
-    await expect(svc.listForUser(USER, 'VRMS', base)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      svc.listForUser(USER, { systems: ['VRMS'] }, base),
+    ).rejects.toBeInstanceOf(NotFoundException);
     expect(findMany).not.toHaveBeenCalled();
   });
 
   it('listForUser reads only rows tagged with the system or account wide', async () => {
     const { svc, findMany, findFirst } = service();
     findFirst.mockResolvedValueOnce({ id: 'r' });
-    await svc.listForUser(USER, 'VRMS', base);
+    await svc.listForUser(USER, { systems: ['VRMS'] }, base);
     const args = findMany.mock.calls[0][0] as { where: { OR: unknown } };
-    expect(args.where.OR).toEqual([{ system: 'VRMS' }, { system: null }]);
+    expect(args.where.OR).toEqual([
+      { system: { in: ['VRMS'] } },
+      { system: null },
+    ]);
+  });
+
+  // Suite spec 0017, covers: AC-19 (every system the admin holds, not deleted)
+  it('listForUser with several systems checks a role in any of them and reads their rows', async () => {
+    const { svc, findMany, findFirst } = service();
+    findFirst.mockResolvedValueOnce({ id: 'r' });
+    await svc.listForUser(USER, { systems: ['VRMS', 'VMMS'] }, base);
+    const member = findFirst.mock.calls[0][0] as { where: unknown };
+    expect(member.where).toEqual({
+      userId: USER,
+      system: { in: ['VRMS', 'VMMS'] },
+      user: { deletedAt: null },
+    });
+    const args = findMany.mock.calls[0][0] as { where: { OR: unknown } };
+    expect(args.where.OR).toEqual([
+      { system: { in: ['VRMS', 'VMMS'] } },
+      { system: null },
+    ]);
   });
 
   // covers: AC-13
