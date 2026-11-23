@@ -21,6 +21,31 @@ const fn = (): Fn => jest.fn<(...args: any[]) => any>();
 const ANSWER = {
   user: { id: 'u1', name: 'Mara', email: 'm@welinc.com', picture: null },
   systems: [],
+  mobileSystems: [],
+};
+// A web session's cutoffs: idle at 10:30, the 12 hour end at 22:00 (suite spec 0016, AC-12a)
+const IDLE = new Date('2026-11-23T10:30:00.000Z');
+const ABSOLUTE = new Date('2026-11-23T22:00:00.000Z');
+const SESSION_TIMES = {
+  endedAt: null,
+  idleExpiresAt: IDLE,
+  absoluteExpiresAt: ABSOLUTE,
+};
+const LIVE = { id: 'sid', ...SESSION_TIMES, user: USER_ROW() };
+function USER_ROW() {
+  return {
+    id: 'u1',
+    name: 'Mara',
+    email: 'm@welinc.com',
+    profilePicture: null,
+    emailVerified: true,
+  };
+}
+const FULL = {
+  ...ANSWER,
+  sessionExpiresAt: IDLE.toISOString(),
+  sessionAbsoluteExpiresAt: ABSOLUTE.toISOString(),
+  serverTime: '2026-11-23T10:00:00.000Z',
 };
 const USER = {
   id: 'u1',
@@ -58,14 +83,17 @@ function build(hits = 1) {
     resend: fn().mockResolvedValue({ resendAfter: 60 }),
   };
   const sessions = {
-    liveBySsoHandle: fn().mockResolvedValue({ id: 'sid', user: USER }),
+    liveBySsoHandle: fn().mockResolvedValue(LIVE),
     createWeb: fn().mockResolvedValue({
-      session: { absoluteExpiresAt: new Date() },
+      session: { id: 'sid', ...SESSION_TIMES },
       handle: 'h',
     }),
     touch: fn(),
   };
-  const launcher = { answerFor: fn().mockResolvedValue(ANSWER) };
+  const launcher = {
+    answerFor: fn().mockResolvedValue(FULL),
+    systemsFor: fn().mockResolvedValue(ANSWER),
+  };
   const admins = { asksCodeAtLogin: fn().mockResolvedValue(false) };
   const storage = {
     increment: fn().mockResolvedValue({ totalHits: hits, timeToExpire: 42 }),
@@ -121,7 +149,7 @@ async function refusal(promise: Promise<unknown>) {
 describe('GET /auth/sso', () => {
   it('answers the launcher body with no-store, counted per address', async () => {
     const t = build();
-    expect(await t.controller.sso(t.req, t.res)).toBe(ANSWER);
+    expect(await t.controller.sso(t.req, t.res)).toBe(FULL);
     expect(t.headers['Cache-Control']).toBe('no-store');
     expect(t.storage.increment).toHaveBeenCalledWith(
       'sso:10.0.0.1',
@@ -130,7 +158,7 @@ describe('GET /auth/sso', () => {
       0,
       'sso',
     );
-    expect(t.launcher.answerFor).toHaveBeenCalledWith(USER);
+    expect(t.launcher.answerFor).toHaveBeenCalledWith(LIVE.user, LIVE);
   });
 
   it('answers 401 SESSION_ENDED without a live session', async () => {
@@ -213,7 +241,12 @@ describe('POST /auth/login', () => {
       t.req,
       t.res,
     );
-    expect(answer).toBe(ANSWER);
+    expect(answer).toEqual({
+      ...ANSWER,
+      sessionExpiresAt: IDLE.toISOString(),
+      sessionAbsoluteExpiresAt: ABSOLUTE.toISOString(),
+      serverTime: expect.any(String),
+    });
     expect(t.sessions.createWeb).toHaveBeenCalled();
     expect(t.cookie).toHaveBeenCalled();
   });
@@ -227,11 +260,11 @@ describe('POST /auth/login', () => {
       t.res,
     );
     const check = t.auth.checkCredentials.mock.invocationCallOrder[0];
-    const answer = t.launcher.answerFor.mock.invocationCallOrder[0];
+    const answer = t.launcher.systemsFor.mock.invocationCallOrder[0];
     const create = t.sessions.createWeb.mock.invocationCallOrder[0];
     expect(check).toBeLessThan(answer);
     expect(answer).toBeLessThan(create);
-    expect(t.launcher.answerFor).toHaveBeenCalledWith(USER);
+    expect(t.launcher.systemsFor).toHaveBeenCalledWith(USER);
   });
 
   // covers: AC-3, security (a wrong password leaks nothing and starts nothing)
@@ -249,14 +282,14 @@ describe('POST /auth/login', () => {
         ),
       ),
     ).toEqual([401, 'INVALID_CREDENTIALS']);
-    expect(t.launcher.answerFor).not.toHaveBeenCalled();
+    expect(t.launcher.systemsFor).not.toHaveBeenCalled();
     expect(t.sessions.createWeb).not.toHaveBeenCalled();
     expect(t.cookie).not.toHaveBeenCalled();
   });
 
   it('creates no session and no cookie when no usable system is left', async () => {
     const t = build();
-    t.launcher.answerFor.mockRejectedValue(
+    t.launcher.systemsFor.mockRejectedValue(
       new HttpException({ code: 'NO_SYSTEM_ACCESS' }, 403),
     );
     expect(
@@ -359,7 +392,7 @@ describe('the sign in step (suite spec 0009)', () => {
     t.auth.checkCredentials.mockResolvedValue({
       user: { ...USER, emailVerified: false },
     });
-    t.launcher.answerFor.mockRejectedValue(
+    t.launcher.systemsFor.mockRejectedValue(
       new HttpException({ code: 'NO_SYSTEM_ACCESS' }, 403),
     );
     expect(await refusal(login(t))).toEqual([403, 'NO_SYSTEM_ACCESS']);
@@ -380,12 +413,18 @@ describe('the sign in step (suite spec 0009)', () => {
       t.req,
       t.res,
     );
-    expect(answer).toBe(ANSWER);
+    // covers: suite spec 0016 AC-12a (the code step's answer carries the new session's cutoffs)
+    expect(answer).toEqual({
+      ...ANSWER,
+      sessionExpiresAt: IDLE.toISOString(),
+      sessionAbsoluteExpiresAt: ABSOLUTE.toISOString(),
+      serverTime: expect.any(String),
+    });
     expect(t.auth.assertCanSignIn).toHaveBeenCalledWith(
       'u1',
       expect.objectContaining({ ip: '10.0.0.1' }),
     );
-    expect(t.launcher.answerFor).toHaveBeenCalledWith(USER);
+    expect(t.launcher.systemsFor).toHaveBeenCalledWith(USER);
     expect(t.sessions.createWeb).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'u1',

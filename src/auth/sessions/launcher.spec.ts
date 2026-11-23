@@ -9,6 +9,7 @@ import {
   launcherOrder,
   webSystemCodes,
   webSystemsFor,
+  withCutoffs,
   type LauncherClientRow,
 } from './launcher';
 
@@ -177,7 +178,7 @@ describe('buildLauncherSystems', () => {
   });
 });
 
-describe('LauncherService.answerFor', () => {
+describe('LauncherService.systemsFor', () => {
   const USER = {
     id: 'u1',
     name: 'Mara Lead',
@@ -228,7 +229,7 @@ describe('LauncherService.answerFor', () => {
       [{ system: SystemType.VRMS, role: 'MECHANIC' }],
       [client(SystemType.VRMS, 'http://localhost:8001')],
     );
-    const answer = await service.answerFor(USER);
+    const answer = await service.systemsFor(USER);
     expect(answer.user).toEqual({
       id: 'u1',
       name: 'Mara Lead',
@@ -251,7 +252,7 @@ describe('LauncherService.answerFor', () => {
   // covers: suite spec 0013 AC-5 (a suite admin holds no system by design)
   it('answers a suite admin with no role an empty list, not 403', async () => {
     const { service, db } = build([], [], true);
-    const answer = await service.answerFor(USER);
+    const answer = await service.systemsFor(USER);
     expect(answer.systems).toEqual([]);
     expect(answer.user.email).toBe('multi.lead@welinc.com');
     expect(db.suiteAdmin.findUnique).toHaveBeenCalledWith(
@@ -261,13 +262,13 @@ describe('LauncherService.answerFor', () => {
 
   it('answers 403 NO_SYSTEM_ACCESS for no role at all, without reading clients', async () => {
     const { service, db } = build([], []);
-    expect(await status(service.answerFor(USER))).toEqual([
+    expect(await status(service.systemsFor(USER))).toEqual([
       403,
       'NO_SYSTEM_ACCESS',
     ]);
     expect(db.oAuthClient.findMany).not.toHaveBeenCalled();
     const body = await service
-      .answerFor(USER)
+      .systemsFor(USER)
       .catch((e: HttpException) => e.getResponse() as Record<string, unknown>);
     expect(body).toMatchObject({
       statusCode: 403,
@@ -284,7 +285,7 @@ describe('LauncherService.answerFor', () => {
       [{ system: SystemType.BMS, role: 'OPERATIONS' }],
       [],
     );
-    expect(await status(service.answerFor(USER))).toEqual([
+    expect(await status(service.systemsFor(USER))).toEqual([
       403,
       'NO_SYSTEM_ACCESS',
     ]);
@@ -441,7 +442,7 @@ describe('spec 0014 the web and phone split', () => {
   it('answers a phone only person 200 with systems empty, never 403', async () => {
     const answer = await service([
       { system: SystemType.VMMS, role: 'MECHANIC' },
-    ]).answerFor(USER);
+    ]).systemsFor(USER);
     expect(answer.systems).toEqual([]);
     expect(answer.mobileSystems.map((m) => m.system)).toEqual(['VMMS']);
   });
@@ -450,7 +451,7 @@ describe('spec 0014 the web and phone split', () => {
     const error = await service([
       { system: SystemType.VMMS, role: 'CHIEF_MECHANIC' },
     ])
-      .answerFor(USER)
+      .systemsFor(USER)
       .catch((e: HttpException) => e);
     expect((error as HttpException).getStatus()).toBe(403);
   });
@@ -458,9 +459,80 @@ describe('spec 0014 the web and phone split', () => {
   it('always sends mobileSystems, empty when there is none', async () => {
     const answer = await service([
       { system: SystemType.VRMS, role: 'MECHANIC' },
-    ]).answerFor(USER);
+    ]).systemsFor(USER);
     expect(answer.mobileSystems).toEqual([]);
-    const admin = await service([], true).answerFor(USER);
+    const admin = await service([], true).systemsFor(USER);
     expect(admin).toMatchObject({ systems: [], mobileSystems: [] });
+  });
+
+  // covers: suite spec 0016 AC-12a (a suite admin's empty answer carries the cutoffs too)
+  it("adds the session's cutoffs to a suite admin's empty answer", async () => {
+    const admin = await service([], true).answerFor(USER, {
+      endedAt: null,
+      idleExpiresAt: new Date('2026-11-23T10:30:00.000Z'),
+      absoluteExpiresAt: new Date('2026-11-23T22:00:00.000Z'),
+    });
+    expect(admin).toMatchObject({
+      systems: [],
+      sessionExpiresAt: '2026-11-23T10:30:00.000Z',
+      sessionAbsoluteExpiresAt: '2026-11-23T22:00:00.000Z',
+    });
+    expect(Date.parse(admin.serverTime)).not.toBeNaN();
+  });
+});
+
+// covers: suite spec 0016 AC-12a (the three cutoff fields, computed as `/auth/session` does)
+describe('withCutoffs', () => {
+  const BASE = {
+    user: { id: 'u1', name: 'Mara', email: 'm@welinc.com', picture: null },
+    systems: [],
+    mobileSystems: [],
+  };
+  const NOW = new Date('2026-11-23T10:00:00.000Z');
+
+  it('answers the idle cutoff while it comes first', () => {
+    expect(
+      withCutoffs(
+        BASE,
+        {
+          endedAt: null,
+          idleExpiresAt: new Date('2026-11-23T10:30:00.000Z'),
+          absoluteExpiresAt: new Date('2026-11-23T22:00:00.000Z'),
+        },
+        NOW,
+      ),
+    ).toEqual({
+      ...BASE,
+      sessionExpiresAt: '2026-11-23T10:30:00.000Z',
+      sessionAbsoluteExpiresAt: '2026-11-23T22:00:00.000Z',
+      serverTime: '2026-11-23T10:00:00.000Z',
+    });
+  });
+
+  it('answers the 12 hour end in both fields once it comes before the idle cutoff', () => {
+    const answer = withCutoffs(
+      BASE,
+      {
+        endedAt: null,
+        idleExpiresAt: new Date('2026-11-23T22:20:00.000Z'),
+        absoluteExpiresAt: new Date('2026-11-23T22:00:00.000Z'),
+      },
+      NOW,
+    );
+    expect(answer.sessionExpiresAt).toBe('2026-11-23T22:00:00.000Z');
+    expect(answer.sessionAbsoluteExpiresAt).toBe('2026-11-23T22:00:00.000Z');
+  });
+
+  it('never leaves the 12 hour field out, even for a session without one', () => {
+    const answer = withCutoffs(
+      BASE,
+      {
+        endedAt: null,
+        idleExpiresAt: new Date('2026-11-23T10:30:00.000Z'),
+        absoluteExpiresAt: null,
+      },
+      NOW,
+    );
+    expect(answer.sessionAbsoluteExpiresAt).toBe('2026-11-23T10:30:00.000Z');
   });
 });

@@ -43,12 +43,24 @@ import {
   type AuthorizeResult,
 } from './authorize.service';
 import { PortalCsrfGuard } from './csrf';
-import { LauncherService, type LauncherAnswer } from './launcher';
+import {
+  LauncherService,
+  withCutoffs,
+  type LauncherAnswer,
+  type LauncherSystems,
+} from './launcher';
+import { LauncherAnswerResponse } from './launcher.response';
+import { SignInStepResponse } from '../codes/sign-in-step.response';
 import { SESSION_SETTINGS, type SessionSettings } from './session-config';
 import { SessionService, sessionExpiresAt } from './session.service';
 import { readSsoCookie, setSsoCookie } from './sso-cookie';
 
-import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiExtraModels,
+  ApiOkResponse,
+  ApiTags,
+  getSchemaPath,
+} from '@nestjs/swagger';
 import {
   ApiCookieRoute,
   ApiErrorMap,
@@ -110,6 +122,17 @@ export class SsoController {
   @ApiErrorMap(VALIDATION, CSRF, SIGN_IN, CODE_ROUTE_LIMIT, CODE_MAIL, {
     403: ['NO_SYSTEM_ACCESS'],
   })
+  @ApiExtraModels(LauncherAnswerResponse, SignInStepResponse)
+  @ApiOkResponse({
+    description:
+      'Signed in (the launcher answer), or the email code step when the address is not verified yet',
+    schema: {
+      oneOf: [
+        { $ref: getSchemaPath(LauncherAnswerResponse) },
+        { $ref: getSchemaPath(SignInStepResponse) },
+      ],
+    },
+  })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -140,7 +163,7 @@ export class SsoController {
     }
     const meta = requestMeta(req);
     const { user } = await this.auth.checkCredentials(dto, meta);
-    const answer = await this.answerFor(user, meta);
+    const answer = await this.systemsFor(user, meta);
     // One code only, even for an unverified admin (spec 0013, AC-5)
     if (!user.emailVerified) return this.signInStep.start(user, meta);
     if (await this.admins.asksCodeAtLogin(user.id)) {
@@ -160,6 +183,7 @@ export class SsoController {
     401: [null],
     403: ['ACCOUNT_INACTIVE', 'ACCOUNT_LOCKED', 'NO_SYSTEM_ACCESS'],
   })
+  @ApiOkResponse({ type: LauncherAnswerResponse })
   @Post('login/verify-email')
   @HttpCode(HttpStatus.OK)
   @UseGuards(PortalCsrfGuard)
@@ -171,13 +195,13 @@ export class SsoController {
     res.setHeader('Cache-Control', 'no-store');
     await countCodeCall(this.storage, 'code-signin', req, res);
     const meta = requestMeta(req);
-    let found: { user: SignInUser; answer: LauncherAnswer } | null = null;
+    let found: { user: SignInUser; answer: LauncherSystems } | null = null;
     await this.signInStep.verify(
       dto.challengeId,
       dto.code,
       async (userId) => {
         const user = await this.auth.assertCanSignIn(userId, meta);
-        found = { user, answer: await this.answerFor(user, meta) };
+        found = { user, answer: await this.systemsFor(user, meta) };
       },
       meta,
     );
@@ -203,21 +227,25 @@ export class SsoController {
     return this.signInStep.resend(dto.challengeId, requestMeta(req));
   }
 
-  /** The launcher answer at a sign in, a `NO_SYSTEM_ACCESS` recorded (spec 0011, AC-1). */
-  private answerFor(user: SignInUser, meta: RequestMeta) {
+  /**
+   * The person's systems at a sign in, a `NO_SYSTEM_ACCESS` recorded (spec 0011, AC-1). Runs
+   * before the session exists, so a refused login creates none; `finishLogin` adds the cutoffs.
+   */
+  private systemsFor(user: SignInUser, meta: RequestMeta) {
     return this.auth.withSignInCheck(user.id, meta, () =>
-      this.launcher.answerFor(user),
+      this.launcher.systemsFor(user),
     );
   }
 
   /**
    * The one way a portal login ends (AC-9 step 5): a web session and the `welinc_sso` cookie.
    * A login through the code step starts its session with `sign_in_code_at`, admin or not, and
-   * an admin's also writes `ADMIN_CODE_PASSED` (spec 0013, AC-5, AC-7).
+   * an admin's also writes `ADMIN_CODE_PASSED` (spec 0013, AC-5, AC-7). The answer carries the
+   * new session's cutoffs (suite spec 0016, AC-12a).
    */
   private async finishLogin(
     user: SignInUser,
-    answer: LauncherAnswer,
+    answer: LauncherSystems,
     meta: RequestMeta,
     req: Request,
     res: Response,
@@ -232,7 +260,7 @@ export class SsoController {
         : undefined,
     });
     setSsoCookie(res, this.settings, handle, session.absoluteExpiresAt!);
-    return answer;
+    return withCutoffs(answer, session);
   }
 
   /**
@@ -245,6 +273,7 @@ export class SsoController {
     403: ['NO_SYSTEM_ACCESS'],
     429: ['RATE_LIMITED'],
   })
+  @ApiOkResponse({ type: LauncherAnswerResponse })
   @Get('sso')
   async sso(
     @Req() req: Request,
@@ -273,7 +302,7 @@ export class SsoController {
       readSsoCookie(req, this.settings),
     );
     if (!session) throw sessionEnded();
-    return this.launcher.answerFor(session.user);
+    return this.launcher.answerFor(session.user, session);
   }
 
   /** The start of the code flow (AC-13). */
