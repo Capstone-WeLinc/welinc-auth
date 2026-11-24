@@ -18,6 +18,7 @@ import { ROLE_CODE_RE, type RoleCode } from '../roles/catalog.types';
 import {
   PEOPLE_GROUPS,
   PEOPLE_SORTS,
+  PEOPLE_STATUSES,
   PEOPLE_STATUS_LIST_RE,
   type PeopleGroup,
   type PeopleSort,
@@ -46,7 +47,11 @@ export class AdminSystemReauthDto extends AdminSystemDto {
   reauthToken?: string;
 }
 
-export class AdminListUsersQueryDto extends AdminOptionalSystemDto {
+/**
+ * The People filters the list and `GET users/facets` share (suite spec 0019, AC-21b): `system`
+ * (the scope), search, statuses and `access`.
+ */
+export class AdminPeopleFilterQueryDto extends AdminOptionalSystemDto {
   @IsOptional()
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim() : value,
@@ -60,11 +65,20 @@ export class AdminListUsersQueryDto extends AdminOptionalSystemDto {
   @IsString()
   @MaxLength(200)
   @Matches(PEOPLE_STATUS_LIST_RE, {
-    message:
-      'status must be LOCKED, SETUP_PENDING, EMAIL_NOT_VERIFIED, ACTIVE, INACTIVE or PENDING_DELETION, or a comma list of them',
+    message: `status must be one of ${PEOPLE_STATUSES.join(', ')}, or a comma list of them`,
   })
   status?: string;
 
+  /**
+   * Suite spec 0019, AC-21a: a comma list of `SYSTEM` or `SYSTEM:ROLE`, read as any of them.
+   * Checked and normalized by `parseAccess`, so its error order holds.
+   */
+  @IsOptional()
+  @IsString()
+  access?: string;
+}
+
+export class AdminListUsersQueryDto extends AdminPeopleFilterQueryDto {
   /** Suite spec 0017, AC-5: one group, and the answer adds `counts`. */
   @IsOptional()
   @IsIn(PEOPLE_GROUPS)

@@ -16,6 +16,12 @@ export const LOOKUP_LIMIT = { limit: 30, ttlMs: 60_000 };
  */
 export const EMAIL_CHECK_LIMIT = { limit: 60, ttlMs: 60_000 };
 
+/**
+ * Suite spec 0019, AC-21b: the People filter asks for counts as chips change (250 ms after each
+ * change), so the facets route has its own counter of 120 a minute per admin.
+ */
+export const FACETS_LIMIT = { limit: 120, ttlMs: 60_000 };
+
 type Limit = { limit: number; ttlMs: number };
 type HeaderSink = { setHeader(name: string, value: string): unknown };
 
@@ -72,5 +78,21 @@ export function countEmailCheckCall(
     adminId,
     res,
     'Too many email checks. Wait a minute and try again.',
+  );
+}
+
+/** Counts one People facets call for `adminId`, or 429. */
+export function countFacetsCall(
+  storage: ThrottlerStorage,
+  adminId: string,
+  res: HeaderSink,
+): Promise<void> {
+  return countCall(
+    storage,
+    'people-facets',
+    FACETS_LIMIT,
+    adminId,
+    res,
+    'Too many filter count requests. Wait a minute and try again.',
   );
 }

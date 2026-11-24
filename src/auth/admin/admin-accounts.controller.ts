@@ -20,12 +20,16 @@ import {
   type ThrottlerStorage,
 } from '@nestjs/throttler';
 import type { Response } from 'express';
-import { AuthService } from '../auth.service';
+import { AuthService, type PeopleFacets } from '../auth.service';
 import { countPasswordCheck } from '../deletion/deletion.controller';
 import { DeletionService } from '../deletion/deletion.service';
 import { coded } from '../errors';
 import { countFeedCall } from '../events/activity.controller';
-import { countEmailCheckCall, countLookupCall } from '../lookup-limit';
+import {
+  countEmailCheckCall,
+  countFacetsCall,
+  countLookupCall,
+} from '../lookup-limit';
 import { AccountEventsService } from '../events/account-events.service';
 import { parseActivityQuery } from '../events/activity-query';
 import { requestMeta } from '../events/request-meta';
@@ -47,6 +51,7 @@ import {
   AdminListUsersQueryDto,
   AdminLookupQueryDto,
   AdminOptionalSystemDto,
+  AdminPeopleFilterQueryDto,
   AdminRejectDto,
   AdminSetStatusDto,
   AdminSystemDto,
@@ -213,6 +218,25 @@ export class AdminAccountsController {
   ) {
     res.setHeader('Cache-Control', 'no-store');
     return this.authService.listPeople(query, readScope(req, query.system));
+  }
+
+  // Declared before users/:id so "facets" is never read as an id. Suite spec 0019, AC-21b: the
+  // People filter's counts, with the list's step up and read scope and its own 120 a minute
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    400: ['UNKNOWN_ROLE', 'VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    429: ['RATE_LIMITED'],
+  })
+  @Get('users/facets')
+  async facetUsers(
+    @Query() query: AdminPeopleFilterQueryDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<PeopleFacets> {
+    res.setHeader('Cache-Control', 'no-store');
+    const scope = readScope(req, query.system);
+    await countFacetsCall(this.storage, portalAdmin(req).userId, res);
+    return this.authService.facetPeople(query, scope);
   }
 
   // Declared before users/:id so "lookup" is never read as an id
