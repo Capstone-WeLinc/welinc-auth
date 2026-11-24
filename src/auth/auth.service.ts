@@ -1118,7 +1118,8 @@ export class AuthService {
   }
 
   async createUser(
-    dto: CreateUserDto,
+    /** `contact` comes only from the portal route (suite spec 0019, AC-22). */
+    dto: CreateUserDto & { contact?: string },
     actor: AdminCaller,
   ): Promise<ScopedUserResponse & { setupEmailSent: boolean }> {
     const roleAssignments = this.normalizeRoleAssignments(dto.roleAssignments);
@@ -1182,6 +1183,8 @@ export class AuthService {
           data: {
             name: dto.name.trim(),
             email: dto.email.trim().toLowerCase(),
+            // An attach keeps the account's own contact; a blank one stores nothing
+            contact: dto.contact || null,
             passwordHash,
             // AC-15: both start false; using the setup code turns them true (AC-12)
             passwordSet: false,

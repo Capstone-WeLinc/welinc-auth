@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Env } from '../config/env';
+import type { EmailAttachment } from '../auth/codes/email-layout';
 import { isDevAddress, seedMailRecipient } from './dev-email-domains';
 
 @Injectable()
@@ -52,6 +53,8 @@ export class MailService {
     subject: string;
     text: string;
     html?: string;
+    /** Inline images by `cid` (the code emails' logo, suite spec 0019 AC-27). */
+    attachments?: EmailAttachment[];
     /** What the log line names instead of the address: `user=<id> purpose=<kind>` (spec 0009, AC-1). */
     tag: string;
   }): Promise<void> {
@@ -83,7 +86,12 @@ export class MailService {
 
   private async send(
     transporter: nodemailer.Transporter,
-    options: { subject: string; text: string; html?: string },
+    options: {
+      subject: string;
+      text: string;
+      html?: string;
+      attachments?: EmailAttachment[];
+    },
     to: string,
   ) {
     await transporter.sendMail({
@@ -92,6 +100,7 @@ export class MailService {
       subject: options.subject,
       text: options.text,
       html: options.html,
+      attachments: options.attachments,
     });
   }
 

@@ -1,12 +1,24 @@
 import { VerificationPurpose } from '@prisma/client';
 import { lifetimeText } from './code-config';
+import {
+  codeEmailHtml,
+  logoAttachment,
+  TEXT_FOOTER,
+  type EmailAttachment,
+} from './email-layout';
 
 // Spec 0009, AC-24: every code and notice email, each with a text and an HTML part. Names and
 // addresses are HTML escaped. The old address never receives a code. Suite spec 0009 AC-34: no
 // email holds a link or URL; Brevo rewrites links through a tracking domain some networks can't
 // reach, so the portal is named by its host in plain text.
 
-export type Email = { subject: string; text: string; html: string };
+export type Email = {
+  subject: string;
+  text: string;
+  html: string;
+  /** The code emails' inline logo (suite spec 0019, AC-27); notices send none. */
+  attachments?: EmailAttachment[];
+};
 
 export function escapeHtml(value: string): string {
   return value
@@ -18,14 +30,32 @@ export function escapeHtml(value: string): string {
 }
 
 const BRAND = 'WeLinc Logistics';
-const CODE_STYLE =
-  'font-size: 24px; font-weight: bold; color: #1a1f6e; letter-spacing: 2px;';
 const NOT_YOU =
   "If this wasn't you, change your password and tell your admin right away.";
 
 const greet = (name: string) => `Hello, ${name || 'there'}!`;
 const greetHtml = (name: string) =>
   `<p>Hello, <strong>${escapeHtml(name || 'there')}</strong>!</p>`;
+/** The greeting inside the branded layout, which styles its own paragraphs. */
+const greetInner = (name: string) =>
+  `Hello, <strong>${escapeHtml(name || 'there')}</strong>!`;
+
+/** Suite spec 0019, AC-27: a code email in the branded layout, the logo attached by CID. */
+function codeEmail(input: {
+  subject: string;
+  title: string;
+  text: string;
+  before: string[];
+  code: string;
+  after: string[];
+}): Email {
+  return {
+    subject: input.subject,
+    text: `${input.text}\n\n${TEXT_FOOTER}`,
+    html: codeEmailHtml(input),
+    attachments: [logoAttachment()],
+  };
+}
 
 /** Setup (60 min) or reset (10 min) code, naming the portal host in plain text (AC-13, AC-34). */
 export function passwordCodeEmail(input: {
@@ -42,10 +72,12 @@ export function passwordCodeEmail(input: {
     ? `Welcome to ${BRAND}! An administrator created your account. Use this code to set your password.`
     : 'You asked to reset your password. Use this code to set a new one.';
   const where = `Go to ${input.portalHost}, choose Forgot password, enter your email, then type this code. If you already have the reset page open, type it there.`;
-  return {
+  const expires = `This code expires in ${lifetime}. If you didn't ask for it, you can ignore this email.`;
+  return codeEmail({
     subject: setup
       ? `${BRAND} - Set up your account`
       : `${BRAND} - Reset your password`,
+    title: setup ? 'Set up your account' : 'Reset your password',
     text: `${greet(input.name)}
 
 ${intro}
@@ -54,13 +86,11 @@ ${setup ? 'Setup' : 'Reset'} code: ${input.code}
 
 ${where}
 
-This code expires in ${lifetime}. If you didn't ask for it, you can ignore this email.`,
-    html: `${greetHtml(input.name)}
-<p>${escapeHtml(intro)}</p>
-<h2 style="${CODE_STYLE}">${input.code}</h2>
-<p>${escapeHtml(where)}</p>
-<p>This code expires in ${lifetime}. If you didn't ask for it, you can ignore this email.</p>`,
-  };
+${expires}`,
+    before: [greetInner(input.name), escapeHtml(intro)],
+    code: input.code,
+    after: [escapeHtml(where), escapeHtml(expires)],
+  });
 }
 
 /**
@@ -79,10 +109,11 @@ export function signInCodeEmail(input: {
   const after = input.admin
     ? `It expires in ${lifetime}. If you didn't just sign in or open Admin, change your password and tell another admin right away.`
     : `It expires in ${lifetime}. If you didn't just sign in, change your password.`;
-  return {
+  return codeEmail({
     subject: input.admin
       ? `${BRAND} - Confirm it's you`
       : `${BRAND} - Your sign in code`,
+    title: input.admin ? "Confirm it's you" : 'Your sign in code',
     text: `${greet(input.name)}
 
 ${ask}
@@ -90,11 +121,10 @@ ${ask}
 ${input.code}
 
 ${after}`,
-    html: `${greetHtml(input.name)}
-<p>${escapeHtml(ask)}</p>
-<h2 style="${CODE_STYLE}">${input.code}</h2>
-<p>${escapeHtml(after)}</p>`,
-  };
+    before: [greetInner(input.name), escapeHtml(ask)],
+    code: input.code,
+    after: [escapeHtml(after)],
+  });
 }
 
 /** AC-17: the code sent to the new address. */
@@ -103,20 +133,22 @@ export function emailChangeCodeEmail(input: {
   code: string;
 }): Email {
   const lifetime = lifetimeText(VerificationPurpose.EMAIL_CHANGE);
-  return {
+  const ask = "Type this code in WeLinc to make this your account's email:";
+  const after = `It expires in ${lifetime}. If you didn't ask for this, ignore this email; nothing changes.`;
+  return codeEmail({
     subject: `${BRAND} - Confirm your new email`,
+    title: 'Confirm your new email',
     text: `${greet(input.name)}
 
-Type this code in WeLinc to make this your account's email:
+${ask}
 
 ${input.code}
 
-It expires in ${lifetime}. If you didn't ask for this, ignore this email; nothing changes.`,
-    html: `${greetHtml(input.name)}
-<p>Type this code in WeLinc to make this your account's email:</p>
-<h2 style="${CODE_STYLE}">${input.code}</h2>
-<p>It expires in ${lifetime}. If you didn't ask for this, ignore this email; nothing changes.</p>`,
-  };
+${after}`,
+    before: [greetInner(input.name), escapeHtml(ask)],
+    code: input.code,
+    after: [escapeHtml(after)],
+  });
 }
 
 /** AC-17, AC-24: to the old address, when your own change starts. */

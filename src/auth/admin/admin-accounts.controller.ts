@@ -25,7 +25,7 @@ import { countPasswordCheck } from '../deletion/deletion.controller';
 import { DeletionService } from '../deletion/deletion.service';
 import { coded } from '../errors';
 import { countFeedCall } from '../events/activity.controller';
-import { countLookupCall } from '../lookup-limit';
+import { countEmailCheckCall, countLookupCall } from '../lookup-limit';
 import { AccountEventsService } from '../events/account-events.service';
 import { parseActivityQuery } from '../events/activity-query';
 import { requestMeta } from '../events/request-meta';
@@ -33,6 +33,7 @@ import { PortalCsrfGuard } from '../sessions/csrf';
 import type { AccountScope, AdminCaller, ReadScope } from '../user-scope';
 import { AccountSessionsService } from './account-sessions.service';
 import { notAdminOfSystem } from './admin-errors';
+import { EmailCheckService } from './email-check.service';
 import {
   AdminRoute,
   AdminSessionGuard,
@@ -42,6 +43,7 @@ import {
 import {
   AdminCreateUserDto,
   AdminDeletionListQueryDto,
+  AdminEmailCheckQueryDto,
   AdminListUsersQueryDto,
   AdminLookupQueryDto,
   AdminOptionalSystemDto,
@@ -168,6 +170,7 @@ export class AdminAccountsController {
     private readonly deletion: DeletionService,
     private readonly events: AccountEventsService,
     private readonly accountSessions: AccountSessionsService,
+    private readonly emailChecks: EmailCheckService,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
@@ -227,6 +230,28 @@ export class AdminAccountsController {
     const scope = systemScope(req, query.system);
     await countLookupCall(this.storage, scope.id, res);
     return this.authService.lookupUsers(query.q, scope);
+  }
+
+  // Declared before users/:id too. Suite spec 0019, AC-23: the step up rule of lookup, with its
+  // own counter of 60 a minute per admin
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    429: ['RATE_LIMITED'],
+  })
+  @Get('users/email-check')
+  async emailCheck(
+    @Query() query: AdminEmailCheckQueryDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    const scope = systemScope(req, query.system);
+    await countEmailCheckCall(this.storage, scope.id, res);
+    return this.emailChecks.check(
+      query.email,
+      query.system,
+      portalAdmin(req).standing,
+    );
   }
 
   @ApiErrorMap(VALIDATION, ADMIN_SESSION, NOT_FOUND, {

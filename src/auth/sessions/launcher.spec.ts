@@ -254,10 +254,32 @@ describe('LauncherService.systemsFor', () => {
     const { service, db } = build([], [], true);
     const answer = await service.systemsFor(USER);
     expect(answer.systems).toEqual([]);
+    expect(answer.suiteAdmin).toBe(true);
     expect(answer.user.email).toBe('multi.lead@welinc.com');
     expect(db.suiteAdmin.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: 'u1' } }),
     );
+  });
+
+  // covers: suite spec 0019 AC-5, AC-6 (a suite admin whose only role is temporary, not ADMIN)
+  it('says suiteAdmin for a suite admin who also holds a system role', async () => {
+    const { service } = build(
+      [{ system: SystemType.VRMS, role: 'MECHANIC' }],
+      [client(SystemType.VRMS, 'http://localhost:8001')],
+      true,
+    );
+    const answer = await service.systemsFor(USER);
+    expect(answer.systems).toHaveLength(1);
+    expect(answer.suiteAdmin).toBe(true);
+  });
+
+  // covers: suite spec 0019 AC-6 (the field is always sent)
+  it('says suiteAdmin false for everyone else', async () => {
+    const { service } = build(
+      [{ system: SystemType.VRMS, role: 'MECHANIC' }],
+      [client(SystemType.VRMS, 'http://localhost:8001')],
+    );
+    expect((await service.systemsFor(USER)).suiteAdmin).toBe(false);
   });
 
   it('answers 403 NO_SYSTEM_ACCESS for no role at all, without reading clients', async () => {
@@ -487,6 +509,7 @@ describe('withCutoffs', () => {
     user: { id: 'u1', name: 'Mara', email: 'm@welinc.com', picture: null },
     systems: [],
     mobileSystems: [],
+    suiteAdmin: false,
   };
   const NOW = new Date('2026-11-23T10:00:00.000Z');
 

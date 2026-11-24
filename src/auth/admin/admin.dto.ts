@@ -2,6 +2,7 @@ import { Transform } from 'class-transformer';
 import {
   Allow,
   IsBoolean,
+  IsEmail,
   IsEnum,
   IsIn,
   IsOptional,
@@ -99,9 +100,28 @@ export class AdminLookupQueryDto extends AdminSystemDto {
   q!: string;
 }
 
+/** Suite spec 0019, AC-23: one whole email, trimmed and lowercased; never a partial match. */
+export class AdminEmailCheckQueryDto extends AdminSystemDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+}
+
 export class AdminCreateUserDto extends CreateUserDto {
   @IsEnum(SystemType)
   system!: SystemType;
+
+  /** Suite spec 0019, AC-22: optional, stored in `users.contact`; blank stores nothing. */
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @MaxLength(100)
+  contact?: string;
 }
 
 export class AdminUpdateUserDto extends UpdateUserDto {

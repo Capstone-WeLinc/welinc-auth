@@ -23,6 +23,11 @@ import { requestMeta } from '../events/request-meta';
 import { PortalCsrfGuard } from '../sessions/csrf';
 import { SessionService } from '../sessions/session.service';
 import { codeNotRequired } from './admin-errors';
+import { readScope } from './admin-accounts.controller';
+import {
+  AdminSummaryService,
+  type AdminSummary,
+} from './admin-summary.service';
 import {
   TemporaryGrantsService,
   type GrantView,
@@ -74,6 +79,7 @@ export class AdminController {
     private readonly signInStep: SignInStepService,
     private readonly sessions: SessionService,
     private readonly grants: TemporaryGrantsService,
+    private readonly summaries: AdminSummaryService,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
@@ -103,6 +109,22 @@ export class AdminController {
         ? await this.grants.liveFor(caller.userId)
         : [],
     };
+  }
+
+  /**
+   * Suite spec 0019, AC-7: the launcher strip's counts in the caller's People read scope. Any
+   * admin, with no step up (numbers only; every list behind them still asks for the code), no
+   * limit beyond the global throttler.
+   */
+  @ApiErrorMap(ADMIN_STEP)
+  @Get('summary')
+  @AdminRoute('admin')
+  summary(
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AdminSummary> {
+    res.setHeader('Cache-Control', 'no-store');
+    return this.summaries.summaryFor(readScope(req, undefined));
   }
 
   /**

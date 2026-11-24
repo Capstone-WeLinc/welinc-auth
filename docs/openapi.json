@@ -2143,6 +2143,88 @@
         ]
       }
     },
+    "/auth/admin/summary": {
+      "get": {
+        "operationId": "AdminController_summary",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`NOT_SIGNED_IN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_SIGNED_IN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`ACCOUNT_LOCKED` or `NOT_AN_ADMIN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "ACCOUNT_LOCKED",
+                            "NOT_AN_ADMIN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
+        "summary": "Suite spec 0019, AC-7: the launcher strip's counts in the caller's People read scope. Any\nadmin, with no step up (numbers only; every list behind them still asks for the code), no\nlimit beyond the global throttler.",
+        "tags": [
+          "Portal Admin Session"
+        ]
+      }
+    },
     "/auth/admin/temporary-grants": {
       "get": {
         "operationId": "SuiteAdminController_listGrants",
@@ -4266,6 +4348,150 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
+        "tags": [
+          "Portal Admin Accounts"
+        ]
+      }
+    },
+    "/auth/admin/users/email-check": {
+      "get": {
+        "operationId": "AdminAccountsController_emailCheck",
+        "parameters": [
+          {
+            "name": "email",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "maxLength": 254,
+              "format": "email",
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "no `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`NOT_SIGNED_IN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_SIGNED_IN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`ACCOUNT_LOCKED`, `ADMIN_CODE_REQUIRED`, `NOT_ADMIN_OF_SYSTEM` or `NOT_AN_ADMIN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "ACCOUNT_LOCKED",
+                            "ADMIN_CODE_REQUIRED",
+                            "NOT_ADMIN_OF_SYSTEM",
+                            "NOT_AN_ADMIN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "RATE_LIMITED"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
                 }
               }
             }
@@ -10515,6 +10741,11 @@
               "VMMS",
               "BMS"
             ]
+          },
+          "contact": {
+            "type": "string",
+            "description": "Suite spec 0019, AC-22: optional, stored in `users.contact`; blank stores nothing.",
+            "maxLength": 100
           }
         },
         "required": [
@@ -11100,6 +11331,10 @@
               "$ref": "#/components/schemas/LauncherMobileSystemResponse"
             }
           },
+          "suiteAdmin": {
+            "type": "boolean",
+            "description": "Whether the signed in person is a suite admin (suite spec 0019, AC-6)"
+          },
           "sessionExpiresAt": {
             "type": "string",
             "description": "The earlier of the idle and the 12 hour cutoff of this browser session (ISO 8601)"
@@ -11117,6 +11352,7 @@
           "user",
           "systems",
           "mobileSystems",
+          "suiteAdmin",
           "sessionExpiresAt",
           "sessionAbsoluteExpiresAt",
           "serverTime"
