@@ -209,7 +209,11 @@ export class AdminAccountsController {
     @Res({ passthrough: true }) res: Response,
   ) {
     res.setHeader('Cache-Control', 'no-store');
-    return this.authService.listPeople(query, readScope(req, query.system));
+    return this.authService.listPeople(
+      query,
+      readScope(req, query.system),
+      portalAdmin(req).userId,
+    );
   }
 
   // Declared before users/:id so "lookup" is never read as an id

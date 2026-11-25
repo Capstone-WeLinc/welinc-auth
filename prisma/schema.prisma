@@ -127,6 +127,8 @@ model User {
   temporaryGrantsEnded TemporaryGrant[]         @relation("TemporaryGrantsEnded")
   permissionCells      RolePermission[]         @relation("RolePermissionUpdatedBy")
   permissionChanges    PermissionChange[]       @relation("PermissionChangeActor")
+  roleEvents           RoleEvent[]              @relation("RoleEventActor")
+  rolesCreated         SystemRole[]             @relation("SystemRoleCreatedBy")
 
   @@index([deletedAt])
   @@map("users")
@@ -162,6 +164,9 @@ model SystemPermission {
   sortOrder   Int              @map("sort_order")
   // Roles whose cell always equals its default (AC-27 refuses edits, the sync resets them)
   lockedRoles String[]         @map("locked_roles") @db.VarChar(40)
+  // Suite spec 0018: built in roles whose catalog default is on; written only by catalog:sync,
+  // read by the Roles page's Reset to defaults
+  defaultRoles String[]        @default([]) @map("default_roles") @db.VarChar(40)
   systemRef   System           @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
   cells       RolePermission[]
 
@@ -221,7 +226,36 @@ model PermissionChange {
   actor      User?      @relation("PermissionChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([system, createdAt(sort: Desc), id(sort: Desc)])
+  // Suite spec 0018: one role's History and lastChanged
+  @@index([system, role, createdAt(sort: Desc), id(sort: Desc)])
   @@map("permission_changes")
+}
+
+enum RoleEventKind {
+  CREATED
+  RENAMED
+  DESCRIBED
+  DELETED
+}
+
+// Suite spec 0018: what happened to a role itself (made, renamed, described, deleted). Append
+// only by trigger (migration SQL), like permission_changes; erasure may blank actor_name and
+// actor_email. No FK on role: history outlives the role.
+model RoleEvent {
+  id         String        @id @default(uuid()) @db.Uuid
+  system     SystemType
+  role       String        @db.VarChar(40)
+  kind       RoleEventKind
+  fromValue  String?       @map("from_value") @db.VarChar(200)
+  toValue    String?       @map("to_value") @db.VarChar(200)
+  actorId    String?       @map("actor_id") @db.Uuid
+  actorName  String?       @map("actor_name") @db.VarChar(100)
+  actorEmail String?       @map("actor_email") @db.VarChar(255)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor      User?         @relation("RoleEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([system, role, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("role_events")
 }
 
 model SystemRole {
@@ -234,9 +268,19 @@ model SystemRole {
   sortOrder       Int                  @map("sort_order")
   // Exactly one per system, checked by the sync
   isSystemAdmin   Boolean              @default(false) @map("is_system_admin")
+  // Suite spec 0018: false for a custom role made in the portal. catalog:sync plans only built in
+  // rows. A CHECK (migration SQL) keeps a custom role from ever being the admin role, and a
+  // partial unique index keeps live custom names unique per system ignoring case.
+  isBuiltIn       Boolean              @default(true) @map("is_built_in")
+  // The code of the role a custom role was copied from; no FK, history outlives the source
+  copiedFrom      String?              @map("copied_from") @db.VarChar(40)
+  createdById     String?              @map("created_by_id") @db.Uuid
+  // Archived: a live role has none. Pickers, tokens and the permission poll see live roles only
+  deletedAt       DateTime?            @map("deleted_at") @db.Timestamptz(6)
   createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   systemRef       System               @relation(fields: [system], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  createdBy       User?                @relation("SystemRoleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   assignments     UserRoleAssignment[]
   temporaryGrants TemporaryGrant[]
   permissionCells RolePermission[]

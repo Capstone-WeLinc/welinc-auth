@@ -75,6 +75,7 @@ async function main(): Promise<CatalogPlan> {
               description: true,
               sortOrder: true,
               lockedRoles: true,
+              defaultRoles: true,
             },
           }),
           tx.rolePermission.findMany({
@@ -104,6 +105,7 @@ async function main(): Promise<CatalogPlan> {
               permissions: permissions.map((p) => ({
                 ...p,
                 lockedRoles: p.lockedRoles ?? [],
+                defaultRoles: p.defaultRoles ?? [],
               })),
               cells,
             }),
