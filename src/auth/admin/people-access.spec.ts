@@ -172,6 +172,12 @@ describe('accessWhere (AC-21a)', () => {
 });
 
 describe('ATTENTION and ACTIVE_GROUP (AC-21a)', () => {
+  // Both sides read the clock, so pin it: a millisecond tick between the calls failed the match.
+  beforeEach(() =>
+    jest.useFakeTimers({ now: new Date('2026-11-26T08:00:00Z') }),
+  );
+  afterEach(() => jest.useRealTimers());
+
   it('are exactly the group rules', () => {
     expect(statusWhere('ATTENTION')).toEqual(groupWhere('attention'));
     expect(statusWhere('ACTIVE_GROUP')).toEqual(groupWhere('active'));
