@@ -54,13 +54,24 @@ function personRow(over: Record<string, unknown> = {}) {
     updatedAt: NOW,
     lastSignedInAt: NOW,
     roles: [
-      { role: 'MECHANIC', system: SystemType.VRMS, temporaryGrant: null },
+      {
+        role: 'MECHANIC',
+        system: SystemType.VRMS,
+        createdAt: NOW,
+        temporaryGrant: null,
+      },
       {
         role: 'ADMIN',
         system: SystemType.VMMS,
+        createdAt: NOW,
         temporaryGrant: { expiresAt: LATER },
       },
-      { role: 'OPERATIONS', system: SystemType.BMS, temporaryGrant: null },
+      {
+        role: 'OPERATIONS',
+        system: SystemType.BMS,
+        createdAt: NOW,
+        temporaryGrant: null,
+      },
     ],
     deletionRequests: [],
     suiteAdmin: null,
@@ -104,6 +115,61 @@ function build() {
 const whereOf = (db: ReturnType<typeof build>['db']) =>
   db.user.findMany.mock.calls[0][0].where.AND as unknown[];
 
+describe('listPeople for Add people (suite spec 0018, AC-14, AC-17)', () => {
+  it('leaves out the holders of excludeRole in the named system', async () => {
+    const { service, db } = build();
+    await service.listPeople({ excludeRole: 'MECHANIC' }, VRMS_ONLY);
+    expect(whereOf(db)).toContainEqual({
+      NOT: {
+        roles: { some: { system: SystemType.VRMS, role: 'MECHANIC' } },
+      },
+    });
+  });
+
+  it('refuses excludeRole without a system, and an unknown role', async () => {
+    const { service } = build();
+    await expect(
+      service.listPeople({ excludeRole: 'MECHANIC' }, MULTI),
+    ).rejects.toMatchObject({ response: { code: 'VALIDATION_FAILED' } });
+    await expect(
+      service.listPeople({ excludeRole: 'HELPER' }, VRMS_ONLY),
+    ).rejects.toMatchObject({ response: { code: 'UNKNOWN_ROLE' } });
+  });
+
+  it('leaves out suite admins and the caller with assignable=true, nobody without it', async () => {
+    const { service, db } = build();
+    await service.listPeople({ assignable: 'true' }, VRMS_ONLY, CREATOR_ID);
+    expect(whereOf(db)).toContainEqual({
+      suiteAdmin: null,
+      id: { not: CREATOR_ID },
+    });
+
+    const plain = build();
+    await plain.service.listPeople(
+      { assignable: 'false' },
+      VRMS_ONLY,
+      CREATOR_ID,
+    );
+    expect(whereOf(plain.db)).not.toContainEqual(
+      expect.objectContaining({ suiteAdmin: null }),
+    );
+  });
+
+  it('says since when each role is held', async () => {
+    const { service, db } = build();
+    db.user.findMany.mockResolvedValue([personRow()]);
+    const { items } = await service.listPeople({}, VRMS_ONLY);
+    expect(items[0].roles).toEqual([
+      {
+        role: 'MECHANIC',
+        system: SystemType.VRMS,
+        temporaryUntil: null,
+        createdAt: NOW.toISOString(),
+      },
+    ]);
+  });
+});
+
 describe('listPeople scope (AC-19)', () => {
   it('reads people with a role in any of the admin systems when no system is named', async () => {
     const { service, db } = build();
@@ -139,7 +205,12 @@ describe('listPeople scope (AC-19)', () => {
     expect(wide.items[0].otherSystems).toEqual([]);
     const one = await service.listPeople({}, VRMS_ONLY);
     expect(one.items[0].roles).toEqual([
-      { role: 'MECHANIC', system: SystemType.VRMS, temporaryUntil: null },
+      {
+        role: 'MECHANIC',
+        system: SystemType.VRMS,
+        temporaryUntil: null,
+        createdAt: NOW.toISOString(),
+      },
     ]);
     expect(one.items[0].otherSystems).toEqual([
       SystemType.BMS,
@@ -169,6 +240,7 @@ describe('listPeople fields (AC-21)', () => {
       role: 'ADMIN',
       system: SystemType.VMMS,
       temporaryUntil: LATER.toISOString(),
+      createdAt: NOW.toISOString(),
     });
     expect(items[0]).not.toHaveProperty('deletionRequests');
   });

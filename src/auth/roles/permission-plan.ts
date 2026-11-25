@@ -25,6 +25,8 @@ export type CurrentPermission = {
   description: string;
   sortOrder: number;
   lockedRoles: string[];
+  /** Suite spec 0018: the roles whose default is on, sorted (Reset to defaults reads it). */
+  defaultRoles: string[];
 };
 
 export type CurrentCell = {
@@ -48,7 +50,7 @@ export type CellChange = {
 
 export type PermissionPlan = {
   system: SystemType;
-  /** `system_permissions` rows to write: new keys, and keys whose label, order or locks changed. */
+  /** `system_permissions` rows to write: new keys, and keys whose label, order, locks or defaults changed. */
   upserts: PermissionRow[];
   /** Keys that left the file. Their cells are in `cellDeletes`. */
   deletes: string[];
@@ -72,7 +74,14 @@ function rowsOf(definitions: PermissionDefinition[]): PermissionRow[] {
     description: p.description,
     sortOrder: index,
     lockedRoles: [...(p.lockedRoles ?? [])].sort(),
+    defaultRoles: Object.keys(p.defaults)
+      .filter((role) => p.defaults[role])
+      .sort(),
   }));
+}
+
+function sameList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 function sameRow(a: PermissionRow, b: PermissionRow): boolean {
@@ -81,8 +90,8 @@ function sameRow(a: PermissionRow, b: PermissionRow): boolean {
     a.group === b.group &&
     a.description === b.description &&
     a.sortOrder === b.sortOrder &&
-    a.lockedRoles.length === b.lockedRoles.length &&
-    a.lockedRoles.every((role, i) => role === b.lockedRoles[i])
+    sameList(a.lockedRoles, b.lockedRoles) &&
+    sameList(a.defaultRoles, b.defaultRoles)
   );
 }
 
@@ -180,7 +189,11 @@ export function planPermissionSync(
     const now = existing.get(row.key);
     return (
       !now ||
-      !sameRow(row, { ...now, lockedRoles: [...now.lockedRoles].sort() })
+      !sameRow(row, {
+        ...now,
+        lockedRoles: [...now.lockedRoles].sort(),
+        defaultRoles: [...now.defaultRoles].sort(),
+      })
     );
   });
   const deletes = [...existing.keys()]

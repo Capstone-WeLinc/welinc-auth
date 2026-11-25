@@ -148,6 +148,11 @@ export class ErasureService {
           UPDATE "permission_changes"
              SET "actor_name" = NULL, "actor_email" = NULL
            WHERE "actor_id" = ${userId}::uuid`;
+        // Suite spec 0018: role history follows the same rule
+        await tx.$executeRaw`
+          UPDATE "role_events"
+             SET "actor_name" = NULL, "actor_email" = NULL
+           WHERE "actor_id" = ${userId}::uuid`;
 
         // AC-17: earlier feed snapshots get the erased values; erasedAt stays out of them, so the
         // commit time trigger writes exactly one `updated` row with erasedAt set
