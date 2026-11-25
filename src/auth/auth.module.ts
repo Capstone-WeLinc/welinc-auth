@@ -64,7 +64,6 @@ import { SuiteAdminController } from './admin/suite-admin.controller';
 import { SuiteAdminsService } from './admin/suite-admins.service';
 import { TemporaryGrantsService } from './admin/temporary-grants.service';
 import { AdminReportService } from './admin/admin-report.service';
-import { AdminSummaryService } from './admin/admin-summary.service';
 import { EmailCheckService } from './admin/email-check.service';
 import {
   SentryTestController,
@@ -119,7 +118,6 @@ import {
     SuiteAdminsService,
     TemporaryGrantsService,
     AdminReportService,
-    AdminSummaryService,
     EmailCheckService,
     AccountSessionsService,
     // Spec 0013 slice 5: the central permission matrix
