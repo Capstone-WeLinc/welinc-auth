@@ -103,6 +103,43 @@ export function roleChanges(
 }
 
 /**
+ * Suite spec 0018, AC-17: the batch form of `assertAnotherAdmin`, judged on the end state of the
+ * whole move. Locks the system's admin role rows first, then 409 `LAST_ADMIN` when none of the
+ * active, non deleted admins would stay once every id in `leaving` stops being one. `name` is
+ * the first leaving admin, so the portal can say who.
+ */
+export async function assertAdminsRemain(
+  tx: Prisma.TransactionClient,
+  leaving: { id: string; name: string }[],
+  system: SystemType,
+): Promise<void> {
+  if (leaving.length === 0) return;
+  await tx.$queryRaw`
+    SELECT ur.id FROM user_roles ur
+    JOIN system_roles sr ON sr.system = ur.system AND sr.code = ur.role
+    WHERE sr.is_system_admin AND ur.system = ${system}::"SystemType"
+    FOR UPDATE OF ur`;
+  const others = await tx.user.count({
+    where: {
+      id: { notIn: leaving.map((p) => p.id) },
+      isActive: true,
+      deletedAt: null,
+      roles: { some: { system, systemRole: { isSystemAdmin: true } } },
+    },
+  });
+  if (others === 0) {
+    throw new ConflictException({
+      statusCode: 409,
+      error: 'Conflict',
+      code: 'LAST_ADMIN',
+      message: `${leaving[0].name} is the last active admin of ${system}. Make someone else admin first.`,
+      system,
+      userId: leaving[0].id,
+    });
+  }
+}
+
+/**
  * Inside the write's transaction: 409 unless another active, non deleted holder of `system`'s
  * admin role stays (spec 0004, AC-15). Locks that system's admin role rows first, so two admins
  * demoting or deactivating each other at once can't both pass.

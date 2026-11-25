@@ -1747,6 +1747,458 @@
         ]
       }
     },
+    "/auth/admin/roles/{system}": {
+      "get": {
+        "operationId": "AdminRolesController_read",
+        "parameters": [
+          {
+            "name": "system",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`NOT_SIGNED_IN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_SIGNED_IN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`ACCOUNT_LOCKED`, `ADMIN_CODE_REQUIRED`, `NOT_ADMIN_OF_SYSTEM` or `NOT_AN_ADMIN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "ACCOUNT_LOCKED",
+                            "ADMIN_CODE_REQUIRED",
+                            "NOT_ADMIN_OF_SYSTEM",
+                            "NOT_AN_ADMIN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_FOUND"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
+        "tags": [
+          "Portal Admin Roles"
+        ]
+      }
+    },
+    "/auth/admin/roles/{system}/{code}/history": {
+      "get": {
+        "operationId": "AdminRolesController_history",
+        "parameters": [
+          {
+            "name": "system",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "`INVALID_CURSOR` or no `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "INVALID_CURSOR"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`NOT_SIGNED_IN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_SIGNED_IN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`ACCOUNT_LOCKED`, `ADMIN_CODE_REQUIRED`, `NOT_ADMIN_OF_SYSTEM` or `NOT_AN_ADMIN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "ACCOUNT_LOCKED",
+                            "ADMIN_CODE_REQUIRED",
+                            "NOT_ADMIN_OF_SYSTEM",
+                            "NOT_AN_ADMIN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_FOUND"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
+        "tags": [
+          "Portal Admin Roles"
+        ]
+      }
+    },
+    "/auth/admin/roles/{system}/{code}/members": {
+      "post": {
+        "description": "Called by a web app with its cookie. A request sent from this docs page is refused by the Origin check (403 `CSRF_REJECTED`), so try it from the portal instead.",
+        "operationId": "AdminRolesController_addMembers",
+        "parameters": [
+          {
+            "name": "system",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddRoleMembersDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "`NOT_IN_SYSTEM`, `UNKNOWN_ROLE` or no `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_IN_SYSTEM",
+                            "UNKNOWN_ROLE"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`NOT_SIGNED_IN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_SIGNED_IN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`ACCOUNT_LOCKED`, `ADMIN_CODE_REQUIRED`, `CSRF_REJECTED`, `NOT_ADMIN_OF_SYSTEM`, `NOT_AN_ADMIN` or `REAUTH_REQUIRED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "ACCOUNT_LOCKED",
+                            "ADMIN_CODE_REQUIRED",
+                            "CSRF_REJECTED",
+                            "NOT_ADMIN_OF_SYSTEM",
+                            "NOT_AN_ADMIN",
+                            "REAUTH_REQUIRED"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_FOUND"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`LAST_ADMIN`, `ROLE_LIMIT`, `SELF_ROLE`, `SUITE_ADMIN_NO_ROLES` or `TEMPORARY_ROLE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "LAST_ADMIN",
+                            "ROLE_LIMIT",
+                            "SELF_ROLE",
+                            "SUITE_ADMIN_NO_ROLES",
+                            "TEMPORARY_ROLE"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
+        "tags": [
+          "Portal Admin Roles"
+        ]
+      }
+    },
     "/auth/admin/suite-admins": {
       "get": {
         "operationId": "SuiteAdminController_list",
@@ -2617,6 +3069,28 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "excludeRole",
+            "required": false,
+            "in": "query",
+            "description": "Suite spec 0018, AC-14: leave out the holders of this role (needs `system`).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "assignable",
+            "required": false,
+            "in": "query",
+            "description": "Suite spec 0018, AC-14: `true` leaves out suite admins and the caller (Add people).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           },
           {
@@ -10827,6 +11301,9 @@
       "name": "Portal Admin Permissions"
     },
     {
+      "name": "Portal Admin Roles"
+    },
+    {
       "name": "Portal Admin Session"
     },
     {
@@ -10887,6 +11364,10 @@
       }
     },
     "schemas": {
+      "AddRoleMembersDto": {
+        "type": "object",
+        "properties": {}
+      },
       "AddSuiteAdminDto": {
         "type": "object",
         "properties": {}

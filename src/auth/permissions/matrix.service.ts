@@ -84,8 +84,9 @@ export class MatrixService {
   ): Promise<AdminMatrix> {
     const [base, roles, permissions] = await Promise.all([
       this.systemMatrix(system),
+      // Suite spec 0018: live roles only (an archived custom role has no cells)
       this.prisma.systemRole.findMany({
-        where: { system },
+        where: { system, deletedAt: null },
         select: { code: true, name: true },
         orderBy: { sortOrder: 'asc' },
       }),
@@ -155,7 +156,11 @@ export class MatrixService {
       }
 
       const [roles, permissions, cells] = await Promise.all([
-        tx.systemRole.findMany({ where: { system }, select: { code: true } }),
+        // Suite spec 0018: an archived role answers UNKNOWN_ROLE
+        tx.systemRole.findMany({
+          where: { system, deletedAt: null },
+          select: { code: true },
+        }),
         tx.systemPermission.findMany({
           where: { system },
           select: { key: true, lockedRoles: true },
@@ -332,7 +337,7 @@ export class MatrixService {
             select: { version: true },
           }),
           tx.systemRole.findMany({
-            where: { system },
+            where: { system, deletedAt: null },
             select: { code: true },
             orderBy: { sortOrder: 'asc' },
           }),

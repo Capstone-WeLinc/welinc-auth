@@ -94,6 +94,17 @@ export class AdminListUsersQueryDto extends AdminPeopleFilterQueryDto {
   @Matches(ROLE_CODE_RE)
   role?: RoleCode;
 
+  /** Suite spec 0018, AC-14: leave out the holders of this role (needs `system`). */
+  @IsOptional()
+  @IsString()
+  @Matches(ROLE_CODE_RE)
+  excludeRole?: RoleCode;
+
+  /** Suite spec 0018, AC-14: `true` leaves out suite admins and the caller (Add people). */
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  assignable?: 'true' | 'false';
+
   @IsOptional()
   @IsString()
   @MaxLength(400)

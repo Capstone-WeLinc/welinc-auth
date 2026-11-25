@@ -56,6 +56,9 @@ function row(
     description: p.description,
     sortOrder,
     lockedRoles,
+    defaultRoles: Object.keys(p.defaults)
+      .filter((role) => (p.defaults as Record<string, boolean>)[role])
+      .sort(),
   };
 }
 
@@ -192,6 +195,47 @@ describe('planPermissionSync (AC-25)', () => {
     ]);
     expect(plan.cellInserts).toEqual([]);
     expect(plan.bump).toBe(true);
+  });
+
+  it('writes default_roles from the defaults, sorted (suite spec 0018, AC-17)', () => {
+    const plan = planPermissionSync(system([view, locked]), {
+      permissions: [],
+      cells: [],
+    });
+    expect(plan.upserts.map((p) => [p.key, p.defaultRoles])).toEqual([
+      ['ticket.view', ['ADMIN', 'MECHANIC']],
+      ['team.manage', ['ADMIN']],
+    ]);
+  });
+
+  it('rewrites a key whose defaults changed, without touching its cells (AC-17)', () => {
+    const plan = planPermissionSync(
+      system([{ ...view, defaults: { ADMIN: true, MECHANIC: false } }]),
+      {
+        permissions: [row(view, 0)],
+        cells: [
+          cell('ADMIN', 'ticket.view', true),
+          cell('MECHANIC', 'ticket.view', true),
+        ],
+      },
+    );
+    expect(plan.upserts).toEqual([
+      expect.objectContaining({ key: 'ticket.view', defaultRoles: ['ADMIN'] }),
+    ]);
+    expect(plan.cellResets).toEqual([]);
+    expect(plan.changes).toEqual([]);
+    expect(plan.bump).toBe(true);
+  });
+
+  it('treats default_roles stored in another order as unchanged (AC-17)', () => {
+    const plan = planPermissionSync(system([view]), {
+      permissions: [{ ...row(view, 0), defaultRoles: ['MECHANIC', 'ADMIN'] }],
+      cells: [
+        cell('ADMIN', 'ticket.view', true),
+        cell('MECHANIC', 'ticket.view', true),
+      ],
+    });
+    expect(plan.bump).toBe(false);
   });
 
   it('leaves a system with no permissions list with an empty matrix', () => {

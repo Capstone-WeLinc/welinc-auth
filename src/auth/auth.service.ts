@@ -124,6 +124,7 @@ import {
   SELF_DELETE,
   SELF_ROLE,
   adminSystems,
+  assertAdminsRemain,
   assertAnotherAdmin,
   change,
   lockAccount,
@@ -287,6 +288,15 @@ export type PeopleFacets = {
 
 const PERSON_LIST_SELECT = {
   ...MANAGED_USER_SELECT,
+  // Suite spec 0018, AC-17: each role also says since when it is held ("Since [date]")
+  roles: {
+    select: {
+      role: true,
+      system: true,
+      createdAt: true,
+      temporaryGrant: { select: { expiresAt: true } },
+    },
+  },
   lastSignedInAt: true,
   // Spec 0012, AC-9: an EXISTS on a pending request
   deletionRequests: {
@@ -360,8 +370,14 @@ export type ManagedUserResponse = {
   roles: RoleAssignment[];
 };
 
-/** Suite spec 0017, AC-21: a role with when its temporary grant ends, null when permanent. */
-export type PersonRole = RoleAssignment & { temporaryUntil: string | null };
+/**
+ * Suite spec 0017, AC-21: a role with when its temporary grant ends, null when permanent. Suite
+ * spec 0018, AC-17: and when this person was given it.
+ */
+export type PersonRole = RoleAssignment & {
+  temporaryUntil: string | null;
+  createdAt: string;
+};
 
 /** An admin answer: only the caller's system roles, plus the other systems by name (spec 0011, AC-26). */
 export type ScopedUserResponse = ManagedUserResponse & {
@@ -745,6 +761,150 @@ export class AuthService {
     return alerts;
   }
 
+  /**
+   * Suite spec 0018, child 0001 AC-14 and AC-17: Add people. Moves every listed person into
+   * `role`, replacing their roles in `actor.system` as Change role does, all or nothing. Locks the
+   * role row first (a Delete can't race it), then each account in id order, then judges
+   * `LAST_ADMIN` on the end state of the whole batch. The password step applies only when `role`
+   * is the system's admin role. People who already hold it are skipped.
+   */
+  async moveToRole(
+    role: string,
+    userIds: string[],
+    reauthToken: string | undefined,
+    actor: AdminCaller,
+  ): Promise<{ moved: number; skipped: number }> {
+    const system = actor.system;
+    const ids = [...new Set(userIds.map((id) => id.toLowerCase()))].sort();
+    if (ids.includes(actor.id)) {
+      throw coded(HttpStatus.CONFLICT, 'SELF_ROLE', SELF_ROLE);
+    }
+
+    const { moved, skipped, alerts } = await this.prisma.$transaction(
+      async (tx) => {
+        const target = await tx.$queryRaw<
+          { is_system_admin: boolean; deleted_at: Date | null }[]
+        >`SELECT "is_system_admin", "deleted_at" FROM "system_roles"
+           WHERE "system" = ${system}::"SystemType" AND "code" = ${role}
+           FOR UPDATE`;
+        if (!target[0] || target[0].deleted_at !== null) {
+          throw coded(
+            HttpStatus.BAD_REQUEST,
+            'UNKNOWN_ROLE',
+            `${system} has no role ${role}`,
+          );
+        }
+        const givesAdmin = target[0].is_system_admin;
+
+        for (const id of ids) await lockAccount(tx, id);
+        const people = await tx.user.findMany({
+          where: { id: { in: ids }, deletedAt: null },
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+            roles: {
+              select: { role: true, system: true, temporaryGrantId: true },
+            },
+          },
+        });
+        const byId = new Map(people.map((p) => [p.id, p]));
+        const admins = await this.catalog.adminRoles(tx);
+
+        const moves: {
+          id: string;
+          before: RoleAssignment[];
+          after: RoleAssignment[];
+        }[] = [];
+        const leavingAdmin: { id: string; name: string }[] = [];
+        let skippedCount = 0;
+        for (const id of ids) {
+          const person = byId.get(id);
+          const own = person?.roles.filter((r) => r.system === system) ?? [];
+          if (!person || own.length === 0) {
+            throw coded(
+              HttpStatus.BAD_REQUEST,
+              'NOT_IN_SYSTEM',
+              `${person?.name ?? 'This person'} has no role in ${system}`,
+            );
+          }
+          if (own.some((r) => r.role === role)) {
+            skippedCount += 1;
+            continue;
+          }
+          if (own.some((r) => !!r.temporaryGrantId)) {
+            throw coded(
+              HttpStatus.CONFLICT,
+              'TEMPORARY_ROLE',
+              `${person.name}'s role is temporary and ends by itself.`,
+            );
+          }
+          if ((await this.admins.standing(id, tx)).suiteAdmin) {
+            throw suiteAdminNoRoles();
+          }
+          const before = person.roles.map((r) => ({
+            role: r.role,
+            system: r.system,
+          }));
+          const after = replaceSystemRoles(before, [{ role, system }], system);
+          await this.catalog.assertWithinLimit(after, system, tx);
+          if (
+            person.isActive &&
+            !givesAdmin &&
+            own.some((r) => admins.get(system) === r.role)
+          ) {
+            leavingAdmin.push({ id, name: person.name });
+          }
+          moves.push({ id, before, after });
+        }
+
+        await assertAdminsRemain(tx, leavingAdmin, system);
+        if (givesAdmin && moves.length > 0) {
+          await this.useAdminAction(tx, actor, reauthToken);
+        }
+
+        const roleAlerts: AdminAlert[] = [];
+        const events: EventInput[] = [];
+        for (const move of moves) {
+          // Only this system's rows change; temporary rows were refused above
+          await tx.userRoleAssignment.deleteMany({
+            where: { userId: move.id, system, role: { not: role } },
+          });
+          await tx.userRoleAssignment.create({
+            data: { userId: move.id, system, role },
+          });
+          events.push(...roleChanges(move.id, actor, move.before, move.after));
+          roleAlerts.push(
+            ...(await this.adminRoleAlerts(
+              move.id,
+              move.before,
+              move.after,
+              tx,
+            )),
+            ...(actor.suite
+              ? this.grantAlerts(
+                  move.id,
+                  actor,
+                  [{ role, system }],
+                  admins,
+                  false,
+                ).filter((a) => a.kind === 'SUITE_ROLE_GIVEN')
+              : []),
+          );
+        }
+        await this.events.recordMany(tx, events);
+        return {
+          moved: moves.length,
+          skipped: skippedCount,
+          alerts: roleAlerts,
+        };
+      },
+    );
+
+    await this.alerts.send(actor.id, alerts);
+    return { moved, skipped };
+  }
+
   async unlockUser(
     userId: string,
     actor: AdminCaller,
@@ -907,10 +1067,13 @@ export class AuthService {
       group?: PeopleGroup;
       sort?: PeopleSort;
       role?: string;
+      excludeRole?: string;
+      assignable?: 'true' | 'false';
       cursor?: string;
       limit?: string;
     },
     scope: ReadScope,
+    callerId?: string,
   ): Promise<{
     items: PersonListItem[];
     next: string | null;
@@ -934,6 +1097,18 @@ export class AuthService {
       }
       await this.catalog.assertKnownRole(scope.only, query.role);
     }
+    // Suite spec 0018, AC-14: Add people's candidates
+    if (query.excludeRole !== undefined) {
+      if (scope.only === null) {
+        throw coded(
+          HttpStatus.BAD_REQUEST,
+          'VALIDATION_FAILED',
+          'excludeRole needs a system',
+        );
+      }
+      await this.catalog.assertKnownRole(scope.only, query.excludeRole);
+    }
+    const assignable = query.assignable === 'true';
     const sort = query.sort ?? 'name';
     const limit = parsePeopleLimit(query.limit);
     const filter = await this.peopleFilter(query, scope);
@@ -943,6 +1118,8 @@ export class AuthService {
       query.group,
       filter.statuses.join(','),
       query.role,
+      query.excludeRole,
+      assignable ? 'assignable' : undefined,
       // Added last so cursors made before `access` existed keep their fingerprint
       ...(filter.access.length > 0 ? [accessKey(filter.access)] : []),
     ]);
@@ -953,6 +1130,20 @@ export class AuthService {
       ...filter.people(query.role),
       statusesWhere(filter.statuses),
       accessWhere(filter.access),
+      // Suite spec 0018, AC-14: Add people's candidates
+      query.excludeRole !== undefined && scope.only !== null
+        ? {
+            NOT: {
+              roles: { some: { system: scope.only, role: query.excludeRole } },
+            },
+          }
+        : {},
+      assignable
+        ? {
+            suiteAdmin: null,
+            ...(callerId ? { id: { not: callerId } } : {}),
+          }
+        : {},
     ];
     const [rows, counts] = await Promise.all([
       this.prisma.user.findMany({
@@ -1145,6 +1336,7 @@ export class AuthService {
           role: r.role,
           system: r.system,
           temporaryUntil: r.temporaryGrant?.expiresAt.toISOString() ?? null,
+          createdAt: r.createdAt.toISOString(),
         })),
       lastSignedInAt: lastSignedInAt?.toISOString() ?? null,
       pendingDeletion: deletionRequests.length > 0,
