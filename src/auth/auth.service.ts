@@ -65,9 +65,13 @@ import {
   parseStatuses,
   peopleOrder,
   statusesWhere,
+  statusWhere,
+  FACET_STATUSES,
+  type FacetStatus,
   type PeopleGroup,
   type PeopleSort,
 } from './admin/people-page';
+import { accessKey, accessWhere, parseAccess } from './admin/people-access';
 
 const DAY_MS = 86_400_000;
 
@@ -257,6 +261,31 @@ const MANAGED_USER_SELECT = {
 } satisfies Prisma.UserSelect;
 
 /** A People list row and the person page: the admin fields plus the two flags (spec 0013). */
+/** The filters the People list and its facets share (suite spec 0019, AC-21a, AC-21b). */
+export type PeopleFilterQuery = {
+  q?: string;
+  status?: string;
+  access?: string;
+};
+
+/** Suite spec 0019, AC-21b: the facets order, VRMS, VMMS, BMS (the filter's row order). */
+const FACET_SYSTEM_ORDER: readonly SystemType[] = [
+  SystemType.VRMS,
+  SystemType.VMMS,
+  SystemType.BMS,
+];
+
+/** The `GET /auth/admin/users/facets` body (suite spec 0019, AC-21b): counts only. */
+export type PeopleFacets = {
+  total: number;
+  status: Record<FacetStatus, number>;
+  systems: {
+    system: SystemType;
+    count: number;
+    roles: { code: string; count: number }[];
+  }[];
+};
+
 const PERSON_LIST_SELECT = {
   ...MANAGED_USER_SELECT,
   // Suite spec 0018, AC-17: each role also says since when it is held ("Since [date]")
@@ -1034,9 +1063,7 @@ export class AuthService {
    * every group's `counts`, three sorts, keyset cursors bound to the sort and the filters.
    */
   async listPeople(
-    query: {
-      q?: string;
-      status?: string;
+    query: PeopleFilterQuery & {
       group?: PeopleGroup;
       sort?: PeopleSort;
       role?: string;
@@ -1060,6 +1087,14 @@ export class AuthService {
           'A role filter needs a system',
         );
       }
+      // Suite spec 0019, AC-21a: `role` stays for old callers; never both
+      if (query.access !== undefined) {
+        throw coded(
+          HttpStatus.BAD_REQUEST,
+          'VALIDATION_FAILED',
+          'Send access or role, not both',
+        );
+      }
       await this.catalog.assertKnownRole(scope.only, query.role);
     }
     // Suite spec 0018, AC-14: Add people's candidates
@@ -1075,37 +1110,27 @@ export class AuthService {
     }
     const assignable = query.assignable === 'true';
     const sort = query.sort ?? 'name';
-    const statuses = parseStatuses(query.status);
-    const q = query.q?.trim() || undefined;
     const limit = parsePeopleLimit(query.limit);
+    const filter = await this.peopleFilter(query, scope);
     const filters = filterKey([
       scope.only ?? scope.systems?.join(',') ?? '*',
-      q,
+      filter.q,
       query.group,
-      statuses.join(','),
+      filter.statuses.join(','),
       query.role,
       query.excludeRole,
       assignable ? 'assignable' : undefined,
+      // Added last so cursors made before `access` existed keep their fingerprint
+      ...(filter.access.length > 0 ? [accessKey(filter.access)] : []),
     ]);
     const cursor = query.cursor
       ? decodePeopleCursor(query.cursor, { sort, filters })
       : null;
-    const systems = scope.systems;
     const base: Prisma.UserWhereInput[] = [
-      { deletedAt: null },
-      // Spec 0013, AC-17: suite scope is every person, people with no role included
-      systems === null
-        ? {}
-        : {
-            roles: {
-              some: {
-                system: scope.only ?? { in: systems },
-                ...(query.role !== undefined ? { role: query.role } : {}),
-              },
-            },
-          },
-      q ? await this.searchWhere(q, systems) : {},
-      statusesWhere(statuses),
+      ...filter.people(query.role),
+      statusesWhere(filter.statuses),
+      accessWhere(filter.access),
+      // Suite spec 0018, AC-14: Add people's candidates
       query.excludeRole !== undefined && scope.only !== null
         ? {
             NOT: {
@@ -1143,6 +1168,116 @@ export class AuthService {
         rows.length > limit && last ? cursorAfter(sort, filters, last) : null,
       ...(counts ? { counts } : {}),
     };
+  }
+
+  /**
+   * Suite spec 0019, AC-21b: the People filter's counts, distinct people only, never names. Each
+   * facet counts under every filter but its own (status counts ignore `status`, system and role
+   * counts ignore `access`), on the list's own rules (`statusWhere`, `groupWhere`, `searchWhere`,
+   * the read scope), run as parallel counts so no rule is ever copied into SQL.
+   */
+  async facetPeople(
+    query: PeopleFilterQuery,
+    scope: ReadScope,
+  ): Promise<PeopleFacets> {
+    const filter = await this.peopleFilter(query, scope);
+    const people = filter.people();
+    const byStatus = statusesWhere(filter.statuses);
+    const byAccess = accessWhere(filter.access);
+    const count = (where: Prisma.UserWhereInput[]) =>
+      this.prisma.user.count({ where: { AND: where } });
+    const inScope = filter.catalog.filter((s) =>
+      scope.only !== null
+        ? s.code === scope.only
+        : scope.systems === null || scope.systems.includes(s.code),
+    );
+    const systems = FACET_SYSTEM_ORDER.flatMap(
+      (code) => inScope.find((s) => s.code === code) ?? [],
+    );
+    const [total, statusCounts, systemCounts, roleRows] = await Promise.all([
+      count([...people, byStatus, byAccess]),
+      Promise.all(
+        FACET_STATUSES.map((status) =>
+          count([...people, byAccess, statusWhere(status)]),
+        ),
+      ),
+      Promise.all(
+        systems.map((s) =>
+          count([...people, byStatus, { roles: { some: { system: s.code } } }]),
+        ),
+      ),
+      this.roleFacetRows(
+        systems.map((s) => s.code),
+        [...people, byStatus],
+      ),
+    ]);
+    const roleCount = new Map(
+      roleRows.map((r) => [`${r.system}:${r.role}`, r.count] as const),
+    );
+    return {
+      total,
+      status: Object.fromEntries(
+        FACET_STATUSES.map((status, i) => [status, statusCounts[i]]),
+      ) as Record<FacetStatus, number>,
+      systems: systems.map((s, i) => ({
+        system: s.code,
+        count: systemCounts[i],
+        roles: s.roles.map((r) => ({
+          code: r.code,
+          count: roleCount.get(`${s.code}:${r.code}`) ?? 0,
+        })),
+      })),
+    };
+  }
+
+  /**
+   * AC-21b: people per role of the given systems, under `people`. `user_roles` holds one row per
+   * person, role and system (its unique index), so a row count is a count of distinct people.
+   */
+  private async roleFacetRows(
+    systems: SystemType[],
+    people: Prisma.UserWhereInput[],
+  ): Promise<{ system: SystemType; role: string; count: number }[]> {
+    if (systems.length === 0) return [];
+    const rows = await this.prisma.userRoleAssignment.groupBy({
+      by: ['system', 'role'],
+      where: { system: { in: systems }, user: { AND: people } },
+      _count: { _all: true },
+    });
+    return rows.map((r) => ({
+      system: r.system,
+      role: r.role,
+      count: r._count._all,
+    }));
+  }
+
+  /**
+   * The People filters the list and the facets share: the scope (not deleted; holding a role in
+   * the scope's systems, everyone for a suite admin), the search, the statuses and `access`.
+   */
+  private async peopleFilter(query: PeopleFilterQuery, scope: ReadScope) {
+    const catalog = await this.catalog.systems();
+    const statuses = parseStatuses(query.status);
+    const access = parseAccess(query.access, catalog, scope);
+    const q = query.q?.trim() || undefined;
+    const systems = scope.systems;
+    const search = q ? await this.searchWhere(q, systems) : {};
+    const people = (role?: string): Prisma.UserWhereInput[] => [
+      { deletedAt: null },
+      // Spec 0013, AC-17: suite scope is every person, people with no role included
+      systems === null
+        ? {}
+        : {
+            roles: {
+              some: {
+                system: scope.only ?? { in: systems },
+                ...(role !== undefined ? { role } : {}),
+              },
+            },
+          },
+      search,
+    ];
+    return { catalog, statuses, access, q, people };
   }
 
   /** AC-3, AC-20: name, email, or a role whose display name matches, in the systems in scope. */
@@ -1309,7 +1444,8 @@ export class AuthService {
   }
 
   async createUser(
-    dto: CreateUserDto,
+    /** `contact` comes only from the portal route (suite spec 0019, AC-22). */
+    dto: CreateUserDto & { contact?: string },
     actor: AdminCaller,
   ): Promise<ScopedUserResponse & { setupEmailSent: boolean }> {
     const roleAssignments = this.normalizeRoleAssignments(dto.roleAssignments);
@@ -1373,6 +1509,8 @@ export class AuthService {
           data: {
             name: dto.name.trim(),
             email: dto.email.trim().toLowerCase(),
+            // An attach keeps the account's own contact; a blank one stores nothing
+            contact: dto.contact || null,
             passwordHash,
             // AC-15: both start false; using the setup code turns them true (AC-12)
             passwordSet: false,

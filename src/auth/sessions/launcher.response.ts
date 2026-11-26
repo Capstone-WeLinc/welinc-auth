@@ -81,6 +81,12 @@ export class LauncherAnswerResponse {
 
   @ApiProperty({
     description:
+      'Whether the signed in person is a suite admin (suite spec 0019, AC-6)',
+  })
+  suiteAdmin!: boolean;
+
+  @ApiProperty({
+    description:
       'The earlier of the idle and the 12 hour cutoff of this browser session (ISO 8601)',
   })
   sessionExpiresAt!: string;

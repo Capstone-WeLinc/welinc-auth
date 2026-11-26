@@ -2954,25 +2954,6 @@
         "operationId": "AdminAccountsController_listUsers",
         "parameters": [
           {
-            "name": "q",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "maxLength": 100,
-              "type": "string"
-            }
-          },
-          {
-            "name": "status",
-            "required": false,
-            "in": "query",
-            "description": "One status, or a comma list read as any of them (suite spec 0017, AC-20).",
-            "schema": {
-              "maxLength": 200,
-              "type": "string"
-            }
-          },
-          {
             "name": "group",
             "required": false,
             "in": "query",
@@ -3043,6 +3024,34 @@
             "name": "limit",
             "required": false,
             "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "description": "One status, or a comma list read as any of them (suite spec 0017, AC-20).",
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "name": "access",
+            "required": false,
+            "in": "query",
+            "description": "Suite spec 0019, AC-21a: a comma list of `SYSTEM` or `SYSTEM:ROLE`, read as any of them.\nChecked and normalized by `parseAccess`, so its error order holds.",
             "schema": {
               "type": "string"
             }
@@ -4740,6 +4749,327 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
+        "tags": [
+          "Portal Admin Accounts"
+        ]
+      }
+    },
+    "/auth/admin/users/email-check": {
+      "get": {
+        "operationId": "AdminAccountsController_emailCheck",
+        "parameters": [
+          {
+            "name": "email",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "maxLength": 254,
+              "format": "email",
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "no `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodedError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`NOT_SIGNED_IN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_SIGNED_IN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`ACCOUNT_LOCKED`, `ADMIN_CODE_REQUIRED`, `NOT_ADMIN_OF_SYSTEM` or `NOT_AN_ADMIN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "ACCOUNT_LOCKED",
+                            "ADMIN_CODE_REQUIRED",
+                            "NOT_ADMIN_OF_SYSTEM",
+                            "NOT_AN_ADMIN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "RATE_LIMITED"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ssoCookie": []
+          }
+        ],
+        "tags": [
+          "Portal Admin Accounts"
+        ]
+      }
+    },
+    "/auth/admin/users/facets": {
+      "get": {
+        "operationId": "AdminAccountsController_facetUsers",
+        "parameters": [
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "description": "One status, or a comma list read as any of them (suite spec 0017, AC-20).",
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "name": "access",
+            "required": false,
+            "in": "query",
+            "description": "Suite spec 0019, AC-21a: a comma list of `SYSTEM` or `SYSTEM:ROLE`, read as any of them.\nChecked and normalized by `parseAccess`, so its error order holds.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "system",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VRMS",
+                "VMMS",
+                "BMS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`UNKNOWN_ROLE`, `VALIDATION_FAILED` or no `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "UNKNOWN_ROLE",
+                            "VALIDATION_FAILED"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`NOT_SIGNED_IN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "NOT_SIGNED_IN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`ACCOUNT_LOCKED`, `ADMIN_CODE_REQUIRED`, `NOT_ADMIN_OF_SYSTEM` or `NOT_AN_ADMIN`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "ACCOUNT_LOCKED",
+                            "ADMIN_CODE_REQUIRED",
+                            "NOT_ADMIN_OF_SYSTEM",
+                            "NOT_AN_ADMIN"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/CodedError"
+                    },
+                    {
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "RATE_LIMITED"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ]
+                    }
+                  ]
                 }
               }
             }
@@ -10996,6 +11326,11 @@
               "VMMS",
               "BMS"
             ]
+          },
+          "contact": {
+            "type": "string",
+            "description": "Suite spec 0019, AC-22: optional, stored in `users.contact`; blank stores nothing.",
+            "maxLength": 100
           }
         },
         "required": [
@@ -11581,6 +11916,10 @@
               "$ref": "#/components/schemas/LauncherMobileSystemResponse"
             }
           },
+          "suiteAdmin": {
+            "type": "boolean",
+            "description": "Whether the signed in person is a suite admin (suite spec 0019, AC-6)"
+          },
           "sessionExpiresAt": {
             "type": "string",
             "description": "The earlier of the idle and the 12 hour cutoff of this browser session (ISO 8601)"
@@ -11598,6 +11937,7 @@
           "user",
           "systems",
           "mobileSystems",
+          "suiteAdmin",
           "sessionExpiresAt",
           "sessionAbsoluteExpiresAt",
           "serverTime"

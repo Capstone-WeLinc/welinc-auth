@@ -28,6 +28,14 @@ import { reportJobFailure } from '../../monitoring/job-failure';
 
 type Tx = Prisma.TransactionClient;
 
+/** A grant that is live now: not ended and not run out (the report, the banner, the summary). */
+export function liveGrantWhere(now: Date = new Date()) {
+  return {
+    endedAt: null,
+    expiresAt: { gt: now },
+  } satisfies Prisma.TemporaryGrantWhereInput;
+}
+
 /** AC-9: whole hours, 1 to 8, 4 when left out. */
 export const GRANT_HOURS_MIN = 1;
 export const GRANT_HOURS_MAX = 8;
@@ -464,7 +472,7 @@ export class TemporaryGrantsService {
   /** AC-24: the caller's own live grants, for the portal banner. */
   async liveFor(userId: string): Promise<GrantView[]> {
     const rows = await this.prisma.temporaryGrant.findMany({
-      where: { userId, endedAt: null, expiresAt: { gt: new Date() } },
+      where: { userId, ...liveGrantWhere() },
       select: GRANT_SELECT,
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
     });

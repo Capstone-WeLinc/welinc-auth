@@ -864,6 +864,19 @@ describe('AuthService admin writes', () => {
       });
     });
 
+    // covers: suite spec 0019 AC-22 (the optional contact number)
+    it('stores the contact number when given, and nothing when left out', async () => {
+      const { service, db } = arrange();
+
+      await service.createUser({ ...dto, contact: '0917 555 0134' }, actor);
+      await service.createUser(dto, actor);
+
+      expect(db.user.create.mock.calls[0][0].data.contact).toBe(
+        '0917 555 0134',
+      );
+      expect(db.user.create.mock.calls[1][0].data.contact).toBeNull();
+    });
+
     it('trims the name and lowercases the email before saving', async () => {
       const { service, db } = arrange();
 

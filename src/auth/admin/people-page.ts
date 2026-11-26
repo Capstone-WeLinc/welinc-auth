@@ -7,7 +7,9 @@ import { lockRunning, notLocked } from '../lockout';
 // Spec 0013, AC-16, AC-23: the portal's People list, filtered by a search and the status the
 // Users pages show (the first that applies: Inactive, Locked, Setup pending, Email not verified,
 // Active), plus Pending deletion. Suite spec 0017, AC-5, AC-20: the three groups, three sorts,
-// status lists, and keyset cursors that carry the sort and the filters they were made for.
+// status lists, and keyset cursors that carry the sort and the filters they were made for. Suite
+// spec 0019, AC-21a: `ATTENTION` and `ACTIVE_GROUP` overlap the others on purpose (the filter
+// chips); the five chips the facets count are `FACET_STATUSES`.
 
 export const PEOPLE_STATUSES = [
   'LOCKED',
@@ -16,8 +18,21 @@ export const PEOPLE_STATUSES = [
   'ACTIVE',
   'INACTIVE',
   'PENDING_DELETION',
+  // Suite spec 0019, AC-21a: the Needs attention and Active groups as status values
+  'ATTENTION',
+  'ACTIVE_GROUP',
 ] as const;
 export type PeopleStatus = (typeof PEOPLE_STATUSES)[number];
+
+/** The status chips of the People filter, in the order `GET users/facets` answers them. */
+export const FACET_STATUSES = [
+  'ATTENTION',
+  'LOCKED',
+  'SETUP_PENDING',
+  'ACTIVE_GROUP',
+  'INACTIVE',
+] as const satisfies readonly PeopleStatus[];
+export type FacetStatus = (typeof FACET_STATUSES)[number];
 
 /** One status, or a comma list read as any of them (AC-20). */
 export const PEOPLE_STATUS_LIST_RE = new RegExp(
@@ -184,6 +199,11 @@ export function statusWhere(status: PeopleStatus): Prisma.UserWhereInput {
       return { ...usable, passwordSet: true, emailVerified: true };
     case 'PENDING_DELETION':
       return pendingDeletion;
+    // Exactly the group rules, never a copy (suite spec 0019, AC-21a)
+    case 'ATTENTION':
+      return groupWhere('attention');
+    case 'ACTIVE_GROUP':
+      return groupWhere('active');
   }
 }
 

@@ -20,12 +20,16 @@ import {
   type ThrottlerStorage,
 } from '@nestjs/throttler';
 import type { Response } from 'express';
-import { AuthService } from '../auth.service';
+import { AuthService, type PeopleFacets } from '../auth.service';
 import { countPasswordCheck } from '../deletion/deletion.controller';
 import { DeletionService } from '../deletion/deletion.service';
 import { coded } from '../errors';
 import { countFeedCall } from '../events/activity.controller';
-import { countLookupCall } from '../lookup-limit';
+import {
+  countEmailCheckCall,
+  countFacetsCall,
+  countLookupCall,
+} from '../lookup-limit';
 import { AccountEventsService } from '../events/account-events.service';
 import { parseActivityQuery } from '../events/activity-query';
 import { requestMeta } from '../events/request-meta';
@@ -33,6 +37,7 @@ import { PortalCsrfGuard } from '../sessions/csrf';
 import type { AccountScope, AdminCaller, ReadScope } from '../user-scope';
 import { AccountSessionsService } from './account-sessions.service';
 import { notAdminOfSystem } from './admin-errors';
+import { EmailCheckService } from './email-check.service';
 import {
   AdminRoute,
   AdminSessionGuard,
@@ -42,9 +47,11 @@ import {
 import {
   AdminCreateUserDto,
   AdminDeletionListQueryDto,
+  AdminEmailCheckQueryDto,
   AdminListUsersQueryDto,
   AdminLookupQueryDto,
   AdminOptionalSystemDto,
+  AdminPeopleFilterQueryDto,
   AdminRejectDto,
   AdminSetStatusDto,
   AdminSystemDto,
@@ -168,6 +175,7 @@ export class AdminAccountsController {
     private readonly deletion: DeletionService,
     private readonly events: AccountEventsService,
     private readonly accountSessions: AccountSessionsService,
+    private readonly emailChecks: EmailCheckService,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
@@ -216,6 +224,25 @@ export class AdminAccountsController {
     );
   }
 
+  // Declared before users/:id so "facets" is never read as an id. Suite spec 0019, AC-21b: the
+  // People filter's counts, with the list's step up and read scope and its own 120 a minute
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    400: ['UNKNOWN_ROLE', 'VALIDATION_FAILED'],
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    429: ['RATE_LIMITED'],
+  })
+  @Get('users/facets')
+  async facetUsers(
+    @Query() query: AdminPeopleFilterQueryDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<PeopleFacets> {
+    res.setHeader('Cache-Control', 'no-store');
+    const scope = readScope(req, query.system);
+    await countFacetsCall(this.storage, portalAdmin(req).userId, res);
+    return this.authService.facetPeople(query, scope);
+  }
+
   // Declared before users/:id so "lookup" is never read as an id
   // Suite spec 0014, AC-9: 30 a minute per admin, one counter with the bearer route
   @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
@@ -231,6 +258,28 @@ export class AdminAccountsController {
     const scope = systemScope(req, query.system);
     await countLookupCall(this.storage, scope.id, res);
     return this.authService.lookupUsers(query.q, scope);
+  }
+
+  // Declared before users/:id too. Suite spec 0019, AC-23: the step up rule of lookup, with its
+  // own counter of 60 a minute per admin
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, {
+    403: ['NOT_ADMIN_OF_SYSTEM'],
+    429: ['RATE_LIMITED'],
+  })
+  @Get('users/email-check')
+  async emailCheck(
+    @Query() query: AdminEmailCheckQueryDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    const scope = systemScope(req, query.system);
+    await countEmailCheckCall(this.storage, scope.id, res);
+    return this.emailChecks.check(
+      query.email,
+      query.system,
+      portalAdmin(req).standing,
+    );
   }
 
   @ApiErrorMap(VALIDATION, ADMIN_SESSION, NOT_FOUND, {

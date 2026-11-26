@@ -368,6 +368,25 @@ export class DeletionService {
     }
   }
 
+  /**
+   * Suite spec 0019, AC-7: how many requests are pending, with the same filter as `list`'s
+   * pending view: every one for `null` (a suite admin), else those of people holding a role in
+   * one of `systems`.
+   */
+  pendingCount(systems: SystemType[] | null): Promise<number> {
+    return this.prisma.accountDeletionRequest.count({
+      where: {
+        status: DeletionRequestStatus.PENDING,
+        user: {
+          deletedAt: null,
+          ...(systems === null
+            ? {}
+            : { roles: { some: { system: { in: systems } } } }),
+        },
+      },
+    });
+  }
+
   /** AC-9: pending requests, or accounts in grace, of people holding a role in `system`. */
   async list(
     system: SystemType | null,

@@ -12,6 +12,7 @@ import { PrismaService } from '../../shared/prisma.service';
 import { lockRunning } from '../lockout';
 import { DeletionService } from '../deletion/deletion.service';
 import { CatalogService } from '../roles/catalog.service';
+import { liveGrantWhere } from './temporary-grants.service';
 import {
   SuiteAdminsService,
   type SuiteAdminView,
@@ -157,7 +158,7 @@ export class AdminReportService {
     });
     const grantedBy = await this.grantersOf(holders);
     const grants = await this.prisma.temporaryGrant.findMany({
-      where: { endedAt: null, expiresAt: { gt: new Date() } },
+      where: liveGrantWhere(),
       select: {
         id: true,
         system: true,

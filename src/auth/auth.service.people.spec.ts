@@ -409,3 +409,166 @@ describe('getPerson (AC-19, AC-21)', () => {
     expect(person.addedBy).toBeNull();
   });
 });
+
+// covers: suite spec 0019 AC-21a (access on the list, its cursor key, access with role) and
+// AC-21b (the facets: each facet ignores its own filter, scope, order and zeros)
+
+describe('listPeople access filter (AC-21a)', () => {
+  it('adds the access clause after the statuses', async () => {
+    const { service, db } = build();
+    await service.listPeople({ access: 'VMMS:MECHANIC' }, MULTI);
+    expect(whereOf(db)[4]).toEqual({
+      roles: { some: { system: SystemType.VMMS, role: { in: ['MECHANIC'] } } },
+    });
+  });
+
+  it('refuses access together with role', async () => {
+    const { service } = build();
+    await expect(
+      service.listPeople({ access: 'VRMS', role: 'MECHANIC' }, VRMS_ONLY),
+    ).rejects.toMatchObject({ response: { code: 'VALIDATION_FAILED' } });
+  });
+
+  it('binds the cursor to the normalized picks', async () => {
+    const { service, db } = build();
+    db.user.findMany.mockResolvedValue([
+      personRow(),
+      personRow({ id: CREATOR_ID }),
+    ]);
+    const first = await service.listPeople(
+      { limit: '1', access: 'VMMS' },
+      MULTI,
+    );
+    db.user.findMany.mockResolvedValue([]);
+    await expect(
+      service.listPeople(
+        { limit: '1', access: 'VMMS:MECHANIC,VMMS', cursor: first.next! },
+        MULTI,
+      ),
+    ).resolves.toMatchObject({ items: [] });
+    await expect(
+      service.listPeople(
+        { limit: '1', access: 'VRMS', cursor: first.next! },
+        MULTI,
+      ),
+    ).rejects.toMatchObject({ response: { code: 'INVALID_CURSOR' } });
+    await expect(
+      service.listPeople({ limit: '1', cursor: first.next! }, MULTI),
+    ).rejects.toMatchObject({ response: { code: 'INVALID_CURSOR' } });
+  });
+
+  it('refuses a system outside the read scope', async () => {
+    const { service } = build();
+    await expect(
+      service.listPeople({ access: 'BMS' }, MULTI),
+    ).rejects.toMatchObject({ response: { code: 'NOT_ADMIN_OF_SYSTEM' } });
+  });
+});
+
+describe('facetPeople (AC-21b)', () => {
+  type CountArgs = { where: { AND: unknown[] } };
+
+  function facets() {
+    const built = build();
+    const groupBy = fn();
+    groupBy.mockResolvedValue([]);
+    (built.db as Record<string, unknown>).userRoleAssignment = { groupBy };
+    return { ...built, groupBy };
+  }
+
+  it('answers every status, system and role in order, zeros included', async () => {
+    const { service, db, groupBy } = facets();
+    db.user.count.mockResolvedValue(0);
+    groupBy.mockResolvedValue([
+      { system: SystemType.VMMS, role: 'MECHANIC', _count: { _all: 4 } },
+    ]);
+    const answer = await service.facetPeople({}, MULTI);
+    expect(Object.keys(answer.status)).toEqual([
+      'ATTENTION',
+      'LOCKED',
+      'SETUP_PENDING',
+      'ACTIVE_GROUP',
+      'INACTIVE',
+    ]);
+    expect(answer.systems.map((s) => s.system)).toEqual([
+      SystemType.VRMS,
+      SystemType.VMMS,
+    ]);
+    expect(answer.systems[1].roles).toEqual([
+      { code: 'ADMIN', count: 0 },
+      { code: 'OPERATIONS', count: 0 },
+      { code: 'CHIEF_MECHANIC', count: 0 },
+      { code: 'MECHANIC', count: 4 },
+    ]);
+    expect(answer).not.toHaveProperty('items');
+  });
+
+  it('lists all three systems for a suite admin, only the named one with system', async () => {
+    const { service } = facets();
+    const suite = await service.facetPeople({}, SUITE);
+    expect(suite.systems.map((s) => s.system)).toEqual([
+      SystemType.VRMS,
+      SystemType.VMMS,
+      SystemType.BMS,
+    ]);
+    const one = await service.facetPeople({}, VRMS_ONLY);
+    expect(one.systems.map((s) => s.system)).toEqual([SystemType.VRMS]);
+  });
+
+  it('counts each facet under every filter except its own', async () => {
+    const { service, db, groupBy } = facets();
+    await service.facetPeople(
+      { status: 'LOCKED', access: 'VMMS:MECHANIC' },
+      MULTI,
+    );
+    const calls = db.user.count.mock.calls.map(
+      (c) => (c[0] as CountArgs).where.AND,
+    );
+    const lockedClause = { isActive: true, lockedAt: expect.anything() };
+    const accessClause = {
+      roles: { some: { system: SystemType.VMMS, role: { in: ['MECHANIC'] } } },
+    };
+    // total: every filter
+    expect(calls[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining(lockedClause),
+        accessClause,
+      ]),
+    );
+    // status chips (1 to 5): access kept, the LOCKED pick gone, each chip's own rule added
+    for (const where of calls.slice(1, 6)) {
+      expect(where).toContainEqual(accessClause);
+      expect(where).toHaveLength(calls[0].length);
+    }
+    expect(calls[5][calls[5].length - 1]).toEqual({ isActive: false });
+    // systems (6, 7): status kept, access gone
+    for (const where of calls.slice(6)) {
+      expect(where).not.toContainEqual(accessClause);
+    }
+    expect(calls).toHaveLength(8);
+    const roleWhere = groupBy.mock.calls[0][0].where;
+    expect(roleWhere.system).toEqual({
+      in: [SystemType.VRMS, SystemType.VMMS],
+    });
+    expect(roleWhere.user.AND).not.toContainEqual(accessClause);
+  });
+
+  it('uses the list search with the caller systems', async () => {
+    const { service, db } = facets();
+    await service.facetPeople({ q: 'driver' }, MULTI);
+    const search = (db.user.count.mock.calls[0][0] as CountArgs).where
+      .AND[2] as { OR: unknown[] };
+    // BMS has the Driver role, but this admin has no BMS: names and emails only
+    expect(search.OR).toHaveLength(2);
+  });
+
+  it('refuses the list filter errors', async () => {
+    const { service } = facets();
+    await expect(
+      service.facetPeople({ access: 'BMS' }, MULTI),
+    ).rejects.toMatchObject({ response: { code: 'NOT_ADMIN_OF_SYSTEM' } });
+    await expect(
+      service.facetPeople({ access: 'vrms' }, MULTI),
+    ).rejects.toMatchObject({ response: { code: 'VALIDATION_FAILED' } });
+  });
+});

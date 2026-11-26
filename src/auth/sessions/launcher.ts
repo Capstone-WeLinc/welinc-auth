@@ -48,6 +48,8 @@ export type LauncherSystems = {
   user: { id: string; name: string; email: string; picture: string | null };
   systems: LauncherSystem[];
   mobileSystems: LauncherMobileSystem[];
+  /** Whether the person is a suite admin (suite spec 0019, AC-6): about themselves only. */
+  suiteAdmin: boolean;
 };
 
 /** The browser session's cutoffs, as ISO times (suite spec 0016, AC-12a). */
@@ -304,12 +306,19 @@ export class LauncherService {
    * this before it creates the session, then adds the cutoffs with `withCutoffs`.
    */
   async systemsFor(user: LauncherInput): Promise<LauncherSystems> {
-    const held = await this.prisma.userRoleAssignment.findMany({
-      where: { userId: user.id, ...liveRoleWhere() },
-      select: { system: true, role: true },
-    });
+    const [held, suite] = await Promise.all([
+      this.prisma.userRoleAssignment.findMany({
+        where: { userId: user.id, ...liveRoleWhere() },
+        select: { system: true, role: true },
+      }),
+      this.prisma.suiteAdmin.findUnique({
+        where: { userId: user.id },
+        select: { userId: true },
+      }),
+    ]);
+    const suiteAdmin = suite !== null;
     const codes = launcherOrder(held);
-    if (codes.length === 0) return this.noSystems(user, []);
+    if (codes.length === 0) return noSystems(user, suiteAdmin);
 
     const [catalog, clients] = await Promise.all([
       this.prisma.system.findMany({
@@ -339,26 +348,24 @@ export class LauncherService {
     }
     // Suite spec 0014, AC-5: a phone only person gets 200 with `systems: []`
     if (systems.length === 0 && mobileSystems.length === 0) {
-      return this.noSystems(user, []);
+      return noSystems(user, suiteAdmin);
     }
-    return { user: launcherUser(user), systems, mobileSystems };
+    return { user: launcherUser(user), systems, mobileSystems, suiteAdmin };
   }
+}
 
-  /**
-   * No usable system: 403 `NO_SYSTEM_ACCESS`, except for a suite admin, who holds no system by
-   * design and gets the empty lists (spec 0013, AC-5).
-   */
-  private async noSystems(
-    user: LauncherInput,
-    mobileSystems: LauncherMobileSystem[],
-  ): Promise<LauncherSystems> {
-    const suite = await this.prisma.suiteAdmin.findUnique({
-      where: { userId: user.id },
-      select: { userId: true },
-    });
-    if (!suite) throw noSystemAccess(user.email);
-    return { user: launcherUser(user), systems: [], mobileSystems };
-  }
+/**
+ * No usable system: 403 `NO_SYSTEM_ACCESS`, except for a suite admin, who may hold no system
+ * and gets the empty lists (spec 0013, AC-5).
+ */
+function noSystems(user: LauncherInput, suiteAdmin: boolean): LauncherSystems {
+  if (!suiteAdmin) throw noSystemAccess(user.email);
+  return {
+    user: launcherUser(user),
+    systems: [],
+    mobileSystems: [],
+    suiteAdmin: true,
+  };
 }
 
 type LauncherInput = {
