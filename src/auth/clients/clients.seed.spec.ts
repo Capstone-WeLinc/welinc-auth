@@ -62,8 +62,17 @@ describe('seedClients', () => {
       system: 'VRMS',
       grants: ['authorization_code', 'refresh_token', 'client_credentials'],
       userAudiences: ['VRMS'],
-      // Spec 0013, AC-26: VRMS also reads its permission matrix
-      serviceScopes: { AUTH: ['directory.read', 'permissions.read'] },
+      // Spec 0013, AC-26: VRMS also reads its permission matrix; VRMS spec 0029, AC-26: VMMS
+      // and BMS
+      serviceScopes: {
+        AUTH: ['directory.read', 'permissions.read'],
+        VMMS: [
+          'fleet.read',
+          'fleet.repair-status.write',
+          'repair.referral-status.write',
+        ],
+        BMS: ['schedule.read', 'repair.update.write'],
+      },
       allowedRoles: {},
       appReleased: false,
       webAddress: 'http://localhost:8001',
@@ -71,13 +80,23 @@ describe('seedClients', () => {
     });
     // Suite spec 0014, AC-1: the VMMS and BMS web apps admit office roles only
     expect(calls.vmms.update).toMatchObject({
-      serviceScopes: { AUTH: ['directory.read', 'directory.contact'] },
+      serviceScopes: {
+        AUTH: ['directory.read', 'directory.contact'],
+        VRMS: [
+          'repair.referral.write',
+          'repair.status.read',
+          'repair.history.read',
+          'fleet.change.write',
+        ],
+        BMS: ['fleet.availability.write', 'fleet.change.write'],
+      },
       allowedRoles: { VMMS: ['ADMIN', 'OPERATIONS'] },
     });
     expect(calls.bms.update).toMatchObject({
       serviceScopes: {
         AUTH: ['directory.read', 'directory.contact'],
         VMMS: ['fleet.read'],
+        VRMS: ['repair.status.read', 'repair.expedite.write'],
       },
       allowedRoles: { BMS: ['ADMIN', 'CUSTOMER_SUPPORT', 'OPERATIONS'] },
     });
