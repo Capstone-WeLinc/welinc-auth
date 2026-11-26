@@ -156,6 +156,15 @@ export const vrms: SystemDefinition = {
       defaults: defaults(true, true, true),
     },
     {
+      // VRMS spec 0029, AC-11
+      key: 'integration.respond',
+      label: 'Answer other systems',
+      group: 'Tickets',
+      description:
+        'Accept or reject VMMS referrals, answer BMS expedite requests, and retry failed deliveries.',
+      defaults: defaults(true, false, false),
+    },
+    {
       key: 'audit.view',
       label: 'See the audit log',
       group: 'Records',

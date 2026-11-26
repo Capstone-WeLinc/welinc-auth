@@ -35,8 +35,16 @@ const SYSTEM_GRANTS = [
 ];
 /** Spec 0005 AC-7: VMMS and BMS may read phones; VRMS keeps names and roles only. */
 const DIRECTORY = { AUTH: ['directory.read', 'directory.contact'] };
-/** VRMS reads the directory without phones, and its permission matrix (spec 0013, AC-26). */
-const VRMS_SCOPES = { AUTH: ['directory.read', 'permissions.read'] };
+/**
+ * VRMS reads the directory without phones, and its permission matrix (spec 0013, AC-26). VRMS
+ * spec 0029, AC-26: the fleet copy, repair and referral events to VMMS, and the trips read and
+ * repair updates to BMS.
+ */
+const VRMS_SCOPES = {
+  AUTH: ['directory.read', 'permissions.read'],
+  VMMS: ['fleet.read', 'fleet.repair-status.write', 'repair.referral-status.write'],
+  BMS: ['schedule.read', 'repair.update.write'],
+};
 
 export const CLIENTS: ClientDefinition[] = [
   {
@@ -66,7 +74,18 @@ export const CLIENTS: ClientDefinition[] = [
     system: SystemType.VMMS,
     grants: SYSTEM_GRANTS,
     userAudiences: ['VMMS'],
-    serviceScopes: DIRECTORY,
+    // VRMS spec 0029, AC-26: referrals, the repair status and history reads and fleet change
+    // messages to VRMS; VMMS's own senders to BMS (spec vmms/0026), since the registry is shared
+    serviceScopes: {
+      ...DIRECTORY,
+      VRMS: [
+        'repair.referral.write',
+        'repair.status.read',
+        'repair.history.read',
+        'fleet.change.write',
+      ],
+      BMS: ['fleet.availability.write', 'fleet.change.write'],
+    },
     // Suite spec 0014, AC-1: the web app is for office roles; mechanics use vmms-mobile
     allowedRoles: { VMMS: ['ADMIN', 'OPERATIONS'] },
   },
@@ -78,8 +97,13 @@ export const CLIENTS: ClientDefinition[] = [
     system: SystemType.BMS,
     grants: SYSTEM_GRANTS,
     userAudiences: ['BMS'],
-    // Suite spec 0014, AC-10: BMS dispatch reads trucks and garages from the VMMS fleet API
-    serviceScopes: { ...DIRECTORY, VMMS: ['fleet.read'] },
+    // Suite spec 0014, AC-10: BMS dispatch reads trucks and garages from the VMMS fleet API.
+    // VRMS spec 0029, AC-26: the active repair read and expedite requests to VRMS
+    serviceScopes: {
+      ...DIRECTORY,
+      VMMS: ['fleet.read'],
+      VRMS: ['repair.status.read', 'repair.expedite.write'],
+    },
     // Suite spec 0014, AC-1: the web app is for office roles; drivers and helpers use bms-mobile
     allowedRoles: { BMS: ['ADMIN', 'CUSTOMER_SUPPORT', 'OPERATIONS'] },
   },
