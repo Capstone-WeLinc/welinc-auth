@@ -246,3 +246,43 @@ describe('planPermissionSync (AC-25)', () => {
     expect(plan.bump).toBe(false);
   });
 });
+
+describe('planPermissionSync and custom roles (suite spec 0018 child 0002, AC-30)', () => {
+  // covers: suite spec 0018 child 0002 AC-30
+  it("keeps a custom role's cells, adds none for it, and removes them only when the key leaves", () => {
+    const plan = planPermissionSync(system([view]), {
+      permissions: [row(view, 0), row(locked, 1, ['ADMIN'])],
+      cells: [
+        cell('ADMIN', 'ticket.view', true),
+        cell('MECHANIC', 'ticket.view', true),
+        cell('C_TIRES', 'ticket.view', false),
+        cell('ADMIN', 'team.manage', true),
+        cell('MECHANIC', 'team.manage', false),
+        cell('C_TIRES', 'team.manage', true),
+      ],
+      customRoles: ['C_TIRES'],
+    });
+
+    expect(plan.cellInserts).toEqual([]);
+    expect(plan.cellResets).toEqual([]);
+    expect(plan.cellDeletes).toEqual([
+      { role: 'ADMIN', key: 'team.manage' },
+      { role: 'C_TIRES', key: 'team.manage' },
+      { role: 'MECHANIC', key: 'team.manage' },
+    ]);
+    expect(plan.deletes).toEqual(['team.manage']);
+  });
+
+  it('still removes the cells of a role that left the file and is not custom', () => {
+    const plan = planPermissionSync(system([view]), {
+      permissions: [row(view, 0)],
+      cells: [
+        cell('ADMIN', 'ticket.view', true),
+        cell('MECHANIC', 'ticket.view', true),
+        cell('DRIVER', 'ticket.view', true),
+      ],
+      customRoles: [],
+    });
+    expect(plan.cellDeletes).toEqual([{ role: 'DRIVER', key: 'ticket.view' }]);
+  });
+});

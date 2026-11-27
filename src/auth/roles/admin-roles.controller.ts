@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -31,8 +33,10 @@ import {
 } from '../../openapi/decorators';
 import { ADMIN_SESSION, CSRF, VALIDATION } from '../../openapi/guard-errors';
 import { systemScope } from '../admin/admin-accounts.controller';
+import { notSuiteAdmin } from '../admin/admin-errors';
 import {
   AdminSessionGuard,
+  portalAdmin,
   type AdminRequest,
 } from '../admin/admin-session.guard';
 import { AuthService } from '../auth.service';
@@ -40,6 +44,7 @@ import { coded } from '../errors';
 import { systemParam } from '../permissions/permissions.controller';
 import { PortalCsrfGuard } from '../sessions/csrf';
 import { ROLE_CODE_RE } from './catalog.types';
+import { CustomRolesService, type RoleActor } from './custom-roles.service';
 import { RolesAdminService } from './roles-admin.service';
 
 // Suite spec 0018, child 0001 (AC-17): the Roles page routes. Suite admins and the admins of the
@@ -67,6 +72,46 @@ export class AddRoleMembersDto {
   reauthToken?: string;
 }
 
+/** Child 0002, AC-20 to AC-22: the exact name and description rules run in the service. */
+export class CreateRoleDto {
+  @IsString()
+  @MaxLength(200)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  description?: string;
+
+  @IsString()
+  @MaxLength(40)
+  from!: string;
+}
+
+/** Child 0002, AC-24: one field or both. */
+export class UpdateRoleDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  description?: string;
+}
+
+/** Creating, renaming and deleting roles is for suite admins only (umbrella security model). */
+function suiteActor(req: AdminRequest): RoleActor {
+  const caller = portalAdmin(req);
+  if (!caller.standing.suiteAdmin) throw notSuiteAdmin();
+  return {
+    id: caller.userId,
+    name: caller.user.name,
+    email: caller.user.email,
+  };
+}
+
 /** 404 for a value that can't be a role code (the role routes' `:code`). */
 function roleParam(value: string): string {
   if (!ROLE_CODE_RE.test(value)) {
@@ -84,8 +129,77 @@ function roleParam(value: string): string {
 export class AdminRolesController {
   constructor(
     private readonly roles: RolesAdminService,
+    private readonly customRoles: CustomRolesService,
     private readonly authService: AuthService,
   ) {}
+
+  @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, {
+    400: ['UNKNOWN_ROLE', 'VALIDATION_FAILED'],
+    403: ['NOT_SUITE_ADMIN'],
+    404: ['NOT_FOUND'],
+    409: ['CUSTOM_ROLES_NOT_SUPPORTED', 'CUSTOM_ROLE_LIMIT', 'ROLE_NAME_TAKEN'],
+  })
+  @Post(':system')
+  @UseGuards(PortalCsrfGuard)
+  async create(
+    @Param('system') raw: string,
+    @Body() dto: CreateRoleDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    const system = systemParam(raw);
+    return this.customRoles.create(suiteActor(req), system, {
+      name: dto.name,
+      description: dto.description,
+      from: dto.from,
+    });
+  }
+
+  @ApiCookieRoute()
+  @ApiErrorMap(VALIDATION, ADMIN_SESSION, CSRF, {
+    400: ['BUILT_IN_ROLE', 'VALIDATION_FAILED'],
+    403: ['NOT_SUITE_ADMIN'],
+    404: ['NOT_FOUND'],
+    409: ['ROLE_NAME_TAKEN'],
+  })
+  @Patch(':system/:code')
+  @UseGuards(PortalCsrfGuard)
+  async update(
+    @Param('system') raw: string,
+    @Param('code') code: string,
+    @Body() dto: UpdateRoleDto,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    const system = systemParam(raw);
+    return this.customRoles.update(suiteActor(req), system, roleParam(code), {
+      name: dto.name,
+      description: dto.description,
+    });
+  }
+
+  @ApiCookieRoute()
+  @ApiErrorMap(ADMIN_SESSION, CSRF, {
+    400: ['BUILT_IN_ROLE'],
+    403: ['NOT_SUITE_ADMIN'],
+    404: ['NOT_FOUND'],
+    409: ['ROLE_IN_USE'],
+  })
+  @Delete(':system/:code')
+  @UseGuards(PortalCsrfGuard)
+  async remove(
+    @Param('system') raw: string,
+    @Param('code') code: string,
+    @Req() req: AdminRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    const system = systemParam(raw);
+    return this.customRoles.remove(suiteActor(req), system, roleParam(code));
+  }
 
   @ApiErrorMap(ADMIN_SESSION, {
     403: ['NOT_ADMIN_OF_SYSTEM'],

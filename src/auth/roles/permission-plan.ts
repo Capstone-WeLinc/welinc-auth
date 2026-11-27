@@ -166,12 +166,22 @@ export function permissionFileErrors(definition: SystemDefinition): string[] {
 /**
  * The plan for one system (AC-25): write `system_permissions` from the file, insert missing cells
  * with their default, never overwrite an unlocked cell, set every locked cell to its default, and
- * delete the cells of keys or roles that left the file. Call it only when permissionFileErrors
+ * delete the cells of keys or roles that left the file (custom roles never count as left). Call
+ * it only when permissionFileErrors
  * found nothing.
  */
 export function planPermissionSync(
   definition: SystemDefinition,
-  current: { permissions: CurrentPermission[]; cells: CurrentCell[] },
+  current: {
+    permissions: CurrentPermission[];
+    cells: CurrentCell[];
+    /**
+     * Suite spec 0018 child 0002, AC-30: the system's custom role codes (live or archived). Their
+     * cells belong to the runtime: the sync never adds, resets or removes them, except when the
+     * key itself leaves the file.
+     */
+    customRoles?: readonly string[];
+  },
 ): PermissionPlan {
   const { system } = definition;
   const definitions = definition.permissions ?? [];
@@ -179,6 +189,7 @@ export function planPermissionSync(
   const wanted = rowsOf(definitions);
   const wantedKeys = new Set(wanted.map((p) => p.key));
   const roleSet = new Set(roles);
+  const customSet = new Set(current.customRoles ?? []);
 
   const existing = new Map(
     current.permissions
@@ -205,7 +216,11 @@ export function planPermissionSync(
   const changes: CellChange[] = [];
 
   const cellDeletes = cells
-    .filter((c) => !wantedKeys.has(c.key) || !roleSet.has(c.role))
+    .filter(
+      (c) =>
+        !wantedKeys.has(c.key) ||
+        (!roleSet.has(c.role) && !customSet.has(c.role)),
+    )
     .sort((a, b) => a.key.localeCompare(b.key) || a.role.localeCompare(b.role))
     .map((c) => {
       changes.push({

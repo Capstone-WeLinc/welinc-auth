@@ -194,6 +194,8 @@ export class TemporaryGrantsService {
     let row: GrantRow;
     try {
       row = await this.prisma.$transaction(async (tx) => {
+        // Suite spec 0018: an archived role can't be granted, and no Delete runs alongside
+        await this.catalog.lockLiveRoles(tx, input.system, [input.role]);
         await this.passwords.consumeReauthToken(
           tx,
           input.reauthToken,

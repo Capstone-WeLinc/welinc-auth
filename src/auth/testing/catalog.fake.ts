@@ -24,6 +24,7 @@ export class FakeCatalogService extends CatalogService {
         name: r.name,
         description: r.description,
         isSystemAdmin: r.isSystemAdmin === true,
+        builtIn: true,
       })),
     }));
   }
@@ -46,5 +47,16 @@ export class FakeCatalogService extends CatalogService {
         ),
       ),
     );
+  }
+
+  /** No row locks in unit tests: the same UNKNOWN_ROLE check against the fake catalog. */
+  override async lockLiveRoles(
+    _tx: unknown,
+    system: SystemType,
+    codes: string[],
+  ): Promise<void> {
+    for (const code of new Set(codes)) {
+      await this.assertKnownRole(system, code);
+    }
   }
 }

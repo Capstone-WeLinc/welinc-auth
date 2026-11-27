@@ -16,6 +16,8 @@ export type CatalogRole = {
   name: string;
   description: string;
   isSystemAdmin: boolean;
+  /** Suite spec 0018: false for a custom role. */
+  builtIn: boolean;
 };
 
 export type CatalogSystem = {
@@ -56,11 +58,59 @@ export function holdsAdmin(
   );
 }
 
+/**
+ * Suite spec 0018 child 0002, AC-29: live roles only (an archived custom role is unknown
+ * everywhere), with `builtIn`; `liveOrder` sorts them.
+ */
+const ROLES_SELECT = {
+  where: { deletedAt: null },
+  select: {
+    code: true,
+    name: true,
+    description: true,
+    isSystemAdmin: true,
+    isBuiltIn: true,
+    sortOrder: true,
+  },
+  orderBy: { sortOrder: 'asc' },
+} satisfies Prisma.System$rolesArgs;
+
+type RoleRow = Omit<CatalogRole, 'builtIn'> & {
+  isBuiltIn: boolean;
+  sortOrder: number;
+};
+
+/** Built in roles first in catalog order, then custom roles by name ignoring case (AC-29). */
+export function liveOrder<
+  T extends Pick<RoleRow, 'isBuiltIn' | 'sortOrder' | 'name'>,
+>(roles: T[]): T[] {
+  return [...roles].sort((a, b) => {
+    if (a.isBuiltIn !== b.isBuiltIn) return a.isBuiltIn ? -1 : 1;
+    if (a.isBuiltIn) return a.sortOrder - b.sortOrder;
+    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  });
+}
+
+function toSystem<S extends { roles: RoleRow[] }>(
+  row: S,
+): Omit<S, 'roles'> & { roles: CatalogRole[] } {
+  return {
+    ...row,
+    roles: liveOrder(row.roles).map((r) => ({
+      code: r.code,
+      name: r.name,
+      description: r.description,
+      isSystemAdmin: r.isSystemAdmin,
+      builtIn: r.isBuiltIn,
+    })),
+  };
+}
+
 @Injectable()
 export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Every system with its roles in file order, in SystemType order (AC-16). */
+  /** Every system with its live roles (built in first, then custom), in SystemType order (AC-16). */
   async systems(db: CatalogDb = this.prisma): Promise<CatalogSystem[]> {
     const rows = await db.system.findMany({
       select: {
@@ -68,19 +118,13 @@ export class CatalogService {
         name: true,
         description: true,
         maxRolesPerUser: true,
-        roles: {
-          select: {
-            code: true,
-            name: true,
-            description: true,
-            isSystemAdmin: true,
-          },
-          orderBy: { sortOrder: 'asc' },
-        },
+        roles: ROLES_SELECT,
       },
     });
     const order = Object.values(SystemType);
-    return rows.sort((a, b) => order.indexOf(a.code) - order.indexOf(b.code));
+    return rows
+      .sort((a, b) => order.indexOf(a.code) - order.indexOf(b.code))
+      .map(toSystem);
   }
 
   /** One system, or null before the catalog is synced. */
@@ -88,24 +132,17 @@ export class CatalogService {
     system: SystemType,
     db: CatalogDb = this.prisma,
   ): Promise<CatalogSystem | null> {
-    return db.system.findUnique({
+    const row = await db.system.findUnique({
       where: { code: system },
       select: {
         code: true,
         name: true,
         description: true,
         maxRolesPerUser: true,
-        roles: {
-          select: {
-            code: true,
-            name: true,
-            description: true,
-            isSystemAdmin: true,
-          },
-          orderBy: { sortOrder: 'asc' },
-        },
+        roles: ROLES_SELECT,
       },
     });
+    return row ? toSystem(row) : null;
   }
 
   /** Each system's admin role, read per call (AC-14). */
@@ -125,6 +162,38 @@ export class CatalogService {
   ): Promise<void> {
     const entry = await this.system(system, db);
     this.checkKnown(entry, system, [code]);
+  }
+
+  /**
+   * Suite spec 0018 (umbrella rules): every path that gives a role locks the role rows first
+   * (`FOR UPDATE`, in code order so two writers never deadlock) and checks they are still live,
+   * inside the write's own transaction. A Delete takes the same lock, so either the assignment
+   * lands and the Delete then sees the holder (`ROLE_IN_USE`), or the Delete lands and the
+   * assignment answers 400 `UNKNOWN_ROLE`.
+   */
+  async lockLiveRoles(
+    tx: Prisma.TransactionClient,
+    system: SystemType,
+    codes: string[],
+  ): Promise<void> {
+    const wanted = [...new Set(codes)].sort();
+    if (wanted.length === 0) return;
+    const rows = await tx.$queryRaw<{ code: string }[]>(Prisma.sql`
+      SELECT "code" FROM "system_roles"
+       WHERE "system" = ${system}::"SystemType" AND "code" IN (${Prisma.join(wanted)})
+         AND "deleted_at" IS NULL
+       ORDER BY "code"
+       FOR UPDATE`);
+    const live = new Set(rows.map((r) => r.code));
+    const missing = wanted.find((code) => !live.has(code));
+    if (missing !== undefined) {
+      const entry = await this.system(system, tx);
+      throw coded(
+        HttpStatus.BAD_REQUEST,
+        'UNKNOWN_ROLE',
+        unknownRoleMessage(system, missing, entry?.roles ?? []),
+      );
+    }
   }
 
   /**
