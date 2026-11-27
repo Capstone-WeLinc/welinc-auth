@@ -110,6 +110,15 @@ export const vrms: SystemDefinition = {
       defaults: defaults(true, false, false),
     },
     {
+      // VRMS spec 0030, AC-8: Admin and Chief Mechanic on by default
+      key: 'ticket.due_date.edit',
+      label: 'Change due dates',
+      group: 'Tickets',
+      description:
+        "Set a ticket's due date by hand, or put it back to the automatic date.",
+      defaults: defaults(true, true, false),
+    },
+    {
       key: 'ticket.unlock',
       label: 'Unlock closed tickets',
       group: 'Tickets',
