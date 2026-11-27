@@ -32,7 +32,7 @@ import {
   cutoffReason,
   sessionExpiresAt,
 } from './session.service';
-import { webSystemsFor } from './launcher';
+import { grantSystemsFor, type GrantSystems } from './launcher';
 
 /** The user grants answer (spec 0001 section 5), plus the absolute end a web cookie lives to. */
 export type UserTokenAnswer = {
@@ -52,6 +52,10 @@ export type UserTokenAnswer = {
     roles: TokenRole[];
     /** Every system the user holds a role in, launcher order (spec 0007, AC-6). Never in a JWT. */
     systems: SystemType[];
+    /** VRMS spec 0027, step 6a: the live role codes per system in `systems`. Never in a JWT. */
+    systemRoles: GrantSystems['systemRoles'];
+    /** VRMS spec 0027, step 6a: whether the person is a suite admin. Never in a JWT. */
+    suiteAdmin: boolean;
   };
 };
 
@@ -65,7 +69,7 @@ type Outcome =
       refreshToken: string;
       user: { id: string; name: string; email: string };
       roles: TokenRole[];
-      systems: SystemType[];
+      grant: GrantSystems;
       aud: SystemType;
     }
   | { kind: 'invalid'; reason: string }
@@ -77,12 +81,12 @@ export type MobileGrant = {
   client: OAuthClient;
   aud: SystemType;
   roles: TokenRole[];
-  systems: SystemType[];
+  grant: GrantSystems;
 };
 
 /** What `rolesFor` found: the roles held in the audience, then the ones this client allows. */
 type GrantRoles =
-  | { kind: 'ok'; roles: TokenRole[]; systems: SystemType[] }
+  | { kind: 'ok'; roles: TokenRole[]; grant: GrantSystems }
   | { kind: 'no_access'; aud: SystemType }
   | { kind: 'not_allowed'; message: string };
 
@@ -172,7 +176,7 @@ export class UserGrantsService {
           client,
         );
         if (granted.kind !== 'ok') return granted;
-        const { roles, systems } = granted;
+        const { roles, grant } = granted;
 
         await tx.authorizationCode.update({
           where: { codeHash: hashOpaque(input.code) },
@@ -214,7 +218,7 @@ export class UserGrantsService {
           refreshToken,
           user: live.user,
           roles,
-          systems,
+          grant,
           aud,
         };
       },
@@ -278,7 +282,7 @@ export class UserGrantsService {
           client,
         );
         if (granted.kind !== 'ok') return granted;
-        const { roles, systems } = granted;
+        const { roles, grant } = granted;
 
         let refreshToken: string;
         if (inGrace) {
@@ -336,7 +340,7 @@ export class UserGrantsService {
           refreshToken,
           user: live.user,
           roles,
-          systems,
+          grant,
           aud,
         };
       },
@@ -359,7 +363,7 @@ export class UserGrantsService {
     if (granted.kind !== 'ok') {
       return this.refuseGrant(client.id, 'mobile_login', granted);
     }
-    return { client, aud, roles: granted.roles, systems: granted.systems };
+    return { client, aud, roles: granted.roles, grant: granted.grant };
   }
 
   /**
@@ -375,7 +379,7 @@ export class UserGrantsService {
       meta: RequestMeta;
     },
   ): Promise<UserTokenAnswer> {
-    const { client, aud, roles, systems } = grant;
+    const { client, aud, roles } = grant;
     const { session, refreshToken } = await this.sessions.createMobile({
       userId: input.user.id,
       clientId: client.id,
@@ -389,7 +393,7 @@ export class UserGrantsService {
       refreshToken,
       user: input.user,
       roles,
-      systems,
+      grant: grant.grant,
       aud,
     });
   }
@@ -450,7 +454,8 @@ export class UserGrantsService {
     aud: SystemType,
     client: Pick<OAuthClient, 'allowedRoles'>,
   ): Promise<GrantRoles> {
-    // Every system's rows: the audience's roles, and `user.systems` read fresh (spec 0007, AC-6)
+    // Every system's rows: the audience's roles, and `user.systems` read fresh (spec 0007, AC-6),
+    // with `user.systemRoles` and `user.suiteAdmin` (VRMS spec 0027, step 6a)
     // Spec 0013, AC-10: an expired temporary role is left out (lazy expiry)
     const rows = await tx.userRoleAssignment.findMany({
       where: { userId, ...liveRoleWhere() },
@@ -464,7 +469,11 @@ export class UserGrantsService {
     const allowed = allowedCodes(client.allowedRoles, aud);
     const roles = filterAllowed(held, allowed);
     if (roles.length > 0)
-      return { kind: 'ok', roles, systems: await webSystemsFor(tx, rows) };
+      return {
+        kind: 'ok',
+        roles,
+        grant: await grantSystemsFor(tx, userId, rows),
+      };
 
     // Names in the client's list order, from the catalog
     const named = await tx.systemRole.findMany({
@@ -488,7 +497,7 @@ export class UserGrantsService {
     if (outcome.kind === 'no_access' || outcome.kind === 'not_allowed') {
       return this.refuseGrant(clientId, grant, outcome);
     }
-    const { session, user, roles, systems, aud } = outcome;
+    const { session, user, roles, aud } = outcome;
     const accessToken = await this.tokens.signUserToken({
       sub: user.id,
       email: user.email,
@@ -514,7 +523,7 @@ export class UserGrantsService {
               session.absoluteExpiresAt.toISOString(),
           }
         : {}),
-      user: { ...user, roles, systems },
+      user: { ...user, roles, ...outcome.grant },
     };
   }
 
