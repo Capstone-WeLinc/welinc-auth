@@ -31,6 +31,21 @@ const catalogNames = [
   { code: 'CHIEF_MECHANIC', name: 'Chief Mechanic' },
 ];
 
+// The catalog order rows `user.systemRoles` reads (VRMS spec 0027, step 6a)
+const CATALOG_ORDER = [
+  { system: SystemType.BMS, code: 'ADMIN', sortOrder: 0 },
+  { system: SystemType.BMS, code: 'OPERATIONS', sortOrder: 1 },
+  { system: SystemType.VMMS, code: 'ADMIN', sortOrder: 0 },
+  { system: SystemType.VMMS, code: 'OPERATIONS', sortOrder: 1 },
+  { system: SystemType.VMMS, code: 'CHIEF_MECHANIC', sortOrder: 2 },
+  { system: SystemType.VMMS, code: 'MECHANIC', sortOrder: 3 },
+  { system: SystemType.VRMS, code: 'ADMIN', sortOrder: 0 },
+  { system: SystemType.VRMS, code: 'CHIEF_MECHANIC', sortOrder: 1 },
+  { system: SystemType.VRMS, code: 'MECHANIC', sortOrder: 2 },
+  { system: SystemType.VRMS, code: 'C_TIRES', sortOrder: 3 },
+  { system: SystemType.VRMS, code: 'C_PAINT', sortOrder: 3 },
+];
+
 const webClient = (system: SystemType, allowedRoles: object = {}) => ({
   id: system.toLowerCase(),
   kind: 'CONFIDENTIAL',
@@ -53,7 +68,16 @@ function build(held: string[]) {
         held.map((role) => ({ role, system: SystemType.VMMS })),
       ),
     },
-    systemRole: { findMany: fn().mockResolvedValue(catalogNames) },
+    // Two catalog reads: role names for APP_NOT_ALLOWED (`select.name`), and the held codes'
+    // order for `user.systemRoles` (`select.sortOrder`, VRMS spec 0027 step 6a)
+    systemRole: {
+      findMany: fn().mockImplementation((args: { select: object }) =>
+        Promise.resolve(
+          'sortOrder' in args.select ? CATALOG_ORDER : catalogNames,
+        ),
+      ),
+    },
+    suiteAdmin: { findUnique: fn().mockResolvedValue(null) },
     // Every system's web client, none limited (suite spec 0014 limits them per test)
     oAuthClient: { findMany: fn().mockResolvedValue(WEB_CLIENTS) },
   };
@@ -197,5 +221,111 @@ describe('spec 0014 user.systems leaves out phone only systems', () => {
     expect(answer.user.roles).toEqual([
       { role: 'MECHANIC', system: SystemType.VMMS },
     ]);
+  });
+});
+
+// covers: VRMS spec 0027 step 6a (user.systemRoles and user.suiteAdmin on every user grant)
+describe('spec 0027 user.systemRoles and user.suiteAdmin on user grants', () => {
+  const heldRows = (rows: [SystemType, string][]) =>
+    rows.map(([system, role]) => ({ system, role }));
+
+  it('lists one entry per web system, same order, roles in catalog order with ties by code', async () => {
+    const { service, db } = build([]);
+    db.userRoleAssignment.findMany.mockResolvedValue(
+      heldRows([
+        [SystemType.VRMS, 'C_TIRES'],
+        [SystemType.VMMS, 'MECHANIC'],
+        [SystemType.VRMS, 'MECHANIC'],
+        [SystemType.VRMS, 'C_PAINT'],
+        [SystemType.VMMS, 'ADMIN'],
+      ]),
+    );
+    const answer = await login(service);
+    expect(answer.user.systems).toEqual([SystemType.VMMS, SystemType.VRMS]);
+    expect(answer.user.systemRoles).toEqual([
+      { system: SystemType.VMMS, roles: ['ADMIN', 'MECHANIC'] },
+      { system: SystemType.VRMS, roles: ['MECHANIC', 'C_PAINT', 'C_TIRES'] },
+    ]);
+    expect(answer.user.suiteAdmin).toBe(false);
+  });
+
+  it('reads the rows with the live role filter, so a temporary role counts until it ends', async () => {
+    const { service, db } = build(['MECHANIC']);
+    // A live temporary grant comes back from the filtered read like any role
+    db.userRoleAssignment.findMany.mockResolvedValue(
+      heldRows([
+        [SystemType.VMMS, 'MECHANIC'],
+        [SystemType.BMS, 'OPERATIONS'],
+      ]),
+    );
+    const answer = await login(service);
+    const where = (
+      db.userRoleAssignment.findMany.mock.calls[0][0] as {
+        where: { OR: object[] };
+      }
+    ).where;
+    // The expired one is filtered out by the query itself (spec 0013, AC-10)
+    expect(where.OR).toEqual([
+      { temporaryGrantId: null },
+      {
+        temporaryGrant: { expiresAt: { gt: expect.any(Date) }, endedAt: null },
+      },
+    ]);
+    expect(answer.user.systemRoles).toEqual([
+      { system: SystemType.BMS, roles: ['OPERATIONS'] },
+      { system: SystemType.VMMS, roles: ['MECHANIC'] },
+    ]);
+  });
+
+  it('leaves out a held code with no catalog row, keeping the entry with roles []', async () => {
+    const { service, db } = build([]);
+    db.userRoleAssignment.findMany.mockResolvedValue(
+      heldRows([
+        [SystemType.VMMS, 'MECHANIC'],
+        [SystemType.VRMS, 'C_DELETED'],
+      ]),
+    );
+    const answer = await login(service);
+    expect(answer.user.systemRoles).toEqual([
+      { system: SystemType.VMMS, roles: ['MECHANIC'] },
+      { system: SystemType.VRMS, roles: [] },
+    ]);
+  });
+
+  it('is not filtered by the client allowedRoles, and leaves out a phone only system', async () => {
+    const { service, db } = build([]);
+    db.userRoleAssignment.findMany.mockResolvedValue(
+      heldRows([
+        [SystemType.VMMS, 'MECHANIC'],
+        [SystemType.VMMS, 'OPERATIONS'],
+        [SystemType.BMS, 'OPERATIONS'],
+      ]),
+    );
+    // BMS has no web client here, so it is phone only and has no entry
+    db.oAuthClient.findMany.mockResolvedValue([webClient(SystemType.VMMS)]);
+    const answer = await login(service);
+    // The token keeps the roles the app allows; the entry keeps every held one
+    expect(answer.user.roles).toEqual([
+      { role: 'MECHANIC', system: SystemType.VMMS },
+    ]);
+    expect(answer.user.systemRoles).toEqual([
+      { system: SystemType.VMMS, roles: ['OPERATIONS', 'MECHANIC'] },
+    ]);
+  });
+
+  it('says suiteAdmin for a suite admin, read for this person, and keeps both out of the token', async () => {
+    const { service, db, tokens } = build(['MECHANIC']);
+    db.suiteAdmin.findUnique.mockResolvedValue({ userId: USER.id });
+    const answer = await login(service);
+    expect(answer.user.suiteAdmin).toBe(true);
+    expect(db.suiteAdmin.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: USER.id } }),
+    );
+    const signed = tokens.signUserToken.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(signed).not.toHaveProperty('systemRoles');
+    expect(signed).not.toHaveProperty('suiteAdmin');
   });
 });

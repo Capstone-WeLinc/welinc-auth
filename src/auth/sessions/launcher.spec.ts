@@ -6,6 +6,7 @@ import {
   LAUNCHER_ORDER,
   LauncherService,
   buildLauncherSystems,
+  buildSystemRoles,
   launcherOrder,
   webSystemCodes,
   webSystemsFor,
@@ -504,6 +505,45 @@ describe('spec 0014 the web and phone split', () => {
 });
 
 // covers: suite spec 0016 AC-12a (the three cutoff fields, computed as `/auth/session` does)
+// covers: VRMS spec 0027 step 6a (the pure helper behind user.systemRoles)
+describe('buildSystemRoles', () => {
+  const catalog = [
+    { system: SystemType.VRMS, code: 'MECHANIC', sortOrder: 2 },
+    { system: SystemType.VRMS, code: 'ADMIN', sortOrder: 0 },
+    { system: SystemType.VMMS, code: 'MECHANIC', sortOrder: 3 },
+  ];
+
+  it('follows the systems order and catalog order, keeping a system with no named role', () => {
+    expect(
+      buildSystemRoles(
+        [
+          { system: SystemType.VRMS, role: 'MECHANIC' },
+          { system: SystemType.VRMS, role: 'ADMIN' },
+          { system: SystemType.BMS, role: 'C_GONE' },
+        ],
+        [SystemType.BMS, SystemType.VRMS],
+        catalog,
+      ),
+    ).toEqual([
+      { system: SystemType.BMS, roles: [] },
+      { system: SystemType.VRMS, roles: ['ADMIN', 'MECHANIC'] },
+    ]);
+  });
+
+  it('never borrows a code held in another system', () => {
+    expect(
+      buildSystemRoles(
+        [{ system: SystemType.VRMS, role: 'ADMIN' }],
+        [SystemType.VMMS, SystemType.VRMS],
+        catalog,
+      ),
+    ).toEqual([
+      { system: SystemType.VMMS, roles: [] },
+      { system: SystemType.VRMS, roles: ['ADMIN'] },
+    ]);
+  });
+});
+
 describe('withCutoffs', () => {
   const BASE = {
     user: { id: 'u1', name: 'Mara', email: 'm@welinc.com', picture: null },

@@ -109,6 +109,8 @@ const GRANT_USER = {
   email: 'admin@welinc.com',
   roles: [{ role: 'ADMIN', system: 'VRMS' }],
   systems: ['VRMS'],
+  systemRoles: [{ system: 'VRMS', roles: ['ADMIN'] }],
+  suiteAdmin: false,
 };
 
 /** A user grant answer, as `UserGrantsService.finish` builds it (a web session). */
@@ -221,7 +223,12 @@ describe('the mobile login replies', () => {
     system: 'VMMS',
     grants: ['mobile_login'],
   };
-  const GRANT = { client: CLIENT, aud: 'VMMS', roles: [], systems: [] };
+  const GRANT = {
+    client: CLIENT,
+    aud: 'VMMS',
+    roles: [],
+    grant: { systems: [], systemRoles: [], suiteAdmin: false },
+  };
 
   const setup = (emailVerified: boolean): Setup => ({
     controller: MobileController,

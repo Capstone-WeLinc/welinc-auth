@@ -110,6 +110,15 @@ type CatalogRow = {
   roles: { code: string; name: string; sortOrder: number }[];
 };
 
+/**
+ * Catalog order: `sortOrder`, then code. The launcher's role lists and `user.systemRoles` both
+ * sort with it (VRMS spec 0027, step 6a).
+ */
+export const byCatalogOrder = (
+  a: { sortOrder: number; code: string },
+  b: { sortOrder: number; code: string },
+): number => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code);
+
 const oldestFirst = (a: { createdAt: Date }, b: { createdAt: Date }) =>
   a.createdAt.getTime() - b.createdAt.getTime();
 
@@ -194,7 +203,7 @@ export function buildLauncherSystems(
     const codes = bySystem.get(code) ?? [];
     const roles = entry.roles
       .filter((r) => codes.includes(r.code))
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code))
+      .sort(byCatalogOrder)
       .map((r) => ({ code: r.code, name: r.name }));
     const card = {
       system: code,
@@ -281,6 +290,77 @@ export async function webSystemsFor(
   const codes = launcherOrder(held);
   if (codes.length === 0) return [];
   return webSystemCodes(held, await readLauncherClients(db, codes));
+}
+
+/** One `user.systemRoles` entry (VRMS spec 0027, step 6a): the live role codes held there. */
+export type SystemRolesEntry = { system: SystemType; roles: string[] };
+
+/** What every user grant answer says about the person's systems, beside `user.roles`. */
+export type GrantSystems = {
+  systems: SystemType[];
+  systemRoles: SystemRolesEntry[];
+  suiteAdmin: boolean;
+};
+
+/**
+ * Pure (VRMS spec 0027, step 6a): one entry per system in `systems`, same order, holding the
+ * codes held there in catalog order. A held code with no catalog row is left out, as the
+ * launcher does; a system left with none keeps its entry with `roles: []`. Not filtered by any
+ * client's `allowedRoles`.
+ */
+export function buildSystemRoles(
+  held: readonly { system: SystemType; role: string }[],
+  systems: readonly SystemType[],
+  catalog: readonly { system: SystemType; code: string; sortOrder: number }[],
+): SystemRolesEntry[] {
+  const bySystem = heldBySystem(held);
+  return systems.map((system) => {
+    const codes = bySystem.get(system) ?? [];
+    const roles = catalog
+      .filter((r) => r.system === system && codes.includes(r.code))
+      .sort(byCatalogOrder)
+      .map((r) => r.code);
+    return { system, roles };
+  });
+}
+
+type GrantReader = Pick<
+  PrismaService,
+  'oAuthClient' | 'systemRole' | 'suiteAdmin'
+>;
+
+/**
+ * `user.systems`, `user.systemRoles` and `user.suiteAdmin` for a grant answer, read fresh in the
+ * grant's own transaction from the live rows the grant already read (`held`). Sequential reads,
+ * since an interactive transaction runs one query at a time anyway. Never put in a token.
+ */
+export async function grantSystemsFor(
+  db: GrantReader,
+  userId: string,
+  held: readonly { system: SystemType; role: string }[],
+): Promise<GrantSystems> {
+  const systems = await webSystemsFor(db, held);
+  const codes = [
+    ...new Set(
+      held.filter((h) => systems.includes(h.system)).map((h) => h.role),
+    ),
+  ];
+  const catalog =
+    codes.length === 0
+      ? []
+      : await db.systemRole.findMany({
+          where: { system: { in: systems }, code: { in: codes } },
+          select: { system: true, code: true, sortOrder: true },
+        });
+  const suite = await db.suiteAdmin.findUnique({
+    where: { userId },
+    select: { userId: true },
+  });
+  return {
+    systems,
+    systemRoles: buildSystemRoles(held, systems, catalog),
+    suiteAdmin: suite !== null,
+  };
 }
 
 @Injectable()

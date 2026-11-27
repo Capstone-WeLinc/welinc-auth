@@ -12431,6 +12431,17 @@
               ]
             },
             "description": "The web systems the person can open, in launcher order"
+          },
+          "systemRoles": {
+            "description": "One entry per system in `systems`, same order: the role codes held there. Never in the token",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemRolesRef"
+            }
+          },
+          "suiteAdmin": {
+            "type": "boolean",
+            "description": "Whether the person is a suite admin. Never in the token"
           }
         },
         "required": [
@@ -12438,7 +12449,9 @@
           "name",
           "email",
           "roles",
-          "systems"
+          "systems",
+          "systemRoles",
+          "suiteAdmin"
         ]
       },
       "JwksResponse": {
@@ -13162,6 +13175,34 @@
           "version",
           "permissions",
           "grants"
+        ]
+      },
+      "SystemRolesRef": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "enum": [
+              "VRMS",
+              "VMMS",
+              "BMS"
+            ],
+            "type": "string",
+            "example": "VMMS"
+          },
+          "roles": {
+            "example": [
+              "ADMIN"
+            ],
+            "description": "Role codes held there, in catalog order (a live temporary role included). Display only",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "system",
+          "roles"
         ]
       },
       "SystemsResponse": {

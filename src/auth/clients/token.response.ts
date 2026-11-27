@@ -10,6 +10,20 @@ export class RoleRef {
   system!: string;
 }
 
+/** The live role codes a person holds in one system (VRMS spec 0027, step 6a). */
+export class SystemRolesRef {
+  @ApiProperty({ enum: SystemType, example: 'VMMS' })
+  system!: SystemType;
+
+  @ApiProperty({
+    type: [String],
+    example: ['ADMIN'],
+    description:
+      'Role codes held there, in catalog order (a live temporary role included). Display only',
+  })
+  roles!: string[];
+}
+
 /** The signed in person a user grant answers with. */
 export class GrantUser {
   @ApiProperty()
@@ -30,6 +44,18 @@ export class GrantUser {
     description: 'The web systems the person can open, in launcher order',
   })
   systems!: SystemType[];
+
+  @ApiProperty({
+    type: [SystemRolesRef],
+    description:
+      'One entry per system in `systems`, same order: the role codes held there. Never in the token',
+  })
+  systemRoles!: SystemRolesRef[];
+
+  @ApiProperty({
+    description: 'Whether the person is a suite admin. Never in the token',
+  })
+  suiteAdmin!: boolean;
 }
 
 /**

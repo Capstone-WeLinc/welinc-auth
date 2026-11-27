@@ -20,7 +20,16 @@ const USER = {
   profilePicture: null,
   emailVerified: true,
 };
-const GRANT = { client: CLIENT, aud: 'VMMS', roles: [], systems: ['VMMS'] };
+const GRANT = {
+  client: CLIENT,
+  aud: 'VMMS',
+  roles: [],
+  grant: {
+    systems: ['VMMS'],
+    systemRoles: [{ system: 'VMMS', roles: [] }],
+    suiteAdmin: false,
+  },
+};
 const STEP = {
   status: 'EMAIL_VERIFICATION_REQUIRED',
   challengeId: 'c'.repeat(43),
@@ -39,6 +48,8 @@ const TOKENS = {
     email: 'b@welinc.com',
     roles: [],
     systems: [],
+    systemRoles: [],
+    suiteAdmin: false,
   },
 };
 
