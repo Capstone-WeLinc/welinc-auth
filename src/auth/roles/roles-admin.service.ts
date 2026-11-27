@@ -24,6 +24,11 @@ export type RoleSummary = {
   copiedFrom: { code: string; name: string } | null;
   /** user_roles rows of people who aren't deleted: the people the People tab lists. */
   peopleCount: number;
+  /**
+   * The same rows with the deleted filter flipped: people in their deletion grace period who
+   * keep the role until erasure. They don't block Delete (child 0002, AC-25).
+   */
+  graceCount: number;
   lastChanged: { at: string; byName: string } | null;
 };
 
@@ -108,42 +113,52 @@ export class RolesAdminService {
   /** `GET /auth/admin/roles/:system` (umbrella API surface). */
   async page(system: SystemType, canEdit: boolean): Promise<RolesPage> {
     const now = new Date();
-    const [roles, permissions, cells, counts, version] = await Promise.all([
-      this.prisma.systemRole.findMany({
-        where: { system, deletedAt: null },
-        select: {
-          code: true,
-          name: true,
-          description: true,
-          isBuiltIn: true,
-          isSystemAdmin: true,
-          copiedFrom: true,
-          sortOrder: true,
-        },
-      }),
-      this.prisma.systemPermission.findMany({
-        where: { system },
-        select: {
-          key: true,
-          label: true,
-          group: true,
-          description: true,
-          lockedRoles: true,
-          defaultRoles: true,
-        },
-        orderBy: { sortOrder: 'asc' },
-      }),
-      this.prisma.rolePermission.findMany({
-        where: { system, allowed: true },
-        select: { role: true, key: true },
-      }),
-      this.prisma.userRoleAssignment.groupBy({
-        by: ['role'],
-        where: { system, user: { deletedAt: null }, ...liveRoleWhere(now) },
-        _count: { _all: true },
-      }),
-      this.matrix.version(system),
-    ]);
+    const [roles, permissions, cells, counts, graceCounts, version] =
+      await Promise.all([
+        this.prisma.systemRole.findMany({
+          where: { system, deletedAt: null },
+          select: {
+            code: true,
+            name: true,
+            description: true,
+            isBuiltIn: true,
+            isSystemAdmin: true,
+            copiedFrom: true,
+            sortOrder: true,
+          },
+        }),
+        this.prisma.systemPermission.findMany({
+          where: { system },
+          select: {
+            key: true,
+            label: true,
+            group: true,
+            description: true,
+            lockedRoles: true,
+            defaultRoles: true,
+          },
+          orderBy: { sortOrder: 'asc' },
+        }),
+        this.prisma.rolePermission.findMany({
+          where: { system, allowed: true },
+          select: { role: true, key: true },
+        }),
+        this.prisma.userRoleAssignment.groupBy({
+          by: ['role'],
+          where: { system, user: { deletedAt: null }, ...liveRoleWhere(now) },
+          _count: { _all: true },
+        }),
+        this.prisma.userRoleAssignment.groupBy({
+          by: ['role'],
+          where: {
+            system,
+            user: { deletedAt: { not: null } },
+            ...liveRoleWhere(now),
+          },
+          _count: { _all: true },
+        }),
+        this.matrix.version(system),
+      ]);
 
     const live = roles.sort((a, b) => {
       if (a.isBuiltIn !== b.isBuiltIn) return a.isBuiltIn ? -1 : 1;
@@ -166,6 +181,7 @@ export class RolesAdminService {
     ]);
     const sourceName = new Map(sourceRows.map((r) => [r.code, r.name]));
     const peopleCount = new Map(counts.map((c) => [c.role, c._count._all]));
+    const graceCount = new Map(graceCounts.map((c) => [c.role, c._count._all]));
 
     const order = new Map(permissions.map((p, i) => [p.key, i]));
     const cellMap: Record<string, string[]> = {};
@@ -211,6 +227,7 @@ export class RolesAdminService {
             }
           : null,
         peopleCount: peopleCount.get(r.code) ?? 0,
+        graceCount: graceCount.get(r.code) ?? 0,
         lastChanged: lastChanged.get(r.code) ?? null,
       })),
       groups,

@@ -97,9 +97,10 @@ describe('RolesAdminService.page (AC-17)', () => {
       { role: 'ADMIN', key: 'ticket.view' },
       { role: 'MECHANIC', key: 'ticket.view' },
     ]);
-    db.userRoleAssignment.groupBy.mockResolvedValue([
-      { role: 'MECHANIC', _count: { _all: 8 } },
-    ]);
+    db.userRoleAssignment.groupBy
+      // Live holders, then people in their deletion grace period
+      .mockResolvedValueOnce([{ role: 'MECHANIC', _count: { _all: 8 } }])
+      .mockResolvedValueOnce([{ role: 'C_ZETA', _count: { _all: 2 } }]);
     db.$queryRaw.mockResolvedValue([
       { role: 'MECHANIC', created_at: T('10'), actor_name: 'Catalog sync' },
       { role: 'ADMIN', created_at: T('11'), actor_name: null },
@@ -121,6 +122,7 @@ describe('RolesAdminService.page (AC-17)', () => {
     });
     const mechanic = page.roles[1];
     expect(mechanic.peopleCount).toBe(8);
+    expect(mechanic.graceCount).toBe(0);
     expect(mechanic.lastChanged).toEqual({
       at: T('10').toISOString(),
       byName: 'System',
@@ -131,6 +133,13 @@ describe('RolesAdminService.page (AC-17)', () => {
       peopleCount: 0,
       lastChanged: null,
       copiedFrom: null,
+    });
+    expect(page.roles[2].graceCount).toBe(0);
+    expect(page.roles[3]).toMatchObject({ peopleCount: 0, graceCount: 2 });
+    // The grace count flips only the deleted filter
+    expect(db.userRoleAssignment.groupBy.mock.calls[1][0].where).toMatchObject({
+      system: SystemType.VRMS,
+      user: { deletedAt: { not: null } },
     });
     expect(page.roles[3].copiedFrom).toEqual({
       code: 'MECHANIC',
