@@ -23,6 +23,7 @@ import { requestMeta } from '../events/request-meta';
 import { PortalCsrfGuard } from '../sessions/csrf';
 import { SessionService } from '../sessions/session.service';
 import { codeNotRequired } from './admin-errors';
+import { DeletionService } from '../deletion/deletion.service';
 import {
   TemporaryGrantsService,
   type GrantView,
@@ -49,6 +50,19 @@ import {
   CSRF,
   VALIDATION,
 } from '../../openapi/guard-errors';
+/**
+ * VRMS spec 0027, AC-12: the Deletion requests count for the portal sidebar. A suite admin
+ * counts every request (`null`), a system admin their own systems, anyone else none (no query).
+ */
+export function pendingDeletionsFor(
+  deletion: Pick<DeletionService, 'pendingCount'>,
+  standing: { suiteAdmin: boolean; adminOf: SystemType[] },
+): Promise<number> {
+  if (standing.suiteAdmin) return deletion.pendingCount(null);
+  if (standing.adminOf.length === 0) return Promise.resolve(0);
+  return deletion.pendingCount(standing.adminOf);
+}
+
 /** The `GET /auth/admin/me` body (spec 0013, AC-15). */
 export type AdminMe = {
   user: { id: string; name: string; email: string; picture: string | null };
@@ -58,6 +72,11 @@ export type AdminMe = {
   codePassed: boolean;
   /** AC-24: a suite admin's own live temporary access (empty for everyone else). */
   temporaryGrants: GrantView[];
+  /**
+   * VRMS spec 0027, AC-12: pending deletion requests the caller can act on, the same scope as
+   * the Deletion requests list (a suite admin: all; a system admin: their systems; else 0).
+   */
+  pendingDeletionRequests: number;
 };
 
 /**
@@ -74,6 +93,7 @@ export class AdminController {
     private readonly signInStep: SignInStepService,
     private readonly sessions: SessionService,
     private readonly grants: TemporaryGrantsService,
+    private readonly deletion: DeletionService,
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
   ) {}
 
@@ -102,6 +122,10 @@ export class AdminController {
       temporaryGrants: caller.standing.suiteAdmin
         ? await this.grants.liveFor(caller.userId)
         : [],
+      pendingDeletionRequests: await pendingDeletionsFor(
+        this.deletion,
+        caller.standing,
+      ),
     };
   }
 
