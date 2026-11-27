@@ -1504,6 +1504,12 @@ export class AuthService {
     let user: Prisma.UserGetPayload<{ select: typeof MANAGED_USER_SELECT }>;
     try {
       user = await this.prisma.$transaction(async (tx) => {
+        // Suite spec 0018: the roles are still live, and no Delete runs alongside
+        await this.catalog.lockLiveRoles(
+          tx,
+          actor.system,
+          roleAssignments.map((r) => r.role),
+        );
         if (recheck) await this.useAdminAction(tx, actor, dto.reauthToken);
         const created = await tx.user.create({
           data: {
@@ -1655,6 +1661,12 @@ export class AuthService {
     adminAction: unknown,
   ): Promise<ScopedUserResponse> {
     const user = await this.prisma.$transaction(async (tx) => {
+      // Suite spec 0018: role rows before the account row, the members route's order
+      await this.catalog.lockLiveRoles(
+        tx,
+        actor.system,
+        roleAssignments.map((r) => r.role),
+      );
       // Spec 0004, AC-13: the account row first, then everything is decided from a fresh read
       await lockAccount(tx, userId);
       // Spec 0013, AC-3: a suite admin holds no permanent system role
@@ -1770,6 +1782,14 @@ export class AuthService {
     try {
       const { user, oldEmail, alerts } = await this.prisma.$transaction(
         async (tx) => {
+          // Suite spec 0018: the requested roles' rows first (the members route's order)
+          if (requestedRoles) {
+            await this.catalog.lockLiveRoles(
+              tx,
+              actor.system,
+              requestedRoles.map((r) => r.role),
+            );
+          }
           // Spec 0004, AC-13: lock the account, then read its roles again
           await lockAccount(tx, userId);
           const existingUser = await tx.user.findUnique({
@@ -2167,12 +2187,38 @@ export class AuthService {
         select: {
           deletedAt: true,
           erasedAt: true,
-          roles: { select: { role: true, system: true } },
+          roles: {
+            select: {
+              role: true,
+              system: true,
+              systemRole: { select: { deletedAt: true } },
+            },
+          },
         },
       });
       assertInScope(existing, actor.system);
       if (existing.deletedAt === null || existing.erasedAt !== null) {
         throw notRestorable();
+      }
+      // Suite spec 0018: a custom role archived during the grace period stays behind; the person
+      // comes back with their other roles, or none
+      const before = existing.roles.map((r) => ({
+        role: r.role,
+        system: r.system,
+      }));
+      const kept = existing.roles
+        .filter((r) => r.systemRole.deletedAt === null)
+        .map((r) => ({ role: r.role, system: r.system }));
+      const dropped = existing.roles.filter(
+        (r) => r.systemRole.deletedAt !== null,
+      );
+      if (dropped.length > 0) {
+        await tx.userRoleAssignment.deleteMany({
+          where: {
+            userId,
+            OR: dropped.map((r) => ({ system: r.system, role: r.role })),
+          },
+        });
       }
       const updated = await tx.user.update({
         where: { id: userId },
@@ -2180,14 +2226,14 @@ export class AuthService {
         select: MANAGED_USER_SELECT,
       });
       await markRestored(tx, userId, actor, new Date());
-      await this.events.record(
-        tx,
+      await this.events.recordMany(tx, [
         change(userId, actor, AccountEventType.RESTORED),
-      );
+        ...roleChanges(userId, actor, before, kept),
+      ]);
       // Spec 0013, AC-13: a restored admin holds their admin role again
       return {
         user: updated,
-        alerts: await this.adminRoleAlerts(userId, [], existing.roles, tx),
+        alerts: await this.adminRoleAlerts(userId, [], kept, tx),
       };
     });
     await this.alerts.send(actor.id, alerts);

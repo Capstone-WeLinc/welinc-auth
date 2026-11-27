@@ -40,6 +40,7 @@ import { DirectoryService } from './directory/directory.service';
 import { AdminPermissionsController } from './permissions/admin-permissions.controller';
 import { MatrixService } from './permissions/matrix.service';
 import { AdminRolesController } from './roles/admin-roles.controller';
+import { CustomRolesService } from './roles/custom-roles.service';
 import { RolesAdminService } from './roles/roles-admin.service';
 import { PermissionsController } from './permissions/permissions.controller';
 import { PermissionsReadGuard } from './permissions/permissions-read.guard';
@@ -123,6 +124,7 @@ import {
     // Spec 0013 slice 5: the central permission matrix
     MatrixService,
     RolesAdminService,
+    CustomRolesService,
     PermissionsReadGuard,
     // VRMS spec 0025, AC-16: the staging only test route's switch
     SentryTestSwitch,

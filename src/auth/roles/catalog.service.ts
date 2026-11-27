@@ -165,6 +165,38 @@ export class CatalogService {
   }
 
   /**
+   * Suite spec 0018 (umbrella rules): every path that gives a role locks the role rows first
+   * (`FOR UPDATE`, in code order so two writers never deadlock) and checks they are still live,
+   * inside the write's own transaction. A Delete takes the same lock, so either the assignment
+   * lands and the Delete then sees the holder (`ROLE_IN_USE`), or the Delete lands and the
+   * assignment answers 400 `UNKNOWN_ROLE`.
+   */
+  async lockLiveRoles(
+    tx: Prisma.TransactionClient,
+    system: SystemType,
+    codes: string[],
+  ): Promise<void> {
+    const wanted = [...new Set(codes)].sort();
+    if (wanted.length === 0) return;
+    const rows = await tx.$queryRaw<{ code: string }[]>(Prisma.sql`
+      SELECT "code" FROM "system_roles"
+       WHERE "system" = ${system}::"SystemType" AND "code" IN (${Prisma.join(wanted)})
+         AND "deleted_at" IS NULL
+       ORDER BY "code"
+       FOR UPDATE`);
+    const live = new Set(rows.map((r) => r.code));
+    const missing = wanted.find((code) => !live.has(code));
+    if (missing !== undefined) {
+      const entry = await this.system(system, tx);
+      throw coded(
+        HttpStatus.BAD_REQUEST,
+        'UNKNOWN_ROLE',
+        unknownRoleMessage(system, missing, entry?.roles ?? []),
+      );
+    }
+  }
+
+  /**
    * The request's roles for the caller's system: 400 `UNKNOWN_ROLE` for a pair the catalog
    * doesn't have, then 409 `ROLE_LIMIT` when they exceed the limit (AC-9, AC-10). Never trims.
    */

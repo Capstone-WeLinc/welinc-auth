@@ -4,6 +4,7 @@ import type { Response } from 'express';
 import type { AuthService } from '../auth.service';
 import type { AdminRequest } from '../admin/admin-session.guard';
 import { AdminRolesController } from './admin-roles.controller';
+import type { CustomRolesService } from './custom-roles.service';
 import type { RolesAdminService } from './roles-admin.service';
 
 // covers: suite spec 0018, child 0001 AC-17 (the read and history routes: no-store, who may read,
@@ -46,6 +47,17 @@ function setup() {
       }),
     ),
   };
+  const custom = {
+    create: jest.fn<(...args: unknown[]) => Promise<unknown>>(() =>
+      Promise.resolve({ role: {}, cells: [], version: 2 }),
+    ),
+    update: jest.fn<(...args: unknown[]) => Promise<unknown>>(() =>
+      Promise.resolve({}),
+    ),
+    remove: jest.fn<(...args: unknown[]) => Promise<unknown>>(() =>
+      Promise.resolve({ version: 3 }),
+    ),
+  };
   const headers: Record<string, string> = {};
   const res = {
     setHeader: (name: string, value: string) => {
@@ -54,9 +66,10 @@ function setup() {
   } as unknown as Response;
   const controller = new AdminRolesController(
     roles as unknown as RolesAdminService,
+    custom as unknown as CustomRolesService,
     {} as AuthService,
   );
-  return { controller, roles, res, headers };
+  return { controller, roles, custom, res, headers };
 }
 
 async function refusal(run: () => unknown): Promise<HttpException> {
@@ -148,6 +161,60 @@ describe('AdminRolesController read routes (AC-17)', () => {
         request({ suiteAdmin: true, adminOf: [] }),
         res,
       ),
+    );
+    expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+  });
+});
+
+describe('AdminRolesController custom role writes (child 0002)', () => {
+  const suite = () => request({ suiteAdmin: true, adminOf: [] });
+  const vrmsAdmin = () => request({ suiteAdmin: false, adminOf: ['VRMS'] });
+
+  it('creates for a suite admin, naming them as the actor', async () => {
+    const { controller, custom, res, headers } = setup();
+    await controller.create(
+      'vrms',
+      { name: 'Tire specialist', from: 'MECHANIC' },
+      suite(),
+      res,
+    );
+    expect(custom.create).toHaveBeenCalledWith(
+      { id: 'u1', name: 'Leonora', email: 'suite.admin@welinc.com' },
+      'VRMS',
+      { name: 'Tire specialist', description: undefined, from: 'MECHANIC' },
+    );
+    expect(headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('refuses every write to a system admin with NOT_SUITE_ADMIN', async () => {
+    const { controller, custom, res } = setup();
+    const refusals = await Promise.all([
+      refusal(() =>
+        controller.create(
+          'vrms',
+          { name: 'Tire specialist', from: 'MECHANIC' },
+          vrmsAdmin(),
+          res,
+        ),
+      ),
+      refusal(() =>
+        controller.update('vrms', 'C_X', { name: 'Y' }, vrmsAdmin(), res),
+      ),
+      refusal(() => controller.remove('vrms', 'C_X', vrmsAdmin(), res)),
+    ]);
+    for (const error of refusals) {
+      expect(error.getStatus()).toBe(HttpStatus.FORBIDDEN);
+      expect(error.getResponse()).toMatchObject({ code: 'NOT_SUITE_ADMIN' });
+    }
+    expect(custom.create).not.toHaveBeenCalled();
+    expect(custom.update).not.toHaveBeenCalled();
+    expect(custom.remove).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a code that could never be a role', async () => {
+    const { controller, res } = setup();
+    const error = await refusal(() =>
+      controller.remove('vrms', 'not a code', suite(), res),
     );
     expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
   });
