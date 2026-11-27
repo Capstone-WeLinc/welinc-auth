@@ -12,10 +12,19 @@ import {
   type Holding,
 } from './catalog-plan';
 import type { SystemDefinition } from './catalog.types';
-import { SystemsController, etagOf, matchesEtag } from './systems.controller';
+import {
+  SYSTEMS_CACHE_CONTROL,
+  SystemsController,
+  etagOf,
+  matchesEtag,
+} from './systems.controller';
 import type { CatalogService } from './catalog.service';
 import type { PrismaService } from '../../shared/prisma.service';
-import { roleLimitMessage } from './catalog.service';
+import {
+  CatalogService as RealCatalogService,
+  liveOrder,
+  roleLimitMessage,
+} from './catalog.service';
 
 // Spec 0004: the catalog files, the sync's plan and refusals (AC-1 to AC-4, AC-6), and the
 // /auth/systems cache headers (AC-16).
@@ -42,6 +51,7 @@ function synced(definitions: SystemDefinition[] = CATALOG): {
         description: r.description,
         sortOrder: i,
         isSystemAdmin: r.isSystemAdmin === true,
+        isBuiltIn: true,
       })),
     ),
   };
@@ -121,6 +131,7 @@ describe('catalog files', () => {
       description: m[4],
       sortOrder: Number(m[5]),
       isSystemAdmin: m[6] === 'true',
+      isBuiltIn: true,
     }));
 
     const plan = planCatalogSync(CATALOG, ALL, { systems, roles }, []);
@@ -492,5 +503,142 @@ describe('ROLE_LIMIT message', () => {
     expect(roleLimitMessage(SystemType.BMS, 2)).toBe(
       'BMS allows 2 roles per person.',
     );
+  });
+});
+
+describe('custom roles in the sync and the catalog reads (suite spec 0018 child 0002)', () => {
+  // covers: suite spec 0018 child 0002 AC-29, AC-30
+  const custom = (code: string, name: string): CurrentRole => ({
+    system: SystemType.VRMS,
+    code,
+    name,
+    description: 'Made in the portal',
+    sortOrder: 0,
+    isSystemAdmin: false,
+    isBuiltIn: false,
+  });
+
+  it('never plans, updates or removes a custom role, live or archived, even one people hold', () => {
+    const tables = synced();
+    tables.roles.push(
+      custom('C_TIRE_SPECIALIST', 'Tire specialist'),
+      // A custom name equal to a built in name: the sync never checks names
+      custom('C_MECHANIC_OLD', 'Mechanic'),
+    );
+    const holdings: Holding[] = [
+      {
+        userId: 'u1',
+        email: 'tires@welinc.com',
+        system: SystemType.VRMS,
+        role: 'C_TIRE_SPECIALIST',
+        active: true,
+      },
+    ];
+
+    const plan = planCatalogSync(CATALOG, ALL, tables, holdings);
+
+    expect(plan.errors).toEqual([]);
+    expect(plan.systems.map(describePlan)).toEqual([
+      'VRMS: 3 roles, no change',
+      'VMMS: 4 roles, no change',
+      'BMS: 5 roles, no change',
+    ]);
+  });
+
+  it('refuses a catalog code starting with C_', () => {
+    const vrms = CATALOG.find((d) => d.system === 'VRMS') as SystemDefinition;
+    const files = CATALOG.map((d) =>
+      d === vrms
+        ? {
+            ...d,
+            roles: [
+              ...d.roles,
+              { code: 'C_FOREMAN', name: 'Foreman', description: 'x' },
+            ],
+          }
+        : d,
+    );
+
+    const plan = planCatalogSync(files, ALL, synced(), []);
+
+    expect(plan.errors).toEqual([
+      "VRMS: role code 'C_FOREMAN': codes starting with C_ are kept for custom roles.",
+    ]);
+  });
+
+  it('sorts live roles built in first by catalog order, then custom by name ignoring case', () => {
+    const order = liveOrder([
+      { name: 'zebra crew', isBuiltIn: false, sortOrder: 0 },
+      { name: 'Mechanic', isBuiltIn: true, sortOrder: 2 },
+      { name: 'Admin', isBuiltIn: true, sortOrder: 0 },
+      { name: 'Night shift lead', isBuiltIn: false, sortOrder: 0 },
+      { name: 'Chief Mechanic', isBuiltIn: true, sortOrder: 1 },
+    ]);
+    expect(order.map((r) => r.name)).toEqual([
+      'Admin',
+      'Chief Mechanic',
+      'Mechanic',
+      'Night shift lead',
+      'zebra crew',
+    ]);
+  });
+
+  it('reads live roles only, with builtIn, and answers /auth/systems with no-cache', async () => {
+    const rows = [
+      {
+        code: SystemType.VRMS,
+        name: 'VRMS',
+        description: 'x',
+        maxRolesPerUser: 1,
+        roles: [
+          {
+            code: 'C_TIRES',
+            name: 'Tires',
+            description: 'c',
+            isSystemAdmin: false,
+            isBuiltIn: false,
+            sortOrder: 0,
+          },
+          {
+            code: 'ADMIN',
+            name: 'Admin',
+            description: 'a',
+            isSystemAdmin: true,
+            isBuiltIn: true,
+            sortOrder: 0,
+          },
+        ],
+      },
+    ];
+    let where: unknown;
+    const db = {
+      system: {
+        findMany: (args: { select: { roles: { where: unknown } } }) => {
+          where = args.select.roles.where;
+          return Promise.resolve(rows);
+        },
+      },
+    };
+    const service = new RealCatalogService(db as unknown as PrismaService);
+    const systems = await service.systems();
+
+    expect(where).toEqual({ deletedAt: null });
+    expect(systems[0].roles).toEqual([
+      {
+        code: 'ADMIN',
+        name: 'Admin',
+        description: 'a',
+        isSystemAdmin: true,
+        builtIn: true,
+      },
+      {
+        code: 'C_TIRES',
+        name: 'Tires',
+        description: 'c',
+        isSystemAdmin: false,
+        builtIn: false,
+      },
+    ]);
+    expect(SYSTEMS_CACHE_CONTROL).toBe('no-cache');
   });
 });

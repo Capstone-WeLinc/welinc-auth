@@ -14,8 +14,11 @@ export type SystemView = Omit<CatalogSystem, 'code'> & {
   webAddress: string | null;
 };
 
-/** Browsers and the gateway may reuse an answer for this long (AC-16). */
-export const SYSTEMS_MAX_AGE_SECONDS = 60;
+/**
+ * Suite spec 0018 child 0002, AC-29: every read revalidates with the ETag (was `max-age=60`), so a
+ * custom role made, renamed or deleted shows on the next read; a match still costs only a 304.
+ */
+export const SYSTEMS_CACHE_CONTROL = 'no-cache';
 
 /** A strong ETag from the body: the same catalog always gives the same tag. */
 export function etagOf(body: string): string {
@@ -85,10 +88,7 @@ export class SystemsController {
     const body = JSON.stringify({ systems: views });
     const etag = etagOf(body);
 
-    res.setHeader(
-      'Cache-Control',
-      `public, max-age=${SYSTEMS_MAX_AGE_SECONDS}`,
-    );
+    res.setHeader('Cache-Control', SYSTEMS_CACHE_CONTROL);
     res.setHeader('ETag', etag);
     if (matchesEtag(req.headers['if-none-match'], etag)) {
       res.status(304).end();

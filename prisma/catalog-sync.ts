@@ -1,5 +1,6 @@
-// `npm run catalog:sync [-- --dry-run]` (spec 0004, AC-2, AC-3): makes `systems` and
-// `system_roles` match prisma/catalog/*.ts in one transaction, or refuses and writes nothing.
+// `npm run catalog:sync [-- --dry-run]` (spec 0004, AC-2, AC-3): makes `systems` and the built
+// in `system_roles` rows match prisma/catalog/*.ts in one transaction, or refuses and writes
+// nothing. Custom roles (suite spec 0018 child 0002) are never planned, updated or removed.
 // `npm run db:deploy` runs it right after `prisma migrate deploy` (AC-5).
 import 'dotenv/config';
 import { PrismaClient, SystemType } from '@prisma/client';
@@ -56,6 +57,7 @@ async function main(): Promise<CatalogPlan> {
               description: true,
               sortOrder: true,
               isSystemAdmin: true,
+              isBuiltIn: true,
             },
           }),
           tx.userRoleAssignment.findMany({
@@ -108,6 +110,10 @@ async function main(): Promise<CatalogPlan> {
                 defaultRoles: p.defaultRoles ?? [],
               })),
               cells,
+              // Suite spec 0018 child 0002, AC-30: custom cells stay with the runtime
+              customRoles: roles
+                .filter((r) => r.system === definition.system && !r.isBuiltIn)
+                .map((r) => r.code),
             }),
           );
         }

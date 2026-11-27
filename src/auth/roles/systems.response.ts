@@ -1,7 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { SystemType } from '@prisma/client';
 
-/** A role from the catalog, in display order (most powerful first). */
+/**
+ * A live role: built in roles first in catalog order (most powerful first), then custom roles by
+ * name (suite spec 0018).
+ */
 export class CatalogRoleView {
   @ApiProperty({ example: 'ADMIN' })
   code!: string;
@@ -14,6 +17,12 @@ export class CatalogRoleView {
 
   @ApiProperty()
   isSystemAdmin!: boolean;
+
+  @ApiProperty({
+    description:
+      'True for a role from the catalog file; false for a custom role a suite admin made (suite spec 0018)',
+  })
+  builtIn!: boolean;
 }
 
 /** One system of the suite. */

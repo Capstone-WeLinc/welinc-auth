@@ -33,7 +33,12 @@ export type CurrentRole = {
   description: string;
   sortOrder: number;
   isSystemAdmin: boolean;
+  /** Suite spec 0018: false for a custom role, which the sync never plans (child 0002, AC-30). */
+  isBuiltIn: boolean;
 };
+
+/** Suite spec 0018 child 0002, AC-30: custom role codes start with this, catalog codes never do. */
+export const CUSTOM_ROLE_PREFIX = 'C_';
 
 /** One `user_roles` row with what the checks need from its account. */
 export type Holding = {
@@ -45,7 +50,7 @@ export type Holding = {
   active: boolean;
 };
 
-export type RoleRow = Omit<CurrentRole, 'system'>;
+export type RoleRow = Omit<CurrentRole, 'system' | 'isBuiltIn'>;
 
 export type SystemPlan = {
   system: SystemType;
@@ -155,6 +160,11 @@ function fileErrors(
           `${at}: role code '${role.code}' must match ${ROLE_CODE_RE.source}.`,
         );
       }
+      if (role.code.startsWith(CUSTOM_ROLE_PREFIX)) {
+        errors.push(
+          `${at}: role code '${role.code}': codes starting with ${CUSTOM_ROLE_PREFIX} are kept for custom roles.`,
+        );
+      }
       if (codes.has(role.code)) {
         errors.push(`${at}: role code '${role.code}' appears twice.`);
       }
@@ -215,7 +225,10 @@ export function planCatalogSync(
     if (!allSystems.includes(def.system)) continue;
     const wanted = rowsOf(def);
     const wantedCodes = new Set(wanted.map((r) => r.code));
-    const existing = current.roles.filter((r) => r.system === def.system);
+    // Suite spec 0018 child 0002, AC-30: the sync owns built in rows, the runtime owns custom ones
+    const existing = current.roles.filter(
+      (r) => r.system === def.system && r.isBuiltIn,
+    );
     const existingByCode = new Map(existing.map((r) => [r.code, r]));
     const held = holdings.filter((h) => h.system === def.system);
 

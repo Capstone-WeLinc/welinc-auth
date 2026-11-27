@@ -11548,13 +11548,18 @@
           },
           "isSystemAdmin": {
             "type": "boolean"
+          },
+          "builtIn": {
+            "type": "boolean",
+            "description": "True for a role from the catalog file; false for a custom role a suite admin made (suite spec 0018)"
           }
         },
         "required": [
           "code",
           "name",
           "description",
-          "isSystemAdmin"
+          "isSystemAdmin",
+          "builtIn"
         ]
       },
       "ChangePasswordDto": {

@@ -24,6 +24,7 @@ export class FakeCatalogService extends CatalogService {
         name: r.name,
         description: r.description,
         isSystemAdmin: r.isSystemAdmin === true,
+        builtIn: true,
       })),
     }));
   }

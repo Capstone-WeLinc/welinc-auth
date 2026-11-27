@@ -102,6 +102,15 @@ export const vrms: SystemDefinition = {
       defaults: defaults(true, true, false),
     },
     {
+      // Suite spec 0018 child 0002, AC-33: the VRMS mechanic roster is everyone holding this
+      key: 'ticket.assignable',
+      label: 'Can be assigned tickets',
+      group: 'Tickets',
+      description:
+        'Shows up in the mechanic list, so tickets can be assigned to you.',
+      defaults: defaults(false, true, true),
+    },
+    {
       key: 'ticket.edit',
       label: 'Edit ticket details and issues',
       group: 'Tickets',

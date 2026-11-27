@@ -19,6 +19,7 @@ const catalog: CatalogSystem[] = CATALOG.map((d) => ({
     name: r.name,
     description: r.description,
     isSystemAdmin: r.isSystemAdmin === true,
+    builtIn: true,
   })),
 }));
 
